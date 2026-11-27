@@ -25,9 +25,9 @@ base64 = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
-# The two the inline console of `ariadne attach` owns here: the raw mode and
-# the key stream under it, and the terminal backend the pane is drawn on. The
-# pane itself is ariadne-console's.
+# The two the full-screen console of `ariadne attach` owns here: the raw mode
+# and the key stream under it, and the terminal backend the screen is drawn on.
+# The screen itself is ariadne-console's.
 crossterm = { workspace = true }
 dirs = { workspace = true }
 # `StreamExt::next`, for awaiting the console's key stream beside the daemon's

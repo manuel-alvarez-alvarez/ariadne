@@ -12,10 +12,10 @@ use std::fmt::Display;
 use anyhow::Result;
 use ariadne_api::trajectory::{StepDto, TrajectoryQuery, TrajectoryStepsQuery, TurnDto, TurnState};
 use ariadne_client::Client;
+use ariadne_console::Since;
 use ariadne_console::trajectory::{
     Printer, Touched, View, kind, settled, step_at, step_id, step_turn,
 };
-use ariadne_console::transcript::Since;
 use chrono::TimeZone;
 
 /// The kinds of step `--kind` takes.

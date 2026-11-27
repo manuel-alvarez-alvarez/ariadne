@@ -893,25 +893,6 @@ async fn the_events_listing_still_carries_the_whole_payload() {
     assert_eq!(call["payload"], tool_call_payload());
 }
 
-/// The console stream is what draws a session, and draws it from the
-/// payload: it does not follow the domain stream in losing it.
-#[tokio::test]
-async fn the_console_stream_still_carries_the_whole_payload() {
-    let h = harness().await;
-    let session = a_session_to_report_on(&h).await;
-    let mut body = h
-        .stream(get(&format!("/v1/sessions/{}/console/stream", session.id)))
-        .await;
-    expect_sse(&mut body, "snapshot").await;
-
-    h.ingest(&session, "pre_tool_use", tool_call_payload())
-        .await;
-
-    let delta = expect_sse(&mut body, "event").await;
-    assert_eq!(delta["kind"], "pre_tool_use");
-    assert_eq!(delta["payload"], tool_call_payload());
-}
-
 /// One recorded event, and its id. Written straight to the store, which is
 /// where the runtime's ingestion puts one, so a test that only reads the
 /// listing needs no agent behind it.

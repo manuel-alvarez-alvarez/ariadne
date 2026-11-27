@@ -25,7 +25,7 @@ use common::{
 /// `turn`, started from the console.
 struct Turned {
     dir: tempfile::TempDir,
-    stub: StubAcpAgent,
+    _stub: StubAcpAgent,
     h: Harness,
     session: ariadne_store::AgentSession,
 }
@@ -60,7 +60,7 @@ impl Turned {
         .await;
         Self {
             dir,
-            stub,
+            _stub: stub,
             h,
             session,
         }
@@ -103,16 +103,25 @@ impl Turned {
             .await
     }
 
-    async fn snapshot(&self) -> Vec<Value> {
-        self.h
-            .get(&format!("/v1/sessions/{}/console", self.session.id))
-            .await
+    /// The newest turn of the session's trajectory, as a client reads it.
+    async fn newest_turn(&self) -> Value {
+        let trajectory: Value = self
+            .h
+            .get(&format!("/v1/sessions/{}/trajectory", self.session.id))
+            .await;
+        trajectory["turns"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone()
     }
 
-    async fn console_stream(&self) -> Body {
+    /// The trajectory stream of the session.
+    async fn trajectory_stream(&self) -> Body {
         self.h
             .stream(get(&format!(
-                "/v1/sessions/{}/console/stream",
+                "/v1/sessions/{}/trajectory/stream",
                 self.session.id
             )))
             .await
@@ -148,6 +157,15 @@ fn of_kind<'a>(events: &'a [Value], kind: &str) -> Vec<&'a Value> {
 
 fn kinds(events: &[Value]) -> Vec<&str> {
     events.iter().map(|e| e["kind"].as_str().unwrap()).collect()
+}
+
+/// The tool call `call-9` among the steps of `turn`.
+fn call_step(turn: &Value) -> Option<Value> {
+    turn["steps"]
+        .as_array()?
+        .iter()
+        .find(|step| step["type"] == "tool_call" && step["tool_call_id"] == "call-9")
+        .cloned()
 }
 
 /// The kinds the second turn stored, from its prompt to its `stop`.
@@ -252,61 +270,6 @@ async fn a_content_block_over_one_megabyte_is_stored_as_a_placeholder() {
     );
 }
 
-/// Each live chunk of a run carries the `item_id` its stored whole carries,
-/// a run of one empty chunk included.
-#[tokio::test]
-async fn each_live_chunk_and_its_stored_whole_carry_one_item_id() {
-    let t = Turned::start(
-        json!([
-            chunk("agent_thought_chunk", text(""), None),
-            chunk("agent_message_chunk", text("One "), None),
-            chunk("agent_message_chunk", text("two."), None),
-            {"sessionUpdate": "tool_call", "toolCallId": "call-9", "title": "Bash",
-             "status": "pending", "rawInput": {"command": "ls"}},
-        ]),
-        false,
-        Timeouts::default(),
-    )
-    .await;
-    let mut body = t.console_stream().await;
-    expect_sse(&mut body, "snapshot").await;
-    t.begin().await;
-
-    let mut seen = Vec::new();
-    while seen
-        .last()
-        .is_none_or(|e: &Value| e["kind"] != "pre_tool_use")
-    {
-        seen.push(expect_sse(&mut body, "event").await);
-    }
-    let chunks = of_kind(&seen, "agent_message_chunk");
-    assert_eq!(chunks.len(), 2, "{seen:?}");
-    let whole = of_kind(&seen, "agent_message")[0];
-    assert_eq!(
-        whole["payload"]["content"],
-        json!([text("One "), text("two.")])
-    );
-    let empty = of_kind(&seen, "agent_thought_chunk");
-    let thought = of_kind(&seen, "agent_thought");
-    assert_eq!((empty.len(), thought.len()), (1, 1), "{seen:?}");
-    assert_eq!(thought[0]["payload"]["content"], json!([text("")]));
-    assert_eq!(
-        empty[0]["payload"]["item_id"],
-        thought[0]["payload"]["item_id"]
-    );
-    assert_ne!(
-        thought[0]["payload"]["item_id"],
-        whole["payload"]["item_id"]
-    );
-    for chunk in chunks {
-        assert_eq!(
-            chunk["payload"]["item_id"], whole["payload"]["item_id"],
-            "{chunk}"
-        );
-    }
-    t.ended().await;
-}
-
 /// A running call's progress is stored once the interval since its last
 /// stored event has passed, and `GET /v1/events` lists it with the call
 /// merged so far.
@@ -350,8 +313,8 @@ async fn a_running_calls_progress_is_stored_once_its_interval_has_passed() {
     assert_eq!(later["content"][0]["content"]["text"], "Compiling");
 }
 
-/// Inside the interval a running call's progress goes live to the console
-/// alone, and nothing of it is stored.
+/// Inside the interval a running call's progress is not stored: the turn
+/// holds its prompt, the call's two events and its stop, and nothing between.
 #[tokio::test]
 async fn a_running_calls_progress_inside_its_interval_is_not_stored() {
     let t = Turned::start(
@@ -365,18 +328,7 @@ async fn a_running_calls_progress_inside_its_interval_is_not_stored() {
         with_tool_progress(TIMEOUT),
     )
     .await;
-    let mut body = t.console_stream().await;
-    expect_sse(&mut body, "snapshot").await;
     t.begin().await;
-
-    let mut seen = Vec::new();
-    while seen
-        .last()
-        .is_none_or(|e: &Value| e["kind"] != "post_tool_use")
-    {
-        seen.push(expect_sse(&mut body, "event").await);
-    }
-    assert_eq!(of_kind(&seen, "tool_call_update").len(), 1, "{seen:?}");
     t.ended().await;
     let events = t.stored().await;
     assert_eq!(
@@ -428,7 +380,7 @@ async fn the_interval_starts_again_at_each_stored_update() {
     .await;
     let t = Turned {
         dir,
-        stub,
+        _stub: stub,
         h,
         session,
     };
@@ -588,59 +540,6 @@ async fn an_agent_that_ends_mid_call_abandons_it_as_session_ended() {
     assert_eq!(abandoned[0]["payload"]["reason"], "session_ended");
 }
 
-/// A console that opens during a call reads the open call, merged so far,
-/// in its snapshot.
-#[tokio::test]
-async fn a_console_opened_during_a_call_reads_the_open_call() {
-    let t = Turned::start(
-        json!([
-            {"sessionUpdate": "tool_call", "toolCallId": "call-9", "title": "Bash",
-             "status": "pending", "rawInput": {"command": "cargo build"}},
-            {"sessionUpdate": "tool_call_update", "toolCallId": "call-9", "status": "in_progress"},
-        ]),
-        true,
-        Timeouts::default(),
-    )
-    .await;
-    t.begin().await;
-    let reached = t.dir.path().join("release.reached");
-    let open_call = || async {
-        let snapshot = t.snapshot().await;
-        snapshot
-            .iter()
-            .find(|e| {
-                e["kind"] == "tool_call_update" && e["payload"]["acp"]["status"] == "in_progress"
-            })
-            .cloned()
-    };
-    eventually(TIMEOUT, "the open call in the snapshot", || async {
-        reached.exists() && open_call().await.is_some()
-    })
-    .await;
-
-    let call = open_call().await.unwrap();
-    assert_eq!(call["payload"]["tool_call_id"], "call-9");
-    assert_eq!(call["payload"]["acp"]["title"], "Bash");
-    assert_eq!(call["payload"]["acp"]["rawInput"]["command"], "cargo build");
-
-    let mut body = t.console_stream().await;
-    let snapshot = expect_sse(&mut body, "snapshot").await;
-    assert!(
-        snapshot.to_string().contains("\"tool_call_id\":\"call-9\""),
-        "{snapshot}"
-    );
-    t.release();
-    t.ended().await;
-    assert!(
-        !t.snapshot()
-            .await
-            .iter()
-            .any(|e| e["kind"] == "tool_call_update"),
-        "a call the turn ended is no longer open"
-    );
-    let _ = &t.stub;
-}
-
 /// A turn whose response reports a model limit failed: it ends the
 /// session, so its open call is abandoned as `session_ended`, not as a turn
 /// that ended.
@@ -696,7 +595,7 @@ async fn a_call_that_opens_already_ended_is_never_abandoned() {
 }
 
 /// A call whose opener the store refused is kept for its updates, out of
-/// every snapshot, until one of them is stored: that update carries the call
+/// the trajectory, until one of them is stored: that update carries the call
 /// merged from its opening, the call shows open from then, and its end keeps
 /// the input the opening gave and the raw output the end gave.
 #[tokio::test]
@@ -729,7 +628,7 @@ async fn a_call_whose_opener_the_store_refused_opens_at_its_first_stored_update(
     .await;
     let t = Turned {
         dir,
-        stub,
+        _stub: stub,
         h,
         session,
     };
@@ -751,21 +650,13 @@ async fn a_call_whose_opener_the_store_refused_opens_at_its_first_stored_update(
         progress["payload"]["acp"]["rawInput"],
         json!({"command": "ls"})
     );
-    // The snapshot holds the stored progress and, after it, a live entry of
-    // its own for the call still open.
-    let shown = t.snapshot().await;
-    let of_call: Vec<&Value> = shown
-        .iter()
-        .filter(|e| e["kind"] == "tool_call_update" && e["payload"]["tool_call_id"] == "call-9")
-        .collect();
-    assert_eq!(of_call.len(), 2, "{of_call:?}");
-    assert_eq!(
-        of_call[0]["id"], progress["id"],
-        "the stored progress first"
-    );
-    assert_ne!(of_call[1]["id"], progress["id"], "then the open call, live");
-    assert_eq!(of_call[1]["payload"]["acp"]["status"], "in_progress");
-    assert_eq!(of_call[1]["payload"]["acp"]["title"], "Bash");
+    // The trajectory shows the call open from then, as the progress says.
+    let open = eventually_some(TIMEOUT, "the call open in the trajectory", || async {
+        call_step(&t.newest_turn().await)
+    })
+    .await;
+    assert_eq!(open["status"], "running");
+    assert_eq!(open["title"], "Bash");
 
     std::fs::write(&file, "1").unwrap();
     let done = eventually_some(TIMEOUT, "the call's end", || async {
@@ -781,22 +672,19 @@ async fn a_call_whose_opener_the_store_refused_opens_at_its_first_stored_update(
         json!({"stdout": "README.md\n"})
     );
     assert_eq!(done["payload"]["acp"]["kind"], "execute");
-    // A console that opens after the end still shows the call's result: the
+    // A trajectory read after the end still shows the call's result: the
     // stored progress is the opener the end pairs with.
-    let after = t.snapshot().await;
-    assert!(
-        after
-            .iter()
-            .any(|e| e["kind"] == "post_tool_use" && e["id"] == done["id"]),
-        "{after:?}"
-    );
+    eventually(TIMEOUT, "the call completed in the trajectory", || async {
+        call_step(&t.newest_turn().await).is_some_and(|step| step["status"] == "completed")
+    })
+    .await;
     t.release();
     t.ended().await;
     assert!(of_kind(&t.stored().await, "tool_call_abandoned").is_empty());
 }
 
-/// Progress whose insert the store refuses still reaches a console that is
-/// open, and nothing of it is stored.
+/// Progress whose insert the store refuses still reaches a trajectory
+/// stream that is open, and nothing of it is stored.
 #[tokio::test]
 async fn a_running_calls_progress_the_store_refused_still_goes_live() {
     let t = Turned::start(
@@ -806,23 +694,29 @@ async fn a_running_calls_progress_the_store_refused_still_goes_live() {
             {"sessionUpdate": "tool_call_update", "toolCallId": "call-9", "status": "in_progress"},
             {"sessionUpdate": "tool_call_update", "toolCallId": "call-9", "status": "completed"},
         ]),
-        false,
+        true,
         with_tool_progress(std::time::Duration::ZERO),
     )
     .await;
     t.h.reject_events_of_kind("tool_call_update").await;
-    let mut body = t.console_stream().await;
+    let mut body = t.trajectory_stream().await;
     expect_sse(&mut body, "snapshot").await;
     t.begin().await;
 
-    let mut seen = Vec::new();
-    while seen
-        .last()
-        .is_none_or(|e: &Value| e["kind"] != "post_tool_use")
-    {
-        seen.push(expect_sse(&mut body, "event").await);
-    }
-    assert_eq!(of_kind(&seen, "tool_call_update").len(), 1, "{seen:?}");
+    // The turn is held on the call, so the only word of it is the progress.
+    let running = loop {
+        let update = expect_sse(&mut body, "update").await;
+        let step = update["ops"].as_array().unwrap().iter().find(|op| {
+            op["op"] == "item_upsert"
+                && op["step"]["tool_call_id"] == "call-9"
+                && op["step"]["status"] == "running"
+        });
+        if let Some(op) = step {
+            break op.clone();
+        }
+    };
+    assert_eq!(running["step"]["title"], "Bash");
+    t.release();
     t.ended().await;
     assert!(of_kind(&t.stored().await, "tool_call_update").is_empty());
 }

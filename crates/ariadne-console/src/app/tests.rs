@@ -19,8 +19,8 @@ use ariadne_api::trajectory::{StepDto, ToolCallDetailDto};
 
 use super::*;
 use crate::ansi::{AnsiBackend, Window};
+use crate::testing::{Tap, emulator, resize};
 use crate::trajectory::fixtures::{snapshot, step, turn, update};
-use crate::tui::testing::{Tap, emulator, resize};
 
 const WIDTH: u16 = 60;
 const HEIGHT: u16 = 24;
@@ -953,6 +953,243 @@ async fn escape_declines_the_open_question() {
     let answers = stub.answers.lock().unwrap();
     assert_eq!(answers.len(), 1);
     assert_eq!(answers[0].1.action, QuestionAction::Decline);
+}
+
+/// The three field shapes each adapter sends: a single-select `string` with
+/// `oneOf`, a multi-select `array` with `items.anyOf`, and a plain `string`.
+fn three_fields() -> Value {
+    json!({"type": "object", "required": ["base"], "properties": {
+        "base": {"type": "string", "title": "Which base branch?",
+                 "oneOf": [{"const": "main", "title": "Main"},
+                           {"const": "next", "title": "Next — the *release* line"}]},
+        "checks": {"type": "array", "title": "Which checks?",
+                   "items": {"anyOf": [{"const": "fmt", "title": "Format"},
+                                       {"const": "clippy", "title": "Clippy"}]}},
+        "note": {"type": "string", "title": "Anything else?"},
+    }})
+}
+
+/// A console with the open question `q1`, whose form has `schema`.
+fn asked(schema: Value) -> App {
+    let mut app = App::new("s1");
+    app.frame(asking());
+    let mut question = form();
+    question.schema = schema;
+    app.questions_read(vec![question]);
+    app
+}
+
+fn press(app: &mut App, code: KeyCode) -> Action {
+    app.key(KeyEvent::new(code, KeyModifiers::NONE))
+}
+
+/// What a typed `text` and the Enter after it do.
+fn type_and_enter(app: &mut App, text: &str) -> Action {
+    typed(app, text);
+    press(app, KeyCode::Enter)
+}
+
+/// The content of the answer an action sends, which must be an acceptance.
+fn accepted(action: Action) -> serde_json::Map<String, Value> {
+    let Action::Answer { answer, .. } = action else {
+        panic!("an answer, not {action:?}");
+    };
+    assert_eq!(answer.action, QuestionAction::Accept);
+    answer.content.expect("an acceptance carries its content")
+}
+
+#[test]
+fn a_required_question_left_unanswered_blocks_the_send_until_it_is_answered() {
+    for custom in [false, true] {
+        let mut schema = three_fields();
+        schema["required"] = json!(["base", "note"]);
+        if custom {
+            let properties = schema["properties"].as_object_mut().unwrap();
+            let previous = std::mem::take(properties);
+            for (key, value) in previous {
+                properties.insert(key.clone(), value);
+                if key == "base" {
+                    properties.insert(
+                        "base_custom".into(),
+                        json!({"type": "string", "title": "Other"}),
+                    );
+                }
+            }
+        }
+        let mut app = asked(schema);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(type_and_enter(&mut app, "done"), Action::None);
+        let screen = draw(&app, WIDTH, HEIGHT);
+        assert_eq!(
+            count(&screen, "Which base branch? needs an answer."),
+            1,
+            "{screen:#?}"
+        );
+        assert_eq!(count(&screen, "1 of 3"), 1, "{screen:#?}");
+
+        if custom {
+            assert_eq!(type_and_enter(&mut app, "release"), Action::None);
+        } else {
+            assert_eq!(press(&mut app, KeyCode::Char('2')), Action::None);
+        }
+        press(&mut app, KeyCode::Right);
+        let content = accepted(type_and_enter(&mut app, "done"));
+        if custom {
+            assert_eq!(content["base_custom"], "release");
+            assert!(!content.contains_key("base"));
+        } else {
+            assert_eq!(content["base"], "next");
+        }
+        assert_eq!(content["note"], "done");
+    }
+}
+
+#[test]
+fn a_required_multi_select_answered_with_text_alone_sends_no_unchecked_choice() {
+    let mut app = asked(
+        json!({"type": "object", "required": ["question_0"], "properties": {
+            "question_0": {"type": "array", "title": "Checks",
+                           "items": {"anyOf": [{"const": "fmt", "title": "Format"}]}},
+            "question_0_custom": {"type": "string", "title": "Other"}
+        }}),
+    );
+
+    let content = accepted(type_and_enter(&mut app, "lint"));
+
+    assert_eq!(Value::Object(content), json!({"question_0_custom": "lint"}));
+}
+
+#[test]
+fn a_number_field_is_one_step_and_sends_its_value() {
+    let mut app = asked(json!({"type": "object", "properties": {
+        "count": {"type": "integer", "title": "Count"}}}));
+
+    let content = accepted(type_and_enter(&mut app, "12"));
+
+    assert_eq!(Value::Object(content), json!({"count": 12}));
+}
+
+#[test]
+fn a_number_picks_a_choice_and_moving_between_questions_keeps_the_answers() {
+    let mut app = asked(three_fields());
+    assert_eq!(press(&mut app, KeyCode::Char('2')), Action::None);
+    press(&mut app, KeyCode::Left);
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(count(&screen, "1 of 3 ✓"), 1, "{screen:#?}");
+
+    press(&mut app, KeyCode::Tab);
+    press(&mut app, KeyCode::Right);
+    let content = accepted(type_and_enter(&mut app, "done"));
+
+    assert_eq!(content["base"], "next");
+}
+
+#[test]
+fn a_choice_and_its_other_companion_are_one_step_and_the_typed_answer_stands_for_the_choice() {
+    let mut app = asked(json!({"type": "object", "properties": {
+        "question_0": {"type": "string", "title": "Base", "description": "Which branch?",
+            "oneOf": [{"const": "Main (Recommended)", "title": "Main (Recommended)",
+                       "description": "Stable branch"},
+                      {"const": "Next", "title": "Next"}]},
+        "question_0_custom": {"type": "string", "title": "Other"},
+        "question_1": {"type": "array", "title": "Checks", "description": "Which checks?",
+            "items": {"anyOf": [{"const": "fmt", "title": "Format"}]}},
+        "question_1_custom": {"type": "string", "title": "Other"}
+    }}));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(count(&screen, "1 of 2"), 1, "{screen:#?}");
+    assert_eq!(count(&screen, "recommended"), 1, "{screen:#?}");
+    assert_eq!(count(&screen, "(Recommended)"), 0, "{screen:#?}");
+    assert_eq!(count(&screen, "Which checks?"), 0, "{screen:#?}");
+
+    assert_eq!(type_and_enter(&mut app, "release"), Action::None);
+    press(&mut app, KeyCode::Char(' '));
+    let content = accepted(type_and_enter(&mut app, "lint"));
+
+    assert_eq!(
+        Value::Object(content),
+        json!({"question_0_custom": "release", "question_1": ["fmt"], "question_1_custom": "lint"})
+    );
+}
+
+#[test]
+fn the_keys_answer_each_field_and_the_last_enter_sends_the_content() {
+    let mut app = asked(three_fields());
+    assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+    assert_eq!(press(&mut app, KeyCode::Char(' ')), Action::None);
+    assert_eq!(press(&mut app, KeyCode::Down), Action::None);
+    assert_eq!(press(&mut app, KeyCode::Char(' ')), Action::None);
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+
+    let content = accepted(type_and_enter(&mut app, "ship it"));
+
+    assert_eq!(
+        Value::Object(content),
+        json!({"base": "next", "checks": ["fmt", "clippy"], "note": "ship it"})
+    );
+}
+
+#[test]
+fn enter_accepts_a_form_without_fields_with_empty_content() {
+    let mut app = asked(json!({"type": "object", "properties": {}}));
+
+    let content = accepted(press(&mut app, KeyCode::Enter));
+
+    assert!(content.is_empty());
+}
+
+#[test]
+fn text_typed_on_a_choice_field_is_a_prompt_and_answers_nothing() {
+    let mut app = asked(three_fields());
+
+    assert_eq!(
+        type_and_enter(&mut app, "hello"),
+        Action::Send("hello".into())
+    );
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(
+        count(&screen, "Which base branch? · 1 of 3"),
+        1,
+        "{screen:#?}"
+    );
+}
+
+#[test]
+fn left_and_tab_with_text_in_the_box_do_not_change_the_question() {
+    let mut schema = three_fields();
+    schema["properties"] = json!({
+        "a": {"type": "string", "title": "First"},
+        "b": {"type": "string", "title": "Second"},
+    });
+    let mut app = asked(schema);
+    typed(&mut app, "helo");
+    press(&mut app, KeyCode::Left);
+    press(&mut app, KeyCode::Tab);
+    typed(&mut app, "l");
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+
+    assert_eq!(count(&screen, "First · 1 of 2"), 1, "{screen:#?}");
+}
+
+#[test]
+fn a_required_field_with_no_choice_is_not_taken_empty() {
+    let mut schema = three_fields();
+    schema["properties"]["base"] = json!({"type": "string", "title": "Branch name"});
+    let mut app = asked(schema);
+
+    assert_eq!(press(&mut app, KeyCode::Enter), Action::None);
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(
+        count(&screen, "Branch name needs an answer."),
+        1,
+        "{screen:#?}"
+    );
+    assert_eq!(count(&screen, "Branch name · 1 of 3"), 1, "{screen:#?}");
 }
 
 #[test]

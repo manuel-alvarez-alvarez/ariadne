@@ -14,8 +14,7 @@
 //! the view, and the screen is drawn again from it. The same is why a resize
 //! loses no line. The whole screen is the view drawn at the new size.
 //!
-//! As in [`crate::tui`], nothing here dials a daemon or owns a process
-//! terminal. [`drive`] takes a stream of [`Frame`]s, a [`Host`] for what the
+//! Nothing here dials a daemon or owns a process terminal. [`drive`] takes a stream of [`Frame`]s, a [`Host`] for what the
 //! console sends and reads, a stream of terminal events and a ratatui
 //! terminal on any backend. The host takes the alternate screen and gives it
 //! back, and prints [`App::farewell`] after it.
@@ -46,13 +45,14 @@ use ariadne_api::trajectory::{
     TurnDto, TurnState,
 };
 
-use crate::trajectory::{Printer, Touched, View, step_id, text};
-use crate::transcript::{self, FormField};
+use crate::fields::{self, FormField};
+use crate::trajectory::{Printer, Touched, View, step_id};
 
 mod commands;
 mod detail;
 mod draw;
 mod form;
+mod history;
 mod input;
 mod status;
 
@@ -60,6 +60,8 @@ mod status;
 mod tests;
 
 use form::FormState;
+pub use history::{PAGE as HISTORY_PAGE, reach_back};
+use history::{from_console, prompt_text, typed};
 use input::Input;
 
 /// How often the spinner of a running turn turns.
@@ -79,7 +81,7 @@ const FAREWELL_TURNS: usize = 20;
 pub enum Frame {
     /// The trajectory as it stands: what every stream opens with, and what
     /// a redial brings again. The optional prompt history comes from the host
-    /// when its event window reaches beyond the trajectory page.
+    /// when the trajectory page leaves older turns out ([`reach_back`]).
     Snapshot(Box<TrajectorySnapshotDto>, Option<Vec<String>>),
     /// One revision of the trajectory.
     Update(TrajectoryUpdateDto),
@@ -394,13 +396,8 @@ impl App {
                 let view = View::new(*snapshot);
                 self.live = true;
                 let ids: Vec<String> = view.turns().iter().map(|turn| turn.id.clone()).collect();
-                self.input.sync_history(history.unwrap_or_else(|| {
-                    view.turns()
-                        .iter()
-                        .filter(|turn| from_console(turn))
-                        .filter_map(prompt_text)
-                        .collect()
-                }));
+                self.input
+                    .sync_history(history.unwrap_or_else(|| typed(view.turns())));
                 self.view = Some(view);
                 for id in ids {
                     self.saw(&id);
@@ -831,7 +828,7 @@ impl App {
         let form = self.forms.get(&question.request_id).map(|form| {
             (
                 form.message.clone(),
-                transcript::form_fields(&form.schema, &form.message),
+                fields::form_fields(&form.schema, &form.message),
             )
         });
         Some((question, form))
@@ -1194,22 +1191,6 @@ impl App {
         ));
         out
     }
-}
-
-/// Whether a turn's prompt was typed at a console.
-fn from_console(turn: &TurnDto) -> bool {
-    turn.prompt.as_ref().is_some_and(|prompt| {
-        prompt
-            .source
-            .as_deref()
-            .is_none_or(|source| source == "console")
-    })
-}
-
-/// The text a turn's prompt was submitted with.
-fn prompt_text(turn: &TurnDto) -> Option<String> {
-    let prompt = turn.prompt.as_ref()?;
-    Some(prompt.text.clone().unwrap_or_else(|| text(&prompt.content)))
 }
 
 /// The lane a step is in: the session's own, or a subagent's id.

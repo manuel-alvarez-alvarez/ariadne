@@ -1,9 +1,7 @@
 //! The box the next prompt is typed into: its text, its cursor and its keys.
 //!
-//! The box of the inline pane (`tui/input.rs`), taken over whole: the
-//! full-screen console replaces that pane, which goes with it. Only
-//! [`Input::draw`] differs, since the box here is one of two zones and
-//! shows the cursor only while it has the keys.
+//! The box is one of two zones, and shows the cursor only while it has the
+//! keys ([`Input::draw`]).
 
 use std::cell::Cell;
 

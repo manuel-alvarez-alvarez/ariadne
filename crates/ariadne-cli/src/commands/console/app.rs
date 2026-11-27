@@ -25,13 +25,13 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::time::{Instant, sleep_until};
 
-use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::{AnswerQuestionRequest, ConsoleInputRequest, QuestionDto, SessionDto};
 use ariadne_api::trajectory::{
-    StepDto, ToolCallDetailDto, TrajectoryItemQuery, TrajectoryStreamQuery,
+    StepDto, ToolCallDetailDto, TrajectoryItemQuery, TrajectoryQuery, TrajectorySnapshotDto,
+    TrajectoryStreamQuery,
 };
 use ariadne_client::{Client, SseStream};
-use ariadne_console::app::{App, Frame, Host, drive};
+use ariadne_console::app::{App, Frame, HISTORY_PAGE, Host, drive, reach_back};
 use ariadne_console::trajectory::Printer;
 
 use super::terminal::{Held, Terminals};
@@ -134,7 +134,7 @@ async fn step(client: &Client, id: &str, mut link: Link) -> Option<(Result<Frame
                     Ok(super::Frame::Snapshot(snapshot)) => {
                         let rev = Some(snapshot.rev);
                         let history = if snapshot.has_older {
-                            prompt_history(client, id).await
+                            Some(prompt_history(client, id, &snapshot).await)
                         } else {
                             None
                         };
@@ -171,20 +171,22 @@ async fn step(client: &Client, id: &str, mut link: Link) -> Option<(Result<Frame
     }
 }
 
-/// Use the inline console's event window when the trajectory omits older turns.
-async fn prompt_history(client: &Client, id: &str) -> Option<Vec<String>> {
-    let events: Vec<AgentEventDto> = client
-        .get_json(&format!("/v1/sessions/{id}/console"))
-        .await
-        .ok()?;
-    Some(
-        events
-            .into_iter()
-            .filter(|event| event.kind == "user_prompt_submit")
-            .filter(|event| event.payload["source"].as_str() == Some("console"))
-            .filter_map(|event| event.payload["text"].as_str().map(str::to_owned))
-            .collect(),
-    )
+/// The prompts typed at the console, read back through the pages of turns
+/// older than the snapshot's.
+async fn prompt_history(
+    client: &Client,
+    id: &str,
+    snapshot: &TrajectorySnapshotDto,
+) -> Vec<String> {
+    reach_back(snapshot, |before| async move {
+        let query = TrajectoryQuery {
+            before: Some(before),
+            limit: Some(HISTORY_PAGE),
+            subagent: None,
+        };
+        client.trajectory(id, &query).await.ok()
+    })
+    .await
 }
 
 /// The session's routes as the console's host.
@@ -552,24 +554,30 @@ mod tests {
         assert!(holds(&screen.out.0, ALTERNATE_OFF));
     }
 
+    /// A closed turn whose prompt `prompt n` was typed at a console.
+    fn typed_turn(n: u32) -> serde_json::Value {
+        json!({
+            "id": format!("t{n}"), "lane": "main",
+            "prompt": {"id": format!("t{n}"), "source": "console", "prompt_kind": null,
+                       "text": format!("prompt {n}"), "content": []},
+            "state": "completed", "stop_reason": "end_turn",
+            "started_at": "2026-11-27T10:00:00Z", "ended_at": "2026-11-27T10:00:01Z",
+            "activity": {"steps": 0, "tool_calls": 0, "files_changed": 0, "failed": 0,
+                         "cancelled": 0, "thoughts": 0, "subagents": 0},
+            "steps": [], "earlier_steps": 0, "attention": [], "attention_more": 0,
+            "notices": [], "notices_more": 0, "answer": []
+        })
+    }
+
     #[tokio::test]
     async fn prompt_history_reaches_past_the_trajectory_page() {
-        let history = (1..=51)
-            .map(|n| {
-                json!({
-                    "id": n.to_string(),
-                    "kind": "user_prompt_submit",
-                    "payload": {"source": "console", "text": format!("prompt {n}")},
-                    "summary": "", "created_at": ""
-                })
-            })
-            .collect::<Vec<_>>();
         let router = Router::new()
             .route(
                 "/v1/sessions/s1/trajectory/stream",
                 get(|| async {
                     let mut first = snapshot(1);
                     first["has_older"] = json!(true);
+                    first["turns"] = json!([typed_turn(52)]);
                     Sse::new(stream::iter([Ok::<_, Infallible>(
                         SseFrame::default()
                             .event("snapshot")
@@ -578,8 +586,14 @@ mod tests {
                 }),
             )
             .route(
-                "/v1/sessions/s1/console",
-                get(move || async { axum::Json(history) }),
+                "/v1/sessions/s1/trajectory",
+                get(|request: axum::extract::Request| async move {
+                    let query = request.uri().query().unwrap_or_default().to_string();
+                    assert!(query.contains("before=t52"), "{query}");
+                    let mut older = snapshot(0);
+                    older["turns"] = json!((1..=51).map(typed_turn).collect::<Vec<_>>());
+                    axum::Json(older)
+                }),
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -590,7 +604,7 @@ mod tests {
         console.frame(source.next().await.unwrap().unwrap());
         server.abort();
 
-        for _ in 0..51 {
+        for _ in 0..52 {
             console.key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         }
         assert!(matches!(
@@ -725,8 +739,8 @@ mod tests {
     }
 
     /// An update that skips a revision drops the stream, and the stream is
-    /// dialled again after the backoff. Real time, as the inline console's
-    /// test of its own redial.
+    /// dialled again after the backoff. Real time, as the redial it
+    /// tests.
     #[tokio::test]
     async fn an_update_that_skips_a_revision_dials_the_stream_again() {
         let stub = Stub {

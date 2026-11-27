@@ -48,7 +48,7 @@ pub struct AgentEventDto {
 
 /// An agent event as the domain stream carries it: everything of
 /// [`AgentEventDto`] but the payload, which reaches 1 MB. A client that wants
-/// the payload reads `GET /v1/events`, or the console stream.
+/// the payload reads `GET /v1/events`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AgentEventSummaryDto {
     pub id: String,

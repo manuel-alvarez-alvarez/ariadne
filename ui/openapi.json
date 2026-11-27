@@ -4515,44 +4515,6 @@
         }
       }
     },
-    "/v1/sessions/{id}/console": {
-      "get": {
-        "tags": [
-          "sessions"
-        ],
-        "summary": "The session's newest events, in order: the transcript a console opens on.\nIt is a page of at most two hundred, the recent past rather than every\nturn a session ever ran; `GET /v1/events` walks back from it. While a\nturn runs, one `agent_thought_chunk` or `agent_message_chunk` holding the\ntext so far follows the stored events.",
-        "operationId": "snapshot",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "session id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/AgentEventDto"
-                  }
-                }
-              }
-            }
-          },
-          "404": {},
-          "503": {
-            "description": "the console streamed faster than a snapshot could be read, every time it was tried; ask again"
-          }
-        }
-      }
-    },
     "/v1/sessions/{id}/console/cancel": {
       "post": {
         "tags": [
@@ -4633,40 +4595,6 @@
           },
           "404": {},
           "409": {}
-        }
-      }
-    },
-    "/v1/sessions/{id}/console/stream": {
-      "get": {
-        "tags": [
-          "sessions"
-        ],
-        "summary": "Follow a session's console.",
-        "description": "Opens with a `snapshot` event carrying what `GET /console` would return —\nthe newest page of stored events, oldest first, then the running turn's\ntext so far — then an `event` per later one, each an `AgentEventDto`.\nSubscribing happens before the snapshot is read and every later stored\nevent is compared against the snapshot's last id, so nothing committed in\nbetween is ever missed or delivered twice; the live events are read under\nthe runtime's own turn lock for the same guarantee.\n\nThere is no replay and no `Last-Event-ID`: reconnecting starts again from a\nfresh snapshot. A client that falls too far behind gets a final `resync`\nevent and the connection closes, exactly as `/v1/events/stream` does.",
-        "operationId": "stream",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "session id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "SSE stream of console events (text/event-stream). A `snapshot` event carrying the newest page of recorded events (`[AgentEventDto]`) and the running turn's text so far, then an `event` per new one (`AgentEventDto`) — message and thought chunks, tool call progress, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. Chunks are live only: they are never stored and never reach `/v1/events`. Tool call progress is stored at most once in each interval, and `/v1/events` lists what is stored; the rest is live only. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes.",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentEventDto"
-                }
-              }
-            }
-          },
-          "404": {}
         }
       }
     },
@@ -6403,7 +6331,7 @@
       },
       "AgentEventSummaryDto": {
         "type": "object",
-        "description": "An agent event as the domain stream carries it: everything of\n[`AgentEventDto`] but the payload, which reaches 1 MB. A client that wants\nthe payload reads `GET /v1/events`, or the console stream.",
+        "description": "An agent event as the domain stream carries it: everything of\n[`AgentEventDto`] but the payload, which reaches 1 MB. A client that wants\nthe payload reads `GET /v1/events`.",
         "required": [
           "id",
           "kind",

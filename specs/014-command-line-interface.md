@@ -213,7 +213,7 @@ same binary also serves (013).
 27. `ariadne attach`, `goal attach` and `task attach` open the console of the
     session an id names, revived first when it is gone. A finished
     task whose worktree is gone revives its session. On a terminal it is the
-    full-screen console (008, rules 39 to 59), with no flag. With stdin or stdout redirected it is the plain line
+    full-screen console (008, rules 39 to 58), with no flag. With stdin or stdout redirected it is the plain line
     protocol over the trajectory stream (040, rule 45): one `kind · summary`
     line for each finished item, the numbered options of a permission that
     waits, and one prompt for each line read. A number answers that

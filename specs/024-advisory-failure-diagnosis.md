@@ -12,7 +12,7 @@ tests:
   - crates/ariadne-daemon/src/http/classify.rs
   - crates/ariadne-daemon/src/config.rs
   - crates/ariadne-api/src/events.rs
-  - crates/ariadne-console/src/transcript.rs
+  - crates/ariadne-daemon/src/trajectory/fold.rs
   - ui/src/features/sessions/session-activity.test.tsx
 ---
 
@@ -123,10 +123,10 @@ policy, none of which this changes or informs.
   (`failure_diagnosis.rs::a_failed_sessions_diagnosis_is_correlated_with_its_own_error`,
   `::a_diagnosis_for_a_replaced_launch_keeps_that_launchs_id_and_disturbs_nothing_current`,
   `::the_stored_correlation_survives_a_restart`,
-  `transcript.rs::duplicate_errors_each_keep_their_own_diagnosis`).
+  `trajectory/fold.rs::tests::a_diagnosis_reads_onto_the_error_it_names`).
 - A late diagnosis is visible in the console and the desktop app beside the
   original failure, even once a session's own terminal, turn, or process has
-  ended (`transcript.rs::a_late_diagnosis_attaches_to_the_error_it_names`,
+  ended (`trajectory/fold.rs::tests::a_diagnosis_reads_onto_the_error_it_names`,
   `session-activity.test.tsx::attaches a late diagnosis to its original
   error and keeps both once the session has ended`).
 - A diagnosis moves neither the status nor the attention a `session.error`
@@ -152,7 +152,7 @@ permission decision preempts one),
 `crates/ariadne-daemon/src/ai_permissions/mod.rs` (the preemption handle),
 `crates/ariadne-daemon/src/http/events.rs` and `http/classify.rs` (ingestion
 and its summary), `crates/ariadne-api/src/events.rs` (the advisory note),
-`crates/ariadne-console/src/transcript.rs` (where it attaches to its
+`crates/ariadne-daemon/src/trajectory/fold.rs` (where it attaches to its
 error), `crates/ariadne-client/src/endpoint.rs` and
 `crates/ariadne-daemon/src/config.rs` (the setting),
 `bench/ai-opportunities/failures/report.md` (the evidence and its limits).

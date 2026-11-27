@@ -53,7 +53,7 @@ const MAX_STEPS: usize = 200;
 /// hundreds a second.
 const CAPACITY: usize = 1024;
 /// How many times an open is tried again while the live channel lags under
-/// it, as `GET /console` does.
+/// it.
 const OPEN_TRIES: usize = 3;
 
 /// The place of one session's hub: locked while the hub opens, so two

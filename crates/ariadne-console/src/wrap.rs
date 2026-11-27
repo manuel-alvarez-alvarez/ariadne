@@ -206,38 +206,6 @@ pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// Wrap `text` to `width` columns and keep every character of it, spaces
-/// included: a word goes to the next row with the space after it where the
-/// two do not fit, and a word wider than a row starts where the row is and
-/// is cut between grapheme clusters. The rows of one line, joined, are that
-/// line.
-pub(crate) fn wrap_whole(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut out = Vec::new();
-    for source in text.split('\n') {
-        let source = detab(source);
-        let mut line = String::new();
-        let mut used = 0usize;
-        for word in source.split_inclusive(char::is_whitespace) {
-            if word.width() <= width && used > 0 && used + word.width() > width {
-                out.push(std::mem::take(&mut line));
-                used = 0;
-            }
-            for grapheme in word.graphemes(true) {
-                let columns = grapheme.width();
-                if used > 0 && used + columns > width {
-                    out.push(std::mem::take(&mut line));
-                    used = 0;
-                }
-                used += columns;
-                line.push_str(grapheme);
-            }
-        }
-        out.push(line);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,7 +243,6 @@ mod tests {
             wrap("one abcdefgh two", 3),
             ["one", "abc", "def", "gh", "two"]
         );
-        assert_eq!(wrap_whole("abcdefgh", 3), ["abc", "def", "gh"]);
     }
 
     /// An empty string wraps and clips to nothing, never a lone ellipsis or
@@ -285,7 +252,6 @@ mod tests {
         assert_eq!(wrap_exact("", 10), [""]);
         assert_eq!(wrap_words("", 10), [""]);
         assert_eq!(wrap("", 10), [""]);
-        assert_eq!(wrap_whole("", 10), [""]);
         assert_eq!(clip("", 10), "");
     }
 }
