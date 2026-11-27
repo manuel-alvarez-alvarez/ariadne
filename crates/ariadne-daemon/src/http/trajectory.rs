@@ -662,7 +662,20 @@ pub(super) async fn blob(
             .headers_mut()
             .insert(axum::http::header::CONTENT_TYPE, value);
     }
+    protect_blob(&mut response);
     Ok(response)
+}
+
+/// Isolate agent-supplied bytes when a browser navigates to a blob.
+pub(super) fn protect_blob(response: &mut axum::response::Response) {
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        axum::http::HeaderValue::from_static("sandbox; default-src 'none'"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        axum::http::HeaderValue::from_static("nosniff"),
+    );
 }
 
 #[cfg(test)]
