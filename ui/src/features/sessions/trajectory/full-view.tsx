@@ -2,7 +2,7 @@
  * The full view of one step: its whole content, with no set height. On a
  * console panel of 880 CSS pixels or wider it sits beside the conversation,
  * and on a narrower panel it is a modal drawer. The width is the panel's,
- * not the browser's, as the console of today measures it (`workspace.tsx`).
+ * not the browser's.
  *
  * Escape in the full view closes it, and the keyboard goes back to the
  * control that opened it. The Escape stops at the view, so it never reaches

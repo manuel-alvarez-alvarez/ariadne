@@ -329,67 +329,36 @@ Out: the daemon endpoints themselves (012).
     above their tabs — `text-xs`, three columns at `sm` and four at `lg`, no
     card frame — rather than the framed grid further down an entity's own
     screen; a stepped task's own workflow section is rule 40's.
-21. Every session is shown in its console, a transcript the app draws from
-    the daemon's console stream (`GET /v1/sessions/{id}/console/stream`,
-    008). A `snapshot` replaces the transcript, and each `event` extends it.
-    The pane's state, stream, scroll and keys are `console/session-console.tsx`;
-    the blocks are drawn by `console/blocks.tsx`.
-    The events fold into blocks as the CLI's transcript folds them: a user
-    prompt, with a daemon prompt (`source: "daemon"`) marked as such; the
-    agent's message as markdown; a thought as dimmed markdown; a plan's
-    entries with their status; one tool call block per `tool_call_id`,
-    merged across `pre_tool_use`, `tool_call_update` and `post_tool_use`,
-    with its status, kind, title, output text and diff; a system note for a
-    session's start and end, a cancelled or other non-`end_turn` stop,
-    compaction; an error, with the note of the
-    `session.diagnosis` whose `error_event_id` names it; and `kind · summary`
-    for a kind it does not know. A person's prompt and a developer prompt
-    are Markdown, drawn by `components/markdown.tsx`
-    as a message is: `h1` to `h3` in a visible scale above body text, lists
-    with their nesting, task-list checkboxes, `del`, `kbd` and inline code
-    styled, a single newline in a prompt still a line break, and a fenced
-    block a `CodeBlock`. Fold summaries and the hint stay plain text, and
-    `blocksText` keeps a prompt's raw text. Live `agent_message_chunk` and
-    `agent_thought_chunk` events build one open block per speaker — the
-    session or one subagent — and that speaker's stored `agent_message` or
-    `agent_thought` closes it without repeating its text.
-    Every block also keeps the `created_at` of its first event. A tool call
-    block carries what a reader needs to read it: its locations, its start and
-    end time, a subject derived as the CLI's pane does (the command's first
-    line, `path:line`, `pattern in path`, the URL, else the title), its input
-    as the whole command or as two-space JSON, and its output formatted — an
-    object or JSON text pretty-printed and marked `json`, a `read`'s numbered
-    fence and line prefixes removed with the first line number kept, and the
-    language of a `read` taken from its file's extension; an image is one
-    `[image]` line. `session.switched` and `session.pin_fallback` are notes
-    with their summary, and a `usage_update` draws no block.
-    A block keeps its first event id, and a subagent's block is tagged with
-    the child's title. The transcript follows the newest block while the
-    reader is at the bottom of it.
-    A scroll to the top of the transcript loads the events older than the
-    ones shown: one page of
-    `GET /v1/events?session=<id>&order=desc&before=<oldest event id>&limit=200`,
-    folded in before the blocks, with the reader's scroll position kept. A
-    call whose `pre_tool_use` is in that page and whose later events are
-    already shown is one block. The pane shows a loading line while a page
-    loads, and an error with a Retry where the fetch fails. An empty page
-    marks the start of the session, and nothing more is fetched until a
-    fresh snapshot replaces the transcript, which also drops the pages
-    loaded.
+21. Every session is shown in its console, which draws the turns of the
+    daemon's trajectory (040): rules 89 to 109 say what a turn shows. The
+    session view mounts it in the session panel, a task, a goal and a pull
+    request, with no switch and no URL parameter. The UI calls neither
+    `GET /v1/sessions/{id}/console` nor `GET /v1/sessions/{id}/console/stream`
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the turn console in the session view, with no parameter`,
+    `ui/src/features/sessions/session-mounts.test.tsx::shows the turn console in the session panel`,
+    `::shows the turn console in a task`,
+    `::shows the turn console in a goal`,
+    `::shows the turn console in a pull request`).
+    The daemon folds the events, and the console folds none. A person's prompt
+    and a developer prompt (`source: "daemon"`) are Markdown, drawn by
+    `components/markdown.tsx` as a message is: `h1` to `h3` in a visible scale
+    above body text, lists with their nesting, task-list checkboxes, `del`,
+    `kbd` and inline code styled, a single newline in a prompt still a line
+    break, and a fenced block a `CodeBlock`
+    (`ui/src/features/sessions/console/blocks.test.tsx::renders a prompt as Markdown: headings, task lists, a fenced block, and a single newline still breaks`,
+    `::renders developer prompts as full Markdown without a fold`,
+    `::draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text`,
+    `::shows the time of a prompt and marks a queued one`).
 22. An input box posts a prompt as `{"text"}` to
     `POST /v1/sessions/{id}/console/input`: Enter sends it, and Shift+Enter
-    adds a line. A failed post is kept, rule 22d. The
-    box is disabled, with the reason, while the session is not live. A
-    running turn shows a Stop control that posts
+    adds a line. A failed post is kept, rule 22d. The box is disabled while
+    the session is not live. A running turn shows a Stop control that posts
     `POST /v1/sessions/{id}/console/cancel` with no body, and Escape inside
-    the console cancels it too. A `permission_request` with no
-    `permission.replied` yet has a selectable conversation row. Its details show the call, command or diff, and its
-    options as a picker: Up, Down or 1 to 9 select an option, Enter or a
-    click answers, and the answer is posted as `{"text": "<optionId>"}` to
-    the same input route. The reply shows the chosen option and who decided
-    (`decided_by`). An empty composer delegates permission keys only while the matching
-    pending permission picker is displayed in details. With details closed or another item selected,
-    Enter cannot answer that permission and digits remain ordinary input. Waiting-question behavior is unchanged.
+    the console cancels it too. A pending permission is answered as rule 93
+    says
+    (`ui/src/features/sessions/console/composer.test.tsx::disables the input and Send while the session is not live`,
+    `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::cancels a running turn with Stop and with Escape`,
+    `ui/src/features/sessions/console/composer.test.tsx::gives the input the keyboard when asked to on arrival`).
 22b. The composer (`console/composer.tsx`) starts at one line and grows with
     newlines and pasted text to six lines, then scrolls inside. Send is an icon
     button with a tooltip at its right edge, aligned with its last line and never
@@ -400,18 +369,17 @@ Out: the daemon endpoints themselves (012).
 22c. Text typed in the composer always posts to the input route (rule 22).
     The composer answers no question.
 22d. A message the daemon refuses leaves the queue and stays in the
-    transcript with the error, a Retry and an Edit. Retry sends the same
+    console with the error, a Retry and an Edit. Retry sends the same
     text again and leaves the draft as it is. Edit takes the text back into the composer in front
     of any newer draft, and gives the composer the keyboard. Refused messages are
-    retained with the console's state (rule 24i), so Expand, Collapse and a
+    retained with the console's state (rule 99g), so Expand, Collapse and a
     change of tab keep them, and a send that fails after the pane was
     replaced shows in the pane now mounted.
 22e. A plus menu beside the composer searches, by name and description, the
-    agent's commands (rule 23b) and these actions: Switch agent/model, where
+    agent's commands (rule 23c) and these actions: Switch agent/model, where
     the session's goal is not cancelled; Resume, only while the session is
-    not live; and `Copy loaded transcript (<view>)`, which copies the blocks
-    the console has loaded for the view shown, `main` or the child's title,
-    as text and nothing older. Switch and Resume are the session actions of
+    not live; and `Copy loaded transcript (main)`, which copies the prompt and
+    the answer of each turn the console has loaded, and nothing older. Switch and Resume are the session actions of
     the session panel (`session-actions.tsx`), with the same dialog, toasts
     and navigation to the successor or the revived session. A command picked
     from the menu goes into the composer for editing in front of any draft,
@@ -420,17 +388,12 @@ Out: the daemon endpoints themselves (012).
     keyboard reach it: the search field takes the keyboard on opening, Down
     walks the entries, Up returns to the field and Enter in the field picks
     the first match. A long command name or copy label is cut with an
-    ellipsis, whole on hover, and the list never scrolls sideways. The menu also shows in a child's view, with the
-    actions alone.
-22a. The console draws no card for an `agent_request` event or an
-    `agent_request.resolved` event. An old one in the history is a
-    `kind · summary` row, as every kind the console does not know (rule 21).
+    ellipsis, whole on hover, and the list never scrolls sideways. The menu has
+    no global fold action.
 22f. A question the agent asks with its own tool, an ACP form elicitation
-    (021), is a form card (`console/form-card.tsx`). The
-    `question` event of the console stream draws it, and the console reads
-    `GET /v1/sessions/{id}/questions` with every snapshot, a reconnect's
-    included, to draw an open question older than the snapshot's page. In
-    `main` each card draws after the transcript, directly above the composer.
+    (021), is a form card (`console/form-card.tsx`). The console reads
+    `GET /v1/sessions/{id}/questions` and draws each open question of a turn's
+    `attention` directly above the composer, as rule 94 says.
     Each question occupies one step, in the console body font and size.
     The header shows its title or "Question", clock time, and position for multiple questions.
     Question tabs mark answered questions and allow navigation.
@@ -458,111 +421,34 @@ Out: the daemon endpoints themselves (012).
     Clicking the summary opens the full card read-only, with picks marked.
     An attention-strip form with one single-select question, including its companion,
     answers in place with one click and displays the Recommended badge.
-    Other forms open the console. A live stream, reload, reconnect and replay show the same
-    answer: the console reads the close and the form from the history, and
-    loads older pages until it finds what a card lacks, and the card waits for
-    that rather than draw keys or no answer. Only a question the history holds
-    no close for (the daemon recorded none, or the history ends first) draws
-    as `Closed`, with no answer, and it no longer counts as waiting. A
-    question the console has read, from the list, a snapshot or the stream, stays
-    drawn when it closes, even when a later read of the list no longer has
-    it and a newer snapshot drops it. A failed read of the list shows its
+    Other forms open the console. A failed read of the list shows its
     error with Retry, which reads the list again. A read of the list that lands
     after the console moved to another session draws nothing. A session
     that is not live takes no answer. While a question is open the console's
     status row says `waiting for you`, and the session activity feed labels
-    its `question` event `Waiting for you`.
+    its `question` event `Waiting for you`
+    (`ui/src/features/sessions/console/form-card.test.tsx::draws one question at a time with large choice rows`,
+    `::sends the answers as accept with the content of the form`,
+    `::sends decline when the user dismisses the question`,
+    `::shows a failed answer on the card and lets the user try again`,
+    `::draws no card of the session it left when its question read lands late`,
+    `::says the session waits for the user while a question is open`,
+    `ui/src/features/sessions/console/form-questions.test.ts::reads each field of the schema with its choices as the agent wrote them`).
 23. The console uses the app's own tokens, in both themes. An Expand control
     opens it in a near-fullscreen modal, and its Collapse control restores
-    it to the panel; each move closes the old stream and opens a fresh one.
+    it to the panel; each move mounts a new pane, which opens a new stream
+    and reads the console's retained state (rule 99g).
     Escape inside the console belongs to the console in the panel and in
     the modal alike; Escape outside the console closes the panel or the
     modal. ⌘Escape leaves the console without cancelling or closing
     anything itself: it moves focus to the panel's Close button, or to the
     modal's Collapse button, so the plain Escape that follows closes what
-    is now focused.
-    The console has the extras of the CLI's attach pane
-    (`crates/ariadne-console/src/tui/`), rules 23a to 23f.
-23a. The browser and desktop consoles share a conversation and details workspace,
-    in embedded and expanded views. At a panel width of at least 880 CSS pixels,
-    selected tool details occupy 40% of the workspace beside the conversation.
-    Narrower panels open a modal details drawer. Panel resizing changes the
-    presentation without changing the selected call.
-    Each tool has one compact, selectable row with its kind icon, status mark,
-    name, short subject (or output summary), and elapsed duration. The full
-    subject and timestamp appear on hover. Status is also available to screen
-    readers. A running duration updates until completion or failure.
-    Tool rows have no left border. Status icons and semantic text colors identify
-    running, failed and completed calls. Secondary activity is indented 16px. Selecting a row with a click, Enter,
-    or Space opens that call's details and focuses Close tool details.
-    Details show the existing input, output and diff under their captions,
-    in that order. A read omits its redundant input and keeps numbered output
-    in the file's language. The full subject appears unless the input or heading contains it.
-    Tool and permission headings omit actual command or input text repeated in their input sections.
-    Generic Tool call and Permission labels preserve context alongside status and section labels.
-    A command substring within a tool name is not a duplicate: Bash retains its heading for sh input.
-    Calls with no content remain selectable and show an explicit empty state.
-    Selection stays on the same block during stream updates and newer calls.
-    It never follows new activity automatically. Closing details returns focus
-    to the selected row when available. Escape inside details closes details
-    without cancelling a turn or closing the surrounding console.
-    Selection is local to the mounted console and clears when switching views.
-    Questions stay in the conversation. Permissions use compact selectable rows;
-    their command, diff, AI note and response picker open in the same details area as tools.
-    New permissions never replace the current selection automatically. The Pending request
-    control opens the pending permission and focuses its picker.
-    The drawer repeats this control unless it already shows the pending permission.
-    Requests from subagents keep their existing answer routes.
-    User, developer (daemon) prompts and assistant messages never fold. Role labels
-    identify them at the main conversation margin. Assistant headers have a bot icon and
-    a muted-token background with a faint solid inset border-token ring.
-    Developer headers have a code icon, a slightly deeper shade of the same muted-token background and a solid inset border-token ring.
-    You headers have a person icon, restrained 12% primary-token background and solid inset border-token ring, including queued prompts.
-    All three role icons share one horizontal position beside their headers, independent of message height.
-    Labels and icon shapes distinguish roles without color alone.
-    Developer prompts have no individual
-    fold control or saved fold preference. Thoughts retain individual folds.
-    Questions (rule 22f) use a purple marker and subtle background. Open cards never fold; closed cards show clickable summaries.
-    Entries have no colored left borders. Secondary icons share the same horizontal inset and align with the first text line.
-    Thought summaries have no additional padding inside their activity row.
-    Conversation messages have 12px separation; activity rows use 4px gaps and compact padding.
-    The composer shares the conversation margin, with a compact pending-request control above it.
-    A permission row shows `Permission ·`, the call, and its pending state or chosen answer.
-    Its timestamp appears on hover. Selecting a pending permission shows its header, command,
-    diff, AI note and picker in details, regardless of the conversation fold state.
-    An answered permission keeps a compact conversation row with its chosen answer.
-    Its selected details retain the command, diff and decision source. The detail body can
-    fold locally; selecting another item resets this preference. No permission detail preference is persisted.
-    The AI note is the TUI's (`AI said ask · allow 62%,
-    deny 5% · danger 21% (allow up to 5%, deny from 65%)`), shown where the
-    request carries one. A permission shows its command bare under
-    `command · Shell`.
-    Prompts and fold summaries show a muted `HH:MM:SS`. Tool rows show elapsed
-    duration, and their details show the clock time. Blocks expose full timestamps on hover.
-    `BlockView` is memoized, and it compares a permission
-    picker by its props, so a streamed chunk re-renders only the block it
-    changes. A picker whose own state changes renders again. A message, a person's prompt, a plan and a
-    pending permission never fold. Developer prompts render their full Markdown. A foldable block's
-    summary stays plain text. The whole summary is one button
-    with `aria-expanded`, so a click, Enter or Space opens that block alone;
-    its content sits outside the button, so selecting it, a link in it and
-    a Copy control never toggle it. A block's own choice is a fold
-    preference kept under its id (24i) and survives stream updates, the view
-    changing and a remount. Foldable blocks start folded without an individual preference.
-    Tool rows and details are independent of folding. Neither the header nor the plus menu
-    offers global fold controls in embedded or expanded views; no global fold state is retained.
-    Ctrl-O has no handler in either browser or desktop console, embedded or expanded.
-    The terminal console keeps its existing Ctrl-O behavior.
-23a1. Conversation and tool details scroll independently.
-    Embedded and expanded views omit the static Conversation strip and its bottom border.
-    The transcript retains role `log` and the accessible name `Console transcript`; history controls remain available. A message, a tool's
-    output, a command, a diff, a table, a thought and a question card grow
-    with their content and wrap a wide line; none has an `overflow` or a
-    `max-height` of its own. The composer keeps its own six-line cap.
+    is now focused. Ctrl-O has no handler in the browser and desktop console
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::moves the keyboard to the pane's Close button on ⌘Escape, and closes nothing`,
+    `ui/src/components/panel-sheet.test.tsx::leaves Escape on the board alone and returns focus when the pane closes`).
 23a2. Code is a `CodeBlock` (`components/code-block.tsx`), in the Markdown
     renderer's fenced blocks and in the console's tool output, commands and
-    diffs. `lib/highlight.ts` resolves a fence's name, or the extension of
-    the file a `read` tool names, to a language of
+    diffs. `lib/highlight.ts` resolves a fence's name to a language of
     `@codemirror/language-data`. The block shows that language's label and
     parses the code with its CodeMirror grammar. The tokens take the light
     and dark highlight styles of `lib/highlight-style.ts`. The console's code
@@ -579,39 +465,6 @@ Out: the daemon endpoints themselves (012).
     code then has no border, background or header bar of its own, and its
     caption line ends with the same icon-only Copy. Copy puts the section's
     original text on the clipboard and never toggles a fold.
-23a3. A reader who scrolls more than a few pixels from the newest output
-    stops following and gets a `Jump to latest` button over the transcript,
-    marked `New output` once the transcript changed since. The button
-    follows the newest output again and clears the mark; returning to the
-    bottom by scrolling does too. Streaming, older pages loading and folds
-    leave the offset of a reader who scrolled away, and keep a following
-    reader at the newest output, a resized panel too.
-23a4. In `main` and in the view of each subagent, each run of activity rows
-    shows only its last 3 rows. An activity row is an indented row: a tool,
-    permission, thought, plan, note, subagent line, error or event row. A
-    prompt and an agent message are conversation blocks and
-    never hide; they, the start of the view and its end bound a run. A
-    question card draws after the transcript (rule 22f), outside every run,
-    and never hides. A run of
-    3 rows or fewer shows all of them and no control. A longer run has, above
-    its last 3 rows, a button `Show N earlier`, where N is the number of rows
-    it hides (0 where every older row shows in place), with `aria-expanded`. A pending permission, an error and the
-    selected tool or permission row show in place however old; the other
-    older rows stay hidden. A click, Enter or Space on the button shows every
-    row of the run; it then reads `Show fewer` and returns the run to its
-    last 3 rows. While a turn runs, each new row of the newest run pushes the
-    oldest shown row under the button. The choice is kept per run, under
-    the id of a row of the run, in the console's view state like a fold (rule
-    24i), and a run keeps it when rows join it at either end. Hidden rows stay in the transcript, and
-    `Copy loaded transcript` copies them. Opening or closing a run keeps the
-    reader's place as a fold does (rule 23a3): a reader at the newest output
-    stays there, and a reader who scrolled away keeps the block they were on
-    where it was; where the toggle hides that block, the reader keeps the
-    button where it was. The number 3 has no setting.
-23b. The latest `available_commands_update` event replaces the command
-    list, whole: a later list, an empty one included, replaces the earlier
-    one. A list whose payload carries a `subagent`, of any value, is ignored, and the event
-    draws no block.
 23c. While the input starts with `/` and the cursor is in its first word, a
     suggestion list shows at most 8 of the listed commands whose name holds
     the typed text, each with its name, description and input hint, or says
@@ -622,79 +475,18 @@ Out: the daemon endpoints themselves (012).
     its browser meaning. Escape closes the list without cancelling the turn;
     the next edit of the input opens it again. A
     picked command is sent as plain text through `/console/input`, as every
-    prompt is.
-23d. A status row (`console/status.tsx`) below the input shows the session's status, and while a
-    turn runs a spinner with `thinking` or `running <tool>` (the tool's first line,
-    cut with an ellipsis, whole on hover) and a turn clock
-    counted from the `created_at` of the turn's first event. It shows the
-    token totals `↑in ↓out`: the sum over the launches of the latest
-    `ariadne_usage` of each launch's `stop`, or the session's own usage
-    where that is more, each count apart, at the right end. The row is one line at every width.
-23e. A sent prompt shows at once as a user prompt block tagged `queued`.
-    The `user_prompt_submit` with `source: "console"` and the same text,
-    newer than the send, replaces it: an older echo, such as one a resync
-    replays, does not. A failed post removes the queued block and keeps the message, rule 22d. Each send is its own queued block: a failed post removes the
-    block of that send alone, even where an identical prompt is queued
-    beside it, and where the echo of a later identical send came first, the
-    failure clears the entry that echo left behind. A snapshot keeps a queued prompt it does not yet hold.
-23f. The status row replaces the keyboard-hint footer. Keyboard shortcuts remain available.
-24. A `resync` or a dropped stream is retried on the event stream's
-    backoff, and the pane says it is reconnecting meanwhile. The fresh
-    snapshot replaces the transcript, so no block shows twice.
-24a. The console shows a session's subagents as the CLI attach pane does
-    (008 rules 30 to 36; the bar is `ViewBar` in `console/status.tsx`). A `subagent_update` announces a child on its first
-    `subagent.id`. A bar above the input shows only while the session has a
-    child. It lists `main`, then each child in announcement order, with the
-    mark of its state: `●` running, `✓` completed, `✗` failed, `⊘`
-    cancelled, `◇` none. The child whose permission question waits carries
-    `?`.
-24b. A click on a bar entry switches the view. The bar is one Tab stop, on
-    the entry shown: Left and Right move between the entries, in bar order
-    and wrapping around, and Home and End go to the first and last; each
-    shows its view and keeps the keyboard on the bar. Tab and Shift-Tab are
-    the browser's.
-24c. A child's view shows only the events that carry its
-    `payload.subagent.id`. A call's update merges only into the block of
-    the same speaker, even under the same call id or title. It has no input
-    box and takes no typing. Its footer starts with `read-only`, then `arrows switch view`.
-24d. Escape in a child's view returns to `main`. Where the child's latest
-    `capabilities.cancel` is true and its state is `running`, Escape posts
-    `{"subagent_id": "<id>"}` to `POST /v1/sessions/{id}/console/cancel`
-    instead, and the footer says `esc cancel`, not `esc back`. A refusal,
-    a `409` included, adds an error block to the child's view.
-24e. The `main` view shows a line per child announcement,
-    `◇ subagent <title> · <task>`, and a line per end state,
-    `<mark> subagent <title> <state> · <elapsed>`, timed from the
-    announcement. A child first heard of at its end gets both lines. A
-    child's own events stay out of `main`.
-24f. A child's `permission_request` and `permission.replied` show in
-    `main`, and the question names the child:
-    `<tool> · asked by subagent <title>`. The picker answers it from `main`.
-24g. The status row says `running N subagents` while any child is in state
-    `running`.
-24h. A snapshot, the one a reconnect brings included, rebuilds the bar and
-    the views. A shown child that the snapshot no longer holds gives way to
-    `main`, once a snapshot has said which children there are.
-24i. The console retains, in memory and per daemon address and session
-    (`console/console-view-state.ts`): the draft, the transcript's scroll
-    position and whether it follows the newest block, the view shown, the
-    refused messages, a fold preference per block id and the activity runs shown whole. Expanding the
-    console, collapsing it, and leaving the tab and coming back restore
-    them; another session or another daemon starts with its own. A reader
-    who scrolled up comes back to that place, not the bottom: the pane
-    loads older pages back to the oldest event it had loaded, then restores
-    the offset, so the place holds the same content. The console also
-    retains the first block in view and where its top sat, and puts that
-    block back there, so events that moved the page boundary do not move the
-    place. A browser
-    restart forgets them. Each console on screen holds one stream, and a
-    hidden one holds none.
+    prompt is
+    (`ui/src/features/sessions/console/composer.test.tsx::completes a suggestion by keyboard or click and keeps the text after the command`,
+    `::completes a suggestion on a click, keeping the composer's focus`,
+    `::shows at most eight suggestions, and says none matches`,
+    `::closes the suggestions on Escape without cancelling, and opens them again on the next edit`).
 25. A session's view has two tabs over one space: the console, open by
     default, and the agent activity feed. The tab is in the URL (`?tab=`);
     the console's tab is `terminal` on the wire, so an older link still
     opens it. A tab value that is not one of the two opens the console.
     Leaving the console's tab closes its stream, and coming back opens a
-    new one.
+    new one
+    (`ui/src/features/sessions/console/composer.test.tsx::holds one open stream for the console shown, and none once it is hidden`).
 26. The sessions list shows the pin the session was launched on
     (`<agent>:<model>`): the row cuts the model id in the middle when needed,
     keeps the effort after an `@` readable, and its hint holds the whole pin
@@ -1771,16 +1563,16 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
 
 ### The turn console
 
-The turn console draws a session from the daemon's trajectory (040) as
-turns. It lives in `ui/src/features/sessions/trajectory/`. The daemon folds
+The session console draws a session from the daemon's trajectory (040) as
+turns. It lives in `ui/src/features/sessions/trajectory/`, and shares the
+composer, the form card, the status row and the find control with
+`ui/src/features/sessions/console/`. The daemon folds
 the events, and the console folds none: `store.ts` applies the snapshot and
-the ops of each update by id. The console of today (rules 21 to 24i) stays
-the default until the turn console replaces it.
+the ops of each update by id.
 
-89. With `?console=turns` in the URL, the session view shows the turn
-    console, and it reads `GET /v1/sessions/{id}/trajectory/stream`.
-    Without the parameter, the session view shows the console of today
-    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::opens the turn console with the hidden parameter, and the console of today without it`).
+89. The session view shows the turn console, and it reads
+    `GET /v1/sessions/{id}/trajectory/stream` (rule 21)
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the turn console in the session view, with no parameter`).
 90. A turn shows its prompt, one activity line and its answer. A closed turn
     with nothing in its `attention` is these three rows. The activity line
     gives the time of the turn, its steps, the files it changed and its
@@ -1828,18 +1620,18 @@ the default until the turn console replaces it.
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::always shows an open question and each error, and counts the rest in one row`,
     `::says a failed read of the questions, and reads them again on Retry`,
     `::keeps the attention count as a disclosure once the fold is open`).
-95. The composer is the one of today (rules 22, 22b, 22e, 23c). A sent
+95. The composer is the one of rules 22, 22b, 22e and 23c. A sent
     prompt shows `queued` until a newer console turn holds its text: the
     prompt's `text` as it was submitted (040), which leaves out the seat
     brief, else its content where a daemon sends no `text`. A prompt that
     only ends with the same text holds another text. Each turn takes one
     queued prompt, once. A refused prompt stays with Retry and Edit, and where the
     echo of an identical send took its entry, the refusal clears the entry
-    that echo left behind (rule 23e). Stop and Escape post the cancel, and
+    that echo left behind (rule 95). Stop and Escape post the cancel, and
     ⌘Escape moves the keyboard to the pane's Close button and closes
     nothing (rule 23). The slash commands come from the `commands` of the
     session's state. The draft and the refused prompts are retained in memory
-    per daemon address and session, as rule 24i says: another session starts
+    per daemon address and session, as rule 99g says: another session starts
     with its own, and a refusal that lands after the pane moved goes to the
     session that sent it
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::sends a prompt as queued, and drops the queued block once a turn holds it`,
@@ -1884,8 +1676,7 @@ the default until the turn console replaces it.
 98. The turn console uses the app's tokens in both themes. No source of it
     names a fixed colour, and nothing it draws shows one, in the light or the
     dark theme, the shared parts of `console/` included. The shared form
-    card keeps its own look in the console of today. In the turn console
-    its marker takes the token `--question-fg`, which the turn console sets
+    card's marker takes the token `--question-fg`, which the console sets
     on the card's wrapper
     (`ui/src/features/sessions/trajectory/tokens.test.ts::names no fixed colour in any source of the turn console`,
     `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws every part with the app's tokens, shared cards included, in both themes`).
@@ -1919,18 +1710,18 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     a fact that does not fit is cut
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the status, the mode, the options, the context use, the cost and the tokens in one line`).
 99c. A warning note and a compaction always show as lines of their turn,
-    whatever the fold, and an error shows as rule 94 says. A closed turn of a
-    snapshot carries no steps (040, rule 13), and `attention` carries no
-    notes (040, rule 16). So the console reads the steps of each turn shown
-    once, after each snapshot: the last page, which an opened fold then
-    shows, and then each older page, for its notices alone. Retry resumes a
-    failed notice read at its cursor and continues through the older pages. A compaction
-    line says it runs, ended, or failed with its error. An info note is a row
-    of the open activity fold alone: it is not a line of the turn, nor one of
+    whatever the fold, and an error shows as rule 94 says. The console takes
+    the warning notes and the compactions from the `notices` field of the
+    turn (040). It reads no page of steps to find them. A compaction line
+    says it runs, ended, or failed with its error. An info note is a row of
+    the open activity fold alone: it is not a line of the turn, nor one of
     the last rows of a running turn (`trajectory/notices.tsx`)
-    (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn of a snapshot before its fold opens`,
-    `ui/src/features/sessions/trajectory/console-state.test.tsx::always shows a warning, an error and a compaction in their turn, and an info notice in the fold alone`,
-    `ui/src/features/sessions/trajectory/console-state.test.tsx::resumes the notice scan at the failed cursor on Retry`).
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn from its notices, and reads no steps for them`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::always shows a warning, an error and a compaction in their turn, and an info notice in the fold alone`).
+99c1. Where `notices_more` is above zero, one row gives the count, open fold
+    or closed, as `N more notices`. It is a disclosure with `aria-expanded`,
+    and it opens the steps of the turn
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::counts the notices of a turn that its notices do not hold in one row, which opens the steps of the turn`).
 99d. An answered permission is a mark on the row of its call, found by the
     call's `permission` id or by its tool call id, and not a row of its own
     where the call's row shows. The mark gives `✓` or `✗` by the kind of the
@@ -1940,25 +1731,28 @@ plans and the `note` and `compaction` steps of the trajectory (040).
 99e. The title that the agent gives the session shows as the subtitle of the
     console, under its stream line, and a `session_patch` changes it
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the title that the agent gives as the subtitle of the console`).
-99f. Find (`trajectory/find-slot.tsx`, over the find of the console of today
-    in `console/transcript-find.tsx`) searches the loaded turns and the
+99f. Find (`trajectory/find-slot.tsx`, over `console/transcript-find.tsx`) searches the loaded turns and the
     loaded steps: the prompt and the answer of each turn shown, and each
     step the console holds for it, including live steps, full pages, attention
-    and notices retained from older pages. Each step appears once by ID.
+    and the notices of the turn. Each step appears once by ID.
     Find reports when older turns are unloaded and loads them on request
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::finds the text of the loaded turns and the loaded steps`,
-    `ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn of a snapshot before its fold opens`).
-99g. The turn console expands into a modal and collapses back, as rule 24i
-    says of the console of today. Expand, collapse and a change of tab each
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn from its notices, and reads no steps for them`).
+99g. The console expands into a modal and collapses back. Expand, collapse and a change of tab each
     mount a new pane. The console keeps the draft, the scroll place and
     whether it follows, and the open folds of each session, the turns' and
-    the plans', in `console/console-view-state.ts`, and a new pane reads them
-    back
+    the plans', in memory and per daemon address and session
+    (`console/console-view-state.ts`). Another session or another daemon starts
+    with its own, and a browser restart forgets them. A new pane reads them
+    back, and each console on screen holds one stream
+    (`ui/src/features/sessions/console/composer.test.tsx::brings a session's draft back after the console is unmounted`,
+    `::keeps each daemon's and each session's state apart`,
+    `::keeps a named host's state when its address changes, and gives the host's reason while it is down`),
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::keeps the draft, the scroll place and the open folds through expand and collapse`,
     `ui/src/features/sessions/trajectory/console-state.test.tsx::keeps the draft, the scroll place and the open folds through a change of tab`).
 99h. A pane mounted again reads the older turns back to the oldest turn the
-    console had loaded. It restores each turn’s loaded step range and its
-    notices before it restores the scroll offset. This keeps the older rows
+    console had loaded. It restores each open fold's loaded step range
+    before it restores the scroll offset. This keeps the older rows
     loaded by Show earlier in the open fold
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::loads back to the oldest turn it had loaded before it puts the reader's place back`,
     `ui/src/features/sessions/trajectory/console-state.test.tsx::puts the place back once the open folds read their rows, not before`).
@@ -2099,7 +1893,7 @@ view.
   (`ui/src/features/sessions/hosts.test.tsx::merges the sessions of every host, each row naming its host, and opens one on its host`,
   `::applies the picked host to the list and names no host`,
   `::titles each row from its own host when two hosts share a goal and task id`,
-  `::opens the console stream of a remote session on its host and sends input there`,
+  `::opens the trajectory stream of a remote session on its host and sends input there`,
   `::cancels a turn of a remote session on its host and shows the host's stream result`).
 - One rule shows the host of a row and a panel (rule 74): under All with a
   named host, under one pick, with a host down, under a saved pick no longer
@@ -2510,87 +2304,12 @@ view.
   `::narrows the rows to the sessions active until a day`,
   `::narrows the rows to the titles a search matches, ignoring case`,
   `::starts no session of its own`).
-- The console folds the events of the stream into its blocks: prompts, a
-  daemon prompt marked, message and thought, a plan, one block per tool call
-  with its output and diff, the system notes, an error with its diagnosis,
-  an unknown kind as its summary, a subagent's tag and a block's first event id
-  (`ui/src/features/sessions/console/transcript.test.ts::folds a prompt, marking one the daemon sent`,
-  `::folds the agent's message and thought, and a plan with its statuses`,
-  `::merges every event of one tool call into one block`,
-  `::reads a tool call's diff from a patch or from its old and new text`,
-  `::notes a session's start and end, a stop other than end_turn, and compaction`,
-  `::reads a diagnosis onto the error it names, and an unknown kind as its summary`,
-  `::tags a subagent's block with its id and title`,
-  `::keeps a block's first event id`).
-- Live chunks build one open block that the stored whole closes without
-  repeating it, a late chunk of a closed turn is dropped, and a child's
-  chunks and whole stay apart from the parent's
-  (`ui/src/features/sessions/console/transcript.test.ts::builds one open block from live chunks, closed by the stored whole without repeating it`,
-  `::drops a late chunk of a turn its whole already closed`,
-  `::keeps a parent's and a child's interleaved %s runs apart`,
-  `::leaves a parent's open block open when a child's whole arrives`).
-- A permission shows its call, command and options, then its reply; one on
-  Ariadne's own tool that the daemon allowed is dropped
-  (`ui/src/features/sessions/console/transcript.test.ts::asks a permission with its call, command and options, then shows the reply`,
-  `::drops a permission on Ariadne's own tool that the daemon allowed`).
-- A snapshot replaces the transcript, an event it already holds is added
-  once, and a turn runs from its prompt to its stop
-  (`ui/src/features/sessions/console/transcript.test.ts::replaces the transcript with a snapshot, and adds an event it already holds once`,
-  `::says a turn runs from its prompt until its stop`).
-- The stream client reads the session's console stream, hands over the
-  snapshot and each event, and reconnects on the backoff after a `resync`
-  or a drop
-  (`ui/src/features/sessions/console/console-stream.test.ts::reads the console stream of the session`,
-  `::hands over the snapshot and every event after it`,
-  `::reconnects on the backoff after a resync`,
-  `::reconnects on the backoff after a drop, and stops for good on stop`).
-- The console draws the snapshot, marks a daemon prompt, extends and
-  replaces its transcript, says it reconnects and takes the fresh snapshot
-  without duplicates, and closes its stream when it leaves the screen
-  (`ui/src/features/sessions/console/session-console.test.tsx::reads the console stream and draws the snapshot as blocks`,
-  `::keeps developer prompts expanded and identifies their role`,
-  `::extends the transcript with each event and replaces it with a new snapshot`,
-  `::says it reconnects after a resync and takes the fresh snapshot without duplicates`,
-  `::closes the stream when it leaves the screen`).
-- A scroll to the top loads one older page and keeps the reader's place,
-  merges a call across the page boundary into one block, shows loading and
-  an error with a retry, stops at an empty page, and starts over on a fresh
-  snapshot
-  (`ui/src/features/sessions/console/session-console.test.tsx::loads one older page when scrolled to the top, and keeps the reader's place`,
-  `::shows a loading state, then an error with a retry that loads the page`,
-  `::stops fetching once an empty page marks the start, until a reconnect`,
-  `::drops the loaded pages when a fresh snapshot replaces the transcript`,
-  `ui/src/features/sessions/console/transcript.test.ts::merges a call whose start is in an older page with its end already shown`).
-- The input sends on Enter and adds a line on Shift+Enter, a refused send
-  adds an error block, and the box is disabled with a reason when the
-  session is not live
-  (`ui/src/features/sessions/console/session-console.test.tsx::sends a prompt on Enter, and Shift+Enter adds a line`,
-  `::adds an error block when the daemon refuses the prompt`,
-  `::disables the input with a reason when the session is not live`).
-- A running turn is cancelled from its control and from Escape inside the
-  console
-  (`ui/src/features/sessions/console/session-console.test.tsx::cancels a running turn from its control and from Escape inside the console`).
-- The bar shows only with a child, and lists `main` and each child in
-  announcement order with the mark of its state and `?` on the child that
-  asks (rule 24a)
-  (`ui/src/features/sessions/console/session-console.test.tsx::shows the bar only with a child, listing main and each child with its mark`,
-  `::marks a completed and a cancelled child`,
-  `ui/src/features/sessions/console/transcript.test.ts::lists each child in announcement order with its state and whether it may be cancelled`).
-- The arrow keys switch the view inside the bar, which is one Tab stop, and
-  a click does too; Tab stays the browser's (rule 24b)
-  (`ui/src/features/sessions/console/session-console.test.tsx::switches the view with the arrow keys inside the bar and with a click, wrapping around`,
-  `::keeps Tab for the browser, and the view bar a single stop in the Tab order`).
 - The composer grows to six lines, sends from Enter and from Send, and keeps
   a newline, a composition and a paste (rule 22b)
   (`ui/src/features/sessions/console/composer.test.tsx::starts at one line, grows with its text to six lines, then scrolls inside`,
   `::sends with Enter and the Send control, and keeps a newline, a composition and a paste`,
   `::offers Stop beside Send while a turn runs`,
   `::draws Send and Stop as icons without a label, on a row that never wraps`).
-- An old `agent_request` event and its close draw no card (rule 22a)
-  (`ui/src/features/sessions/console/transcript.test.ts::draws an old agent request and its close as plain event lines, with no card`).
-- The composer posts its text to the input route, with an old agent request
-  in view (rule 22c)
-  (`ui/src/features/sessions/console/composer.test.tsx::sends the composer's text to the console input route, with an old agent request in view`).
 - A form question draws its message, fields and choices as written, in every
   field kind (rule 22f)
   (`ui/src/features/sessions/console/form-card.test.tsx::draws one question at a time with large choice rows`,
@@ -2600,28 +2319,6 @@ view.
   (`ui/src/features/sessions/console/form-card.test.tsx::sends the answers as accept with the content of the form`,
   `::sends decline when the user dismisses the question`,
   `::shows a failed answer on the card and lets the user try again`).
-- A form question closes the same way live, on a reload and on a replay, and an
-  open one older than the page is restored (rule 22f)
-  (`ui/src/features/sessions/console/form-card.test.tsx::closes the card with its answer when the resolved event lands, live and in a replay`,
-  `::shows a dismissed question closed`,
-  `::restores an open question older than the snapshot's page from the list`,
-  `::keeps a question restored from the list, with its answer, when it closes and the list is read again`,
-  `::draws a question closed as closed, not waiting, when a reconnect omits it and its close`,
-  `::draws a close whose question is in an older page with the question's own labels`,
-  `::draws no card of the session it left when its question read lands late`,
-  `::closes a question the snapshot carries when the list no longer holds it`,
-  `::recovers the answer of a question a reconnect omits from the history`,
-  `::keeps a question the stream carried when a newer snapshot drops it and its close`,
-  `::says the open questions could not be read, and reads them again on Retry`,
-  `::keeps a closed question a snapshot carried when a newer snapshot omits it`,
-  `ui/src/features/sessions/console/form-questions.test.ts::keeps a listed question that a resolved event closes, with its answer`,
-  `ui/src/features/sessions/console/form-questions.test.ts::closes a question the console read that is no longer listed and has no resolved event`,
-  `::closes a question its event carried that the list no longer holds, once the list was read after it`,
-  `::keeps the answer of a closed question that no event or list carries`,
-  `ui/src/features/sessions/console/form-questions.test.ts::closes a question with its resolved event, whatever order a replay brings them in`).
-- The status row says the session waits for the user while a form question is
-  open (rule 22f)
-  (`ui/src/features/sessions/console/form-card.test.tsx::says the session waits for the user while a question is open`).
 - The attention strip answers a one-field single-select form in place, and
   opens the console for any other (rule 59)
   (`ui/src/features/goals/attention-forms.test.tsx::answers a form of one single-select question in place`,
@@ -2636,7 +2333,7 @@ view.
   (rule 23c)
   (`ui/src/features/sessions/console/composer.test.tsx::completes a suggestion by keyboard or click and keeps the text after the command`).
 - The plus menu inserts a command for editing, offers Resume only when the
-  session ended and Switch only where it can, expands and collapses all, and
+  session ended and Switch only where it can, and
   copies the loaded transcript of the view shown (rule 22e)
   (`ui/src/features/sessions/console/composer.test.tsx::cuts a long command name and the copy label in the menu, whole on hover, with no sideways scroll`,
   `::inserts a menu command in front of the draft for editing, and hands the composer focus`,
@@ -2648,36 +2345,11 @@ view.
   `::opens the switch dialog from the menu`,
   `::copies only the loaded transcript of the view shown, and names that scope`,
   `::omits global fold actions from the menu`).
-- Both console views omit the Conversation strip and retain the named transcript
-  (`ui/src/features/sessions/console/workspace.test.tsx::omits the conversation strip while retaining the named transcript in both views`).
-- The console folds thoughts into summaries,
-  each on its own header, keeps the choice, and draws no nested scroll area
-  (rules 23a to 23a4)
-  (`ui/src/features/sessions/console/session-console.test.tsx::keeps developer prompts expanded and identifies their role`,
-  `::folds thoughts while prompts stay expanded and tool rows stay compact`,
-  `::folds one thought and keeps the choice across a remount and a stream update`,
-  `::draws no scroll area inside the transcript, and wraps long code`,
-  `::labels and highlights a fenced block of a known language, and leaves an unknown one plain`,
-  `::copies the code as written, not the highlighted markup`,
-  `::offers Jump to latest with an unread marker once the reader scrolls away`,
-  `::keeps the block the reader is on in place when a block above it changes height`,
-  `::copies a fenced block's trailing blank lines as written`,
-  `::shows the last 3 rows of a run under a control that opens and closes it, and keeps the choice`,
-  `::pushes the oldest shown row under the control as a turn adds rows`,
-  `::copies the hidden rows with the loaded transcript`,
-  `::folds the activity runs of a subagent's view as well as main's`,
-  `::keeps a reader who scrolled away in place when closing a run hides the block they were on`,
-  `::keeps a following reader at the newest output when a run opens`,
-  `::keeps the block a reader is on in place when a run above it opens`,
-  `::keeps the block a reader is on in place when a run above it closes`,
-  `ui/src/features/sessions/console/transcript.test.ts::cuts a run of activity rows to its last 3 under a control, and leaves a short run whole`,
-  `::bounds a run by a conversation block, and keeps the choice of a run as rows join it`,
-  `::keeps an error, a pending permission and the selected row in place among hidden ones`,
-  `::shows the control over every run of more than 3 rows, also when no row hides`,
-  `::keeps the choice of a run when rows join it at either end`,
-  `ui/src/lib/highlight.test.ts::names a language by its fence or its extension, and labels it`,
+- Code in the console and in Markdown is a `CodeBlock`: a fence names its
+  language, the highlight loses no text, and one light frame holds a fence
+  (rule 23a2)
+  (`ui/src/lib/highlight.test.ts::names a language by its fence or its extension, and labels it`,
   `::leaves a name the data does not know, or plain text, unknown`,
-  `::reads an extension that is not only letters and digits`,
   `::leaves a fence named after an object property unknown`,
   `::loses no text`,
   `::colours a JSON property name and a string value differently`,
@@ -2692,132 +2364,25 @@ view.
   `::keeps the tints of a diff's added, removed and hunk-header lines`,
   `::draws a fence in one light frame, its label and an icon-only Copy on one caption line`,
   `::draws a captioned block bare, under a caption that names the section and the language`).
-- A tool call has status icons, with its input, output and diff under captions,
-  its kind icon beside the name, and a summary of status, subject and elapsed duration; `BlockView` re-renders only the block a chunk
-  changes (rules 23a and 23a2)
-  (`ui/src/features/sessions/console/blocks.test.tsx::draws tool details with captioned sections and no left border`,
-  `::copies one section's text from its icon-only control and never toggles the fold`,
-  `::places the tool kind and status before its name and short summary`,
-  `::gives every ACP kind its own icon and any other kind one more`,
-  `::says how long a call took in the unit that fits it, once it has ended`,
-  `::updates a running tool duration and freezes it on completion`,
-  `::shows a read's output with no input, in its file's language, numbered from its first line outside the text`,
-  `::shows a permission's command as shell`,
-  `::shows every block's time: the clock on a prompt and a summary line, and the full date on hover`,
-  `::re-renders only the block a streamed chunk changes`,
-  `::keeps a tool row compact with its full subject on hover`,
-  `::shows a call's full subject in its body where its input does not show it`,
-  `::allows selecting a call even when it has no content`,
-  `::keeps a permission header on one line with its time, and shows the AI note`,
-  `::keeps a pending permission open whatever the fold, and folds an answered one to one line`,
-  `ui/src/features/sessions/console/session-console.test.tsx::keeps an answered permission compact and opens its details on selection`,
-  `ui/src/features/sessions/console/session-console-renders.test.tsx::draws a permission picker again for its own change, not for a message streamed after it`).
-- The console retains a session's draft, individual fold preferences and place apart per daemon and
-  session, and keeps one open stream while shown (rule 24i)
+- The console retains a session's draft, folds and place apart per daemon and
+  session, and keeps one open stream while shown (rule 99g)
   (`ui/src/features/sessions/console/composer.test.tsx::brings a session's draft back after the console is unmounted`,
   `::keeps each daemon's and each session's state apart`,
-  `ui/src/features/sessions/console/composer.test.tsx::keeps a named host's state when its address changes, and gives the host's reason while it is down`,
-  `::restores the reader's place, not the bottom, when the console comes back`,
-  `::brings back the older page the reader had loaded, and their place in it, after the console expands`,
-  `::puts the block the reader was on back in place when new events move the page boundary`,
+  `::keeps a named host's state when its address changes, and gives the host's reason while it is down`,
   `::holds one open stream for the console shown, and none once it is hidden`).
-- A child's view shows its own events only, has no input and says
-  `read-only` (rule 24c)
-  (`ui/src/features/sessions/console/session-console.test.tsx::shows a child's own events read-only, and its questions and lines in main`,
-  `ui/src/features/sessions/console/transcript.test.ts::shows a child's events in its own view only`,
-  `::keeps a parent's and each child's tool calls apart with %s`).
-- Escape in a child's view goes back to `main`, or cancels a running child
-  that may be cancelled, and a refusal shows in the child's view (rule 24d)
-  (`ui/src/features/sessions/console/session-console.test.tsx::goes back to main on Escape from a child that may not be cancelled`,
-  `::cancels a running child that may be cancelled on Escape, and shows a refusal in its view`).
-- `main` has a line per announcement and per end, a child first heard of
-  at its end has both, and a child's events stay out (rule 24e)
-  (`ui/src/features/sessions/console/transcript.test.ts::gives main a line per announcement and per end, timed from the announcement`,
-  `::gives a child first heard of at its end both lines`,
-  `ui/src/features/sessions/console/session-console.test.tsx::shows a child's own events read-only, and its questions and lines in main`).
-- A child's question shows in `main`, names the child, and is answered
-  there (rule 24f)
-  (`ui/src/features/sessions/console/transcript.test.ts::asks a child's permission in main, naming the child, and answers it there`,
-  `ui/src/features/sessions/console/session-console.test.tsx::shows a child's own events read-only, and its questions and lines in main`).
-- The status row counts the running subagents (rule 24g)
-  (`ui/src/features/sessions/console/session-console.test.tsx::says how many subagents run`).
-- A fresh snapshot rebuilds the bar and the views (rule 24h)
-  (`ui/src/features/sessions/console/session-console.test.tsx::rebuilds the bar and the views from the snapshot of a reconnect`,
-  `ui/src/features/sessions/console/transcript.test.ts::rebuilds the children from a fresh snapshot`).
-- A permission is answered from its picker with the keys or a click, and
-  the reply shows who decided; Shift+Enter and a composing Enter in an
-  empty input answer nothing
-  (`ui/src/features/sessions/console/session-console.test.tsx::answers a permission from its picker with the keyboard, and shows who decided`,
-  `::picks a permission option with a click`,
-  `::answers no permission on %s from an empty input`).
 - A prompt and a developer prompt render as
-  Markdown, with a single newline kept and a fence a `CodeBlock` (rules 21
-  and 23a)
+  Markdown, with a single newline kept and a fence a `CodeBlock` (rule 21)
   (`ui/src/features/sessions/console/blocks.test.tsx::renders a prompt as Markdown: headings, task lists, a fenced block, and a single newline still breaks`,
   `::renders developer prompts as full Markdown without a fold`,
   `::draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text`).
-- The console expands into a near-fullscreen modal and collapses back on a
-  fresh stream, keeps the modal open on Escape inside it and closes the
-  modal on Escape outside it, and ⌘Escape moves focus to Collapse
-  (`ui/src/features/sessions/console/session-console.test.tsx::expands into a near-fullscreen modal and collapses back on a fresh stream`,
-  `::keeps the modal open on Escape inside the console, and closes it on Escape outside`,
-  `::moves focus to Collapse on ⌘Escape and cancels nothing`,
+- The console expands into a near-fullscreen modal and collapses back, and
+  ⌘Escape moves focus to the Close button (rule 23)
+  (`ui/src/features/sessions/trajectory/console-state.test.tsx::keeps the draft, the scroll place and the open folds through expand and collapse`,
+  `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::moves the keyboard to the pane's Close button on ⌘Escape, and closes nothing`,
   `ui/src/components/panel-sheet.test.tsx::leaves Escape on the board alone and returns focus when the pane closes`).
-- The input takes the keyboard on arrival when asked, and the transcript
-  follows the newest block only while the reader is at the bottom
-  (`ui/src/features/sessions/console/session-console.test.tsx::gives the input the keyboard when asked to on arrival`,
-  `::follows the newest block while the reader is at the bottom`).
-- Tool selection, streaming, drawer behavior, focus return, expanded views,
-  pending subagent requests, and removal of Ctrl-O follow rule 23a
-  (`ui/src/features/sessions/console/workspace.test.tsx::keeps compact tool rows and streams only the selected tool into adjacent details`,
-  `::opens details with the keyboard and returns focus when details close`,
-  `::uses a drawer at narrow panel widths and reveals a pending permission from it`,
-  `::leaves Ctrl-O unhandled in embedded and expanded consoles`,
-  `::keeps selected details when resizing between a drawer and adjacent details`,
-  `::uses the same selectable details in an expanded console`,
-  `::returns from a child view to answer its pending permission in details`,
-  `::shows existing input output and code changes in details without expanding the activity row`,
-  `::keeps parent and child calls with the same tool id separate`,
-  `::keeps user developer and assistant messages always visible`,
-  `::opens permission response controls in details and keeps the conversation compact`,
-  `::keeps tool selection when a permission arrives and opens its drawer only on request`).
-- The latest command list replaces the earlier one, an empty list and all,
-  and a subagent's list is ignored
-  (`ui/src/features/sessions/console/transcript.test.ts::replaces the command list with each later one, an empty list included`,
-  `::ignores a command list a subagent sent`,
-  `::ignores a command list whose subagent is %s`).
-- The suggestion list shows the matching commands, at most eight, says none
-  matches, completes the pick, closes on Escape without cancelling, and a
-  command goes as text
-  (`ui/src/features/sessions/console/session-console.test.tsx::suggests the agent's commands while the first word is typed, and completes the pick`,
-  `::says no command matches, closes the list on Escape without cancelling, and sends a command as text`,
-  `::shows at most eight suggestions`,
-  `::reopens the suggestions on the next edit after Escape closed them`).
-- The status row shows the status, the turn with its clock and the token
-  totals
-  (`ui/src/features/sessions/console/session-console.test.tsx::shows the status, the turn with its clock, and the token totals`,
-  `ui/src/features/sessions/console/transcript.test.ts::totals the latest usage of each launch, never below the session's own`,
-  `::starts the turn clock at the turn's first event and names the open tool`,
-  `ui/src/features/sessions/console/status.test.tsx::shows only the first line of a multiline tool name, whole on hover, with the tokens at the right end`).
-- A sent prompt shows as queued until its console echo replaces it, and a
-  failed send removes it
-  (`ui/src/features/sessions/console/session-console.test.tsx::shows a sent prompt as queued until the console echo replaces it`,
-  `::removes the queued prompt and adds an error block when the send fails`,
-  `ui/src/features/sessions/console/transcript.test.ts::shows a queued prompt until its console echo arrives, and drops it on a failed send`,
-  `::keeps a queued prompt across a snapshot that does not hold its echo`,
-  `::matches a queued prompt only to an echo newer than its send`,
-  `::takes back only the queued send that failed when the same text is queued twice`,
-  `::leaves no stale entry when an echo takes a failed send's entry before its failure arrives`,
-  `ui/src/features/sessions/console/session-console.test.tsx::takes back only the failed send when the same prompt is sent twice at once`,
-  `::leaves nothing queued when the echo of the second send comes before the first send's failure`).
-- Open and closed questions have one purple question icon, no left border
-  and fold only when closed, and grow without a scroll area of their own
-  (rules 23a and 23a1)
-  (`ui/src/features/sessions/console/form-card.test.tsx::marks an open and a closed question with one purple icon, folds only closed cards, and lets it grow`).
-- Role labels and tool status icons identify messages and activity
-  (`ui/src/features/sessions/console/session-console.test.tsx::identifies prompts and tool states without left borders`).
-- The status row follows the input and replaces the keyboard-hint footer
-  (`ui/src/features/sessions/console/session-console.test.tsx::places the status below the input without a keyboard hint footer`).
+- The status row cuts a multiline tool name to its first line, whole on hover,
+  with the tokens at the right end (rule 99b)
+  (`ui/src/features/sessions/console/status.test.tsx::shows only the first line of a multiline tool name, whole on hover, with the tokens at the right end`).
 - The blocked banner says where to answer, says to resume an agent that is
   gone, and shows for no other reason
   (`ui/src/features/sessions/session-blocked-banner.test.tsx::says what a permission prompt is waiting for, and where to answer it`,
@@ -3108,14 +2673,13 @@ view.
   `::keeps the cached task and its empty history under warnings, and a retry clears them`,
   `::keeps cached table rows under the warning, and shows a load error with none`).
 - The goals screen narrows the board by title and names the search when nothing matches.
-- The turn console shows the plan, the session state, the notices, the
+- The console shows the plan, the session state, the notices, the
   marks of answered permissions, the title and find, and keeps the view of
   each session (rules 99a to 99h) (`ui/src/features/sessions/trajectory/console-state.test.tsx`).
-- The turn console (rules 89 to 99) opens behind `?console=turns`, draws a
-  closed turn as three rows, opens its activity line to step rows, shows the
+- The console (rules 89 to 99) draws a closed turn as three rows, opens its activity line to step rows, shows the
   running turn live, answers a pending permission from a card above the
   composer, always shows the attention of a turn, keeps the composer of
-  today, loads older turns and keeps the place, and replaces its state on a
+  rules 22 to 23c, loads older turns and keeps the place, and replaces its state on a
   reconnect with no item two times, in the app's tokens alone
   (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx`,
   `ui/src/features/sessions/trajectory/store.test.ts`,

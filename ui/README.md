@@ -126,30 +126,22 @@ Regenerating the API types after a daemon change is covered in
 | `⌘Esc` / `Ctrl+Esc` | leaves a focused console for the pane or the modal around it |
 
 In a session's console, Enter sends and Shift+Enter adds a line; the composer
-grows to six lines and then scrolls. The plus menu beside it searches the
+grows to six lines and then scrolls. Escape cancels a running turn, and `⌘Esc`
+leaves the console. Up, Down and the number keys pick an option of a pending
+permission, and Enter answers it. The plus menu beside the composer searches the
 agent's slash commands and offers Switch agent/model, Resume once the session
-has ended, and Copy loaded transcript, which copies
-only what the console has loaded for the view shown. A command from the menu
+has ended, and Copy loaded transcript, which copies the prompt and the answer
+of each turn the console has loaded. A command from the menu
 or the suggestion list goes into the composer for you to edit; it is not sent.
-A message the daemon refuses stays in the transcript with Retry and Edit. With
-subagents, the bar of views is one Tab stop: the arrow keys move along it. A
-console keeps each session's draft, scroll place and folds while you expand it,
+A message the daemon refuses stays in the console with Retry and Edit. A
+console keeps each session's draft, scroll place and open turns while you expand it,
 collapse it or change tabs, until the app restarts.
 
-Tool rows open details beside the conversation when the panel has enough space,
-or in a drawer when narrow. New activity keeps the selected call open.
-Close details with its button or Escape; focus returns to the selected row.
-`Pending request` opens permission response controls in the shared details area,
-including subagent permissions. For questions, it closes the drawer and reveals the card.
-Ctrl-O has no action in this console.
-Neither the header nor the plus menu has global fold controls. Thoughts and resolved questions retain individual disclosures and preferences.
-User, developer and assistant messages always remain expanded. Unanswered questions
-stay open; answered summaries keep the question and selected answer. Secondary
-activity is compact and indented, with icons and labels instead of left borders.
-
-You messages use a person icon, restrained 12% primary background and solid inset border ring. All three role icons align beside their headers.
-Assistant messages use a bot icon, subtle muted background and faint solid inset border ring. Developer prompts
-use a code icon, a slightly deeper shade of the same muted background and solid inset border ring; their labels remain visible in both themes.
+A turn is your prompt, one activity line and the answer. Click the activity line
+to read the steps of the turn, and a step to read its detail under its row.
+`Open` shows the whole step beside the conversation when the panel has enough
+space, or in a drawer when narrow. Escape closes the full view and returns focus
+to the step. Ctrl-O has no action in this console.
 
 The two ⌘ chords answer to **either** modifier, on every platform: the app runs
 in a Tauri WebView and in a browser tab, and a chord that silently does nothing

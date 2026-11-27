@@ -30,11 +30,9 @@ function resetViewStates() {
     updateViewState(consoleViewKey("local", "http://127.0.0.1:7676", id), {
       draft: "",
       scrollTop: 0,
-      anchor: undefined,
       oldest: undefined,
       following: true,
       blockFolds: {},
-      shown: undefined,
       failed: [],
     })
   }
@@ -126,6 +124,14 @@ it("sends with Enter and the Send control, and keeps a newline, a composition an
   fireEvent.change(input(), { target: { value: "again" } })
   fireEvent.keyDown(input(), { key: "Enter" })
   await waitFor(() => expect(posts).toHaveLength(2))
+})
+
+it("disables the input and Send while the session is not live", () => {
+  mount(aSnapshot([]), "exited")
+
+  expect(input().disabled).toBe(true)
+  fireEvent.change(input(), { target: { value: "hello" } })
+  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true)
 })
 
 it("offers Stop beside Send while a turn runs", () => {
@@ -477,4 +483,44 @@ it("keeps a draft of only spaces and newlines when a menu command is inserted", 
   await user.click(screen.getByRole("button", { name: /\/review/ }))
 
   await waitFor(() => expect(input().value).toBe("/review  \n "))
+})
+
+it("gives the input the keyboard when asked to on arrival", () => {
+  mount(aSnapshot([]), "idle", { autoFocus: true })
+
+  expect(document.activeElement).toBe(input())
+})
+
+it("shows at most eight suggestions, and says none matches", () => {
+  const { source } = mount()
+  commands(
+    source,
+    Array.from({ length: 12 }, (_, index) => ({ name: `cmd${index}`, description: "" })),
+  )
+
+  fireEvent.change(input(), { target: { value: "/cmd" } })
+  expect(
+    within(screen.getByRole("listbox", { name: "Slash commands" })).getAllByRole("option"),
+  ).toHaveLength(8)
+
+  fireEvent.change(input(), { target: { value: "/zzz" } })
+  screen.getByText("no matching command")
+})
+
+it("closes the suggestions on Escape without cancelling, and opens them again on the next edit", async () => {
+  const { source } = mount(aSnapshot([aTurn({ state: "running", ended_at: null })]), "running")
+  commands(source, [{ name: "init", description: "Set up" }])
+  fireEvent.change(input(), { target: { value: "/ini" } })
+
+  fireEvent.keyDown(input(), { key: "Escape" })
+  expect(screen.queryByRole("listbox", { name: "Slash commands" })).toBeNull()
+  expect(posts).toHaveLength(0)
+
+  fireEvent.change(input(), { target: { value: "/init" } })
+  screen.getByRole("listbox", { name: "Slash commands" })
+
+  fireEvent.keyDown(input(), { key: "Enter" })
+  fireEvent.keyDown(input(), { key: "Enter" })
+  await waitFor(() => expect(posts).toHaveLength(1))
+  expect(posts[0]?.body).toBe(JSON.stringify({ text: "/init " }))
 })

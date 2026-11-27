@@ -246,7 +246,7 @@ it("cancels a turn of a remote session on its host and shows the host's stream r
     stream.succeed()
     stream.emit(
       "snapshot",
-      aSnapshot([aTurn({ state: "running", ended_at: null, answer: undefined })], {
+      aSnapshot([aTurn({ state: "running", ended_at: null, answer: [] })], {
         session: { ...aSnapshot([]).session, status: "running" },
       }),
     )

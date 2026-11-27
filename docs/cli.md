@@ -453,48 +453,36 @@ Two rules frame the question. Once you answer, the console keeps only the
 question, the call's head line and `↳` with the option you chose.
 
 The desktop app shows a session's console in its detail view, drawn by the
-app from the same events. It shows the same blocks: your prompts, the agent's
-messages and thoughts, plans, tool calls with their output and diff, and
-notes. Type in the input box at the bottom: Enter sends, and Shift+Enter adds
-a line. While a turn runs, the Cancel button or Escape in the console cancels
-it. A permission request shows its options as a picker: ↑, ↓ or a number key
-selects, and Enter or a click answers. The answer then shows the option chosen
-and who decided. If the daemon goes away mid-session, the console says it is
-reconnecting, and shows the session afresh once it is back. The agent receives
-the same input whichever console you use.
+app as turns. A turn is your prompt, one activity line, and the agent's
+answer. The activity line gives the time of the turn, its steps, the files it
+changed and its failed calls. Click it to read the steps of the turn. A step
+opens under its row to show its input, output and code changes, and `Open`
+shows the whole step beside the conversation, or in a drawer on a narrow
+panel. A running turn shows its last three steps and streams its answer.
 
-In the browser and desktop console, conversation appears beside selected tool
-details when the panel has enough space. Narrow panels open a details drawer.
-Each tool stays on one compact row with its name, status, and summary.
-Click a row, or focus it and press Enter or Space, to read its input, output,
-and available code changes. New calls do not change your selection.
-Close the details with its close button or Escape to return to the selected row.
-The embedded and expanded consoles use the same layout.
+Type in the input box at the bottom: Enter sends, and Shift+Enter adds a
+line. While a turn runs, the Stop button or Escape in the console cancels it.
+A permission request is a card above the input: ↑, ↓ or a number key selects
+an option, and Enter or a click answers. The answered call shows the option
+chosen and who decided. A question the agent asks is a form card above the
+input. A warning note and a compaction always show in their turn. If the
+daemon goes away mid-session, the console says it is reconnecting, and shows
+the session afresh once it is back. The agent receives the same input
+whichever console you use.
 
-Questions stay in the conversation. Permission rows open their command, diff,
-and response controls beside the conversation, or in the right drawer on narrow panels.
-Use `Pending request` to open a permission and focus its picker. For a question,
-this control closes the drawer and reveals the question in the conversation.
-This works for subagent requests too.
+A plan with an open entry shows as one line above the input, and the status
+row shows the session's status, mode, context use, cost and tokens. Scroll to
+the top to load older turns. When you scroll up to read, the console stays
+where you are, and `Jump to latest` appears, with `New output` once more has
+arrived; click it to follow the live output again. Ctrl-O has no action in the
+browser or desktop console; it still works in the terminal console. Drafts,
+open turns and your place remain when you expand the console or change tabs.
+See [spec 015](../specs/015-desktop-app.md).
 
-User, developer and assistant messages always remain expanded. Role labels identify
-them. You headers have a person icon, restrained 12% primary background and solid inset border ring. All three role icons share one vertical column.
-Assistant headers have a bot icon, subtle muted background and faint solid inset border ring; Developer headers
-have a code icon, a slightly deeper shade of the same muted background and solid inset border ring. Both stay fully expanded.
-Compact secondary activity sits slightly indented, without left borders.
-Pending questions stay open. Answered questions can fold to show the question
-and chosen answer together. Thoughts still fold individually. There are no global fold controls in the header or plus menu. Tool rows stay compact. Ctrl-O has no action
-in the browser or desktop console; it still works in the terminal console.
-Drafts, history, and conversation fold preferences remain available when you
-expand the console or change tabs. See [spec 015](../specs/015-desktop-app.md).
-
-Code wraps inside the conversation and details, which scroll independently.
-A code block shows its language
-when it has one, colors comments, strings, numbers and keywords for the
-common languages, and has a `Copy` button that copies the code as written.
-Diffs keep their green and red lines. When you scroll up to read, the console
-stays where you are, and `Jump to latest` appears, with `New output` once
-more has arrived; click it to follow the live output again.
+Code wraps inside the conversation. A code block shows its language when it
+has one, colors comments, strings, numbers and keywords for the common
+languages, and has a `Copy` button that copies the code as written. Diffs
+keep their green and red lines.
 
 ## Work with tasks
 

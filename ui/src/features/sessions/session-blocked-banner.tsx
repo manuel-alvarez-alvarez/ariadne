@@ -9,7 +9,7 @@
  *
  * The console holds the answer itself: a permission question comes with the
  * options the agent offered, drawn as a picker in the console (see
- * `console/session-console.tsx`), so this line only points at it.
+ * `trajectory/trajectory-console.tsx`), so this line only points at it.
  */
 
 import { TriangleAlertIcon } from "lucide-react"

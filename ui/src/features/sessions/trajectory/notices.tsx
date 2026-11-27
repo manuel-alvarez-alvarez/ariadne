@@ -2,8 +2,9 @@
  * The notices of a turn, and the mark of an answered permission.
  *
  * A warning note and a compaction always show in their turn, as a line of
- * their own, whatever the fold: the console takes them from the steps it
- * holds for the turn, live or loaded. An info note is a row of the open
+ * their own, whatever the fold: the console takes them from the `notices`
+ * of the turn, and where `notices_more` counts others, one row opens the
+ * steps of the turn. It reads no page of steps to find them. An info note is a row of the open
  * activity fold alone. An error is a step of the turn's `attention`, which
  * `turn-view.tsx` draws.
  *

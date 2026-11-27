@@ -191,3 +191,12 @@ it("keeps composer number and Enter keys outside the question shortcuts", async 
   expect(within(card()).getByText("1 of 3")).toBeTruthy()
   expect(posts).toEqual([])
 })
+
+it("says the session waits for the user while a question is open", async () => {
+  renderConsole()
+  await opened()
+
+  expect(screen.getByRole("region", { name: "Session status" }).textContent).toContain(
+    "waiting for you",
+  )
+})
