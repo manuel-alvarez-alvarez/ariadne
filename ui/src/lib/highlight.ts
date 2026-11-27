@@ -48,12 +48,6 @@ export function languageLabel(language: string): string {
   return describe(language)?.name ?? language
 }
 
-/** The language of a file path by its extension. */
-export function languageForPath(path: string): string | undefined {
-  const extension = /\.([^./\\]+)$/.exec(path.trim())?.[1]
-  return knownLanguage(extension)
-}
-
 /** The grammar of a language `knownLanguage` returned, if it has loaded. */
 export function loadedGrammar(language: string): LanguageSupport | undefined {
   return describe(language)?.support

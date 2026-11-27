@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { highlight, knownLanguage, languageForPath, languageLabel, loadGrammar } from "./highlight"
+import { highlight, knownLanguage, languageLabel, loadGrammar } from "./highlight"
 import { HIGHLIGHT_STYLES } from "./highlight-style"
 
 async function tokens(code: string, fence: string, dark = false) {
@@ -27,17 +27,6 @@ it("leaves a name the data does not know, or plain text, unknown", () => {
   expect(knownLanguage("mystery")).toBeUndefined()
   expect(knownLanguage("text")).toBeUndefined()
   expect(knownLanguage(undefined)).toBeUndefined()
-})
-
-it("reads a file's language from its extension", () => {
-  expect(languageForPath("src/app.ts")).toBe("typescript")
-  expect(languageForPath("crates/main.rs")).toBe("rust")
-  expect(languageForPath("README")).toBeUndefined()
-})
-
-it("reads an extension that is not only letters and digits", () => {
-  expect(languageForPath("src/main.c++")).toBe("c++")
-  expect(languageForPath("src/main.h++")).toBe("c++")
 })
 
 it("leaves a fence named after an object property unknown", () => {

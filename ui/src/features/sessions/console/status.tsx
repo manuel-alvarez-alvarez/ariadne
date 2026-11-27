@@ -1,14 +1,14 @@
 import { CircleHelpIcon, Loader2Icon, PlugZapIcon } from "lucide-react"
-import { type KeyboardEvent, type ReactNode, useRef } from "react"
+import type { ReactNode } from "react"
 
 import type { SessionStatus } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { cn, formatTokens } from "@/lib/format"
+import { formatTokens } from "@/lib/format"
 
-import type { ConsoleStreamStatus } from "./console-stream"
+import type { ConsoleStreamStatus } from "../trajectory/trajectory-stream"
 import type { FailedSend } from "./console-view-state"
-import { stateMark, type TokenTotals, type Transcript } from "./transcript"
+import type { TokenTotals } from "./transcript"
 
 /** Where the load of older events stands; `start` is the session's first event shown. */
 export type History = { state: "idle" | "loading" | "start" } | { state: "error"; message: string }
@@ -68,84 +68,6 @@ export function HistoryLine({ history, onRetry }: { history: History; onRetry: (
     )
   }
   return null
-}
-
-/**
- * The views of a session with subagents: `main`, then each child with the
- * mark of its state. The bar is one stop in the Tab order: the arrow keys,
- * Home and End move between its views inside it.
- */
-export function ViewBar({
-  agents,
-  shown,
-  asking,
-  onShow,
-}: {
-  agents: Transcript["subagents"]
-  shown: string | undefined
-  /** The child whose permission question waits. */
-  asking: string | undefined
-  onShow: (to: string | undefined, keepFocus?: boolean) => void
-}) {
-  const bar = useRef<HTMLDivElement>(null)
-  const views = [
-    { id: undefined, label: "main" },
-    ...agents.map((one) => ({
-      id: one.id,
-      label: `${stateMark(one.state)} ${one.title}${one.id === asking ? " ?" : ""}`,
-    })),
-  ]
-  const at = Math.max(
-    views.findIndex((one) => one.id === shown),
-    0,
-  )
-
-  function onKeyDown(event: KeyboardEvent) {
-    const last = views.length - 1
-    const to =
-      event.key === "ArrowRight"
-        ? (at + 1) % views.length
-        : event.key === "ArrowLeft"
-          ? (at + last) % views.length
-          : event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? last
-              : undefined
-    if (to === undefined) return
-    event.preventDefault()
-    onShow(views[to]?.id, true)
-    bar.current?.querySelectorAll<HTMLElement>('[role="tab"]')[to]?.focus()
-  }
-
-  return (
-    <div
-      ref={bar}
-      role="tablist"
-      aria-label="Console views"
-      onKeyDown={onKeyDown}
-      className="flex flex-wrap gap-1 border-t px-2 py-1 font-mono text-xs"
-    >
-      {views.map((one, index) => (
-        <button
-          key={one.id ?? ""}
-          type="button"
-          role="tab"
-          aria-selected={one.id === shown}
-          tabIndex={index === at ? 0 : -1}
-          onClick={() => onShow(one.id)}
-          className={cn(
-            "rounded px-1.5 py-0.5 outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
-            one.id === shown
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:bg-muted",
-          )}
-        >
-          {one.label}
-        </button>
-      ))}
-    </div>
-  )
 }
 
 export function elapsedSeconds(since: string | undefined, now: number): number | undefined {

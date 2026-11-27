@@ -23,6 +23,7 @@ import {
   stubHosts,
 } from "@/test/hosts"
 import { byContent } from "@/test/text-content"
+import { aSnapshot, aTurn, text } from "@/test/trajectory"
 import { SessionsPage } from "./sessions-page"
 
 const BOX = "http://box.test:7676"
@@ -206,29 +207,21 @@ function boxSession() {
 
 async function consoleStream(): Promise<FakeEventSource> {
   return waitFor(() => {
-    const stream = FakeEventSource.instances.find((one) => one.url.includes("/console/stream"))
-    if (!stream) throw new Error("no console stream yet")
+    const stream = FakeEventSource.instances.find((one) => one.url.includes("/trajectory/stream"))
+    if (!stream) throw new Error("no trajectory stream yet")
     return stream
   })
 }
 
-it("opens the console stream of a remote session on its host and sends input there", async () => {
+it("opens the trajectory stream of a remote session on its host and sends input there", async () => {
   const user = userEvent.setup()
   const seen = boxSession()
   const stream = await consoleStream()
-  expect(stream.url).toBe(`${BOX}/v1/sessions/${REMOTE.id}/console/stream`)
+  expect(stream.url).toBe(`${BOX}/v1/sessions/${REMOTE.id}/trajectory/stream`)
 
   act(() => {
     stream.succeed()
-    stream.emit("snapshot", [
-      {
-        id: "01EVENT0000000000000000001",
-        kind: "agent_message",
-        payload: { text: "hello from box" },
-        summary: "agent_message",
-        created_at: "2026-11-17T10:00:00Z",
-      },
-    ])
+    stream.emit("snapshot", aSnapshot([aTurn({ answer: text("hello from box") })]))
   })
   expect(await screen.findByText("hello from box")).toBeTruthy()
 
@@ -251,15 +244,12 @@ it("cancels a turn of a remote session on its host and shows the host's stream r
   const stream = await consoleStream()
   act(() => {
     stream.succeed()
-    stream.emit("snapshot", [
-      {
-        id: "01EVENT0000000000000000002",
-        kind: "user_prompt_submit",
-        payload: { text: "go" },
-        summary: "user_prompt_submit",
-        created_at: "2026-11-17T10:00:00Z",
-      },
-    ])
+    stream.emit(
+      "snapshot",
+      aSnapshot([aTurn({ state: "running", ended_at: null, answer: undefined })], {
+        session: { ...aSnapshot([]).session, status: "running" },
+      }),
+    )
   })
 
   fireEvent.click(await screen.findByRole("button", { name: "Stop the turn" }))
@@ -272,13 +262,7 @@ it("cancels a turn of a remote session on its host and shows the host's stream r
   expect(cancel?.method).toBe("POST")
 
   act(() =>
-    stream.emit("event", {
-      id: "01EVENT0000000000000000003",
-      kind: "agent_message",
-      payload: { text: "stopped on box" },
-      summary: "agent_message",
-      created_at: "2026-11-17T10:00:01Z",
-    }),
+    stream.emit("snapshot", aSnapshot([aTurn({ answer: text("stopped on box") })], { rev: 2 })),
   )
   expect(await screen.findByText(byContent("stopped on box"))).toBeTruthy()
 })

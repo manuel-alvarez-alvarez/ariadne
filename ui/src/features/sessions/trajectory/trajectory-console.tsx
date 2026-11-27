@@ -59,7 +59,6 @@ import { useBaseUrl } from "@/stores/settings"
 import { PromptBox } from "../console/blocks"
 import { Composer, suggest } from "../console/composer"
 import { ComposerMenu } from "../console/composer-menu"
-import type { ConsoleStreamStatus } from "../console/console-stream"
 import {
   consoleViewKey,
   type FailedSend,
@@ -99,7 +98,11 @@ import {
   shownTurns,
   type TrajectoryState,
 } from "./store"
-import { TrajectoryStream, trajectoryStreamUrl } from "./trajectory-stream"
+import {
+  type ConsoleStreamStatus,
+  TrajectoryStream,
+  trajectoryStreamUrl,
+} from "./trajectory-stream"
 import { type PageLoad, TurnView } from "./turn-view"
 
 /** Numbers the sends of every console, so a refused send never shares an id with a new one. */

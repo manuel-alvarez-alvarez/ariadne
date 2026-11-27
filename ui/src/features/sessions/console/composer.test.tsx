@@ -10,16 +10,16 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
-import { type AgentEventDto, qk, rememberHosts } from "@/api"
+import { qk, rememberHosts, type TrajectorySnapshotDto } from "@/api"
 import { Toaster } from "@/components/ui/sonner"
 import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import { aSession } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { BOX, forgetHosts, LOCAL } from "@/test/hosts"
-
+import { aSnapshot, aTurn } from "@/test/trajectory"
+import { TrajectoryConsole } from "../trajectory/trajectory-console"
 import { consoleViewKey, readViewState, updateViewState } from "./console-view-state"
-import { SessionConsole } from "./session-console"
 
 const SESSION_ID = "01JSESS0000000000000000001"
 const posts: { path: string; body: string }[] = []
@@ -37,18 +37,6 @@ function resetViewStates() {
       shown: undefined,
       failed: [],
     })
-  }
-}
-
-let next = 0
-function event(kind: string, payload: unknown = {}): AgentEventDto {
-  next += 1
-  return {
-    id: `01EVENT${String(next).padStart(19, "0")}`,
-    kind,
-    payload,
-    summary: `${kind} summary`,
-    created_at: "2026-11-14T10:00:00Z",
   }
 }
 
@@ -77,13 +65,13 @@ afterEach(() => {
 })
 
 function mount(
-  snapshot: AgentEventDto[] = [],
+  snapshot: TrajectorySnapshotDto = aSnapshot([]),
   status: "running" | "idle" | "exited" = "idle",
-  extra: Partial<Parameters<typeof SessionConsole>[0]> = {},
+  extra: Partial<Parameters<typeof TrajectoryConsole>[0]> = {},
 ) {
   const view = renderScreen(
     <>
-      <SessionConsole host="local" sessionId={SESSION_ID} status={status} {...extra} />
+      <TrajectoryConsole host="local" sessionId={SESSION_ID} status={status} {...extra} />
       <Toaster />
     </>,
   )
@@ -141,14 +129,14 @@ it("sends with Enter and the Send control, and keeps a newline, a composition an
 })
 
 it("offers Stop beside Send while a turn runs", () => {
-  mount([event("user_prompt_submit", { text: "go" })], "running")
+  mount(aSnapshot([aTurn({ state: "running", ended_at: null })]), "running")
 
   screen.getByRole("button", { name: "Stop the turn" })
   screen.getByRole("button", { name: "Send" })
 })
 
 it("draws Send and Stop as icons without a label, on a row that never wraps", () => {
-  mount([event("user_prompt_submit", { text: "go" })], "running")
+  mount(aSnapshot([aTurn({ state: "running", ended_at: null })]), "running")
 
   const send = screen.getByRole("button", { name: "Send" })
   const stop = screen.getByRole("button", { name: "Stop the turn" })
@@ -199,56 +187,29 @@ it("returns a refused message for editing in front of the newer draft", async ()
   expect(document.activeElement).toBe(input())
 })
 
-it("sends the composer's text to the console input route, with an old agent request in view", async () => {
-  mount([
-    event("agent_request", {
-      request_id: "req-1",
-      hint: "Pick one",
-      question: { text: "Which one?", options: [{ id: "a", label: "A" }] },
-    }),
-  ])
-  expect(screen.queryByRole("region", { name: "Question · Pick one" })).toBeNull()
-
-  fireEvent.change(input(), { target: { value: "my own words" } })
-  fireEvent.keyDown(input(), { key: "Enter" })
-
-  await waitFor(() => expect(posts).toHaveLength(1))
-  expect(posts[0]).toEqual({
-    path: `/v1/sessions/${SESSION_ID}/console/input`,
-    body: JSON.stringify({ text: "my own words" }),
-  })
-})
-
 async function openMenu(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Commands and session actions" }))
 }
 
-function commands(source: FakeEventSource) {
-  act(() =>
-    source.emit(
-      "event",
-      event("available_commands_update", {
-        available_commands: [
-          { name: "init", description: "Set up" },
-          { name: "review", description: "Review it" },
-        ],
-      }),
-    ),
-  )
+/** The agent lists its slash commands: a newer snapshot carries them in the session state. */
+function commands(
+  source: FakeEventSource,
+  list = [
+    { name: "init", description: "Set up" },
+    { name: "review", description: "Review it" },
+  ],
+) {
+  const snapshot = aSnapshot([])
+  snapshot.rev = 2
+  snapshot.session.commands = list
+  act(() => source.emit("snapshot", snapshot))
 }
 
 it("cuts a long command name and the copy label in the menu, whole on hover, with no sideways scroll", async () => {
   const user = userEvent.setup()
   const long = `${"very-long-command-".repeat(6)}end`
   const { source } = mount()
-  act(() =>
-    source.emit(
-      "event",
-      event("available_commands_update", {
-        available_commands: [{ name: long, description: "Does a long thing" }],
-      }),
-    ),
-  )
+  commands(source, [{ name: long, description: "Does a long thing" }])
 
   await openMenu(user)
 
@@ -312,7 +273,7 @@ it("offers Resume only once the session has ended, and resumes through the exist
   const user = userEvent.setup()
   answer(() => jsonResponse(aSession({ id: SESSION_ID, status: "running" })))
   const onResumed = vi.fn()
-  mount([], "exited", { onResumed })
+  mount(aSnapshot([]), "exited", { onResumed })
 
   await openMenu(user)
   await user.click(screen.getByRole("button", { name: "Resume" }))
@@ -323,7 +284,7 @@ it("offers Resume only once the session has ended, and resumes through the exist
 
 it("hides Resume while the session is live, and Switch where it cannot switch", async () => {
   const user = userEvent.setup()
-  mount([], "idle", { session: aSession({ id: SESSION_ID }), canSwitch: false })
+  mount(aSnapshot([]), "idle", { session: aSession({ id: SESSION_ID }), canSwitch: false })
 
   await openMenu(user)
 
@@ -334,7 +295,7 @@ it("hides Resume while the session is live, and Switch where it cannot switch", 
 
 it("opens the switch dialog from the menu", async () => {
   const user = userEvent.setup()
-  mount([], "idle", { session: aSession({ id: SESSION_ID }) })
+  mount(aSnapshot([]), "idle", { session: aSession({ id: SESSION_ID }) })
 
   await openMenu(user)
   await user.click(screen.getByRole("button", { name: "Switch agent/model" }))
@@ -349,10 +310,7 @@ it("copies only the loaded transcript of the view shown, and names that scope", 
     ...navigator,
     clipboard: { writeText: async (text: string) => void written.push(text) },
   })
-  mount([
-    event("user_prompt_submit", { text: "Fix the bug" }),
-    event("agent_message", { text: "Fixed it" }),
-  ])
+  mount(aSnapshot([aTurn()]))
 
   await openMenu(user)
   await user.click(screen.getByRole("button", { name: "Copy loaded transcript (main)" }))
@@ -397,7 +355,7 @@ it("keeps a named host's state when its address changes, and gives the host's re
     return [LOCAL, ...rows]
   }
   at([BOX])
-  const view = renderScreen(<SessionConsole host="box" sessionId={SESSION_ID} status="idle" />)
+  const view = renderScreen(<TrajectoryConsole host="box" sessionId={SESSION_ID} status="idle" />)
   act(() => {
     latestSource().succeed()
     latestSource().emit("snapshot", [])
@@ -429,15 +387,6 @@ it("keeps a named host's state when its address changes, and gives the host's re
   )
   expect(readViewState(key).blockFolds).toEqual({ b1: true })
   expect(readViewState(key).failed).toHaveLength(1)
-})
-
-it("restores the reader's place, not the bottom, when the console comes back", () => {
-  const key = consoleViewKey("local", "http://127.0.0.1:7676", SESSION_ID)
-  updateViewState(key, { following: false, scrollTop: 37 })
-  mount([event("agent_message", { text: "one" })])
-
-  expect(transcript().scrollTop).toBe(37)
-  expect(readViewState(key).following).toBe(false)
 })
 
 it("holds one open stream for the console shown, and none once it is hidden", async () => {
@@ -528,112 +477,4 @@ it("keeps a draft of only spaces and newlines when a menu command is inserted", 
   await user.click(screen.getByRole("button", { name: /\/review/ }))
 
   await waitFor(() => expect(input().value).toBe("/review  \n "))
-})
-
-it("brings back the older page the reader had loaded, and their place in it, after the console expands", async () => {
-  const user = userEvent.setup()
-  const older = event("user_prompt_submit", { text: "older prompt" })
-  const newest = event("agent_message", { text: "newest" })
-  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
-    const request = input instanceof Request ? input : new Request(input, init)
-    const path = new URL(request.url).pathname
-    if (path.endsWith("/questions")) return Response.json([])
-    if (path === "/v1/events") {
-      const before = new URL(request.url).searchParams.get("before")
-      return Response.json(before === newest.id ? [older] : [])
-    }
-    return new Response(null, { status: 204 })
-  })
-  mount([newest])
-  const size = (log: HTMLElement, state: { top: number }) => {
-    Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => 1400 })
-    Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 200 })
-    Object.defineProperty(log, "scrollTop", {
-      configurable: true,
-      get: () => state.top,
-      set: (value: number) => {
-        state.top = value
-      },
-    })
-  }
-  const first = { top: 0 }
-  size(transcript(), first)
-  fireEvent.scroll(transcript())
-  await within(transcript()).findByText("older prompt")
-  first.top = 500
-  fireEvent.scroll(transcript())
-
-  await user.click(screen.getByRole("button", { name: "Expand the console" }))
-  const second = { top: 0 }
-  const log = await screen.findByRole("log", { name: "Console transcript" })
-  size(log, second)
-  act(() => {
-    latestSource().succeed()
-    latestSource().emit("snapshot", [newest])
-  })
-
-  await within(log).findByText("older prompt")
-  await waitFor(() => expect(second.top).toBe(500))
-})
-
-it("puts the block the reader was on back in place when new events move the page boundary", async () => {
-  const user = userEvent.setup()
-  const older2 = event("user_prompt_submit", { text: "oldest prompt" })
-  const older = event("user_prompt_submit", { text: "older prompt" })
-  const newest = event("agent_message", { text: "newest" })
-  const extra = event("agent_message", { text: "newer still" })
-  let fetches = 0
-  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
-    const request = input instanceof Request ? input : new Request(input, init)
-    const path = new URL(request.url).pathname
-    if (path.endsWith("/questions")) return Response.json([])
-    if (path === "/v1/events") {
-      fetches += 1
-      // The first read gets one event; the reload gets a page that goes past it.
-      return Response.json(fetches === 1 ? [older] : fetches === 2 ? [older, older2] : [])
-    }
-    return new Response(null, { status: 204 })
-  })
-  // Every block is 100px tall, stacked in order below the scroll box's top.
-  const state = { top: 0 }
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    const index = this.dataset.blockId
-      ? Array.from(this.parentElement?.querySelectorAll("[data-block-id]") ?? []).indexOf(this)
-      : 0
-    const top = this.dataset.blockId ? index * 100 - state.top : 0
-    return { top, bottom: top + (this.dataset.blockId ? 100 : 0) } as DOMRect
-  })
-  const size = (log: HTMLElement) => {
-    Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => 1400 })
-    Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 200 })
-    Object.defineProperty(log, "scrollTop", {
-      configurable: true,
-      get: () => state.top,
-      set: (value: number) => {
-        state.top = value
-      },
-    })
-  }
-  mount([newest])
-  size(transcript())
-  fireEvent.scroll(transcript())
-  await within(transcript()).findByText("older prompt")
-  // Blocks: older, newest. The reader has newest's top 50px above the box.
-  state.top = 150
-  fireEvent.scroll(transcript())
-
-  await user.click(screen.getByRole("button", { name: "Expand the console" }))
-  state.top = 0
-  const log = await screen.findByRole("log", { name: "Console transcript" })
-  size(log)
-  act(() => {
-    latestSource().succeed()
-    latestSource().emit("snapshot", [newest, extra])
-  })
-
-  await within(log).findByText("oldest prompt")
-  // Blocks: oldest, older, newest, extra. newest is third, so its top is 200 - top.
-  await waitFor(() => expect(state.top).toBe(250))
 })

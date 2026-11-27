@@ -24,7 +24,7 @@ export type FailedSend = {
   message: string
 }
 
-export type ConsoleViewState = {
+type ConsoleViewState = {
   draft: string
   /** The scroll box's offset from the top when the reader last scrolled. */
   scrollTop: number

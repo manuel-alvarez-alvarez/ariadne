@@ -27,7 +27,7 @@
  * The metadata comes from the query cache, which the event dispatcher keeps
  * current — a session going idle or being killed elsewhere updates this view
  * without a refetch. The console is the exception: it is a live transcript,
- * not cacheable state, and owns its own stream (see `console/session-console.tsx`).
+ * not cacheable state, and owns its own stream (see `trajectory/trajectory-console.tsx`).
  *
  * The facts are dense, like the goal and task panels' own, and a chevron
  * folds them to the one line that still says what the console beneath them
@@ -71,7 +71,6 @@ import { sessionCopyEntries } from "@/lib/clipboard"
 import { formatTokens } from "@/lib/format"
 import { paths, usePanelSessionTo, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
 
-import { SessionConsole } from "./console/session-console"
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
 import { SessionBlockedBanner } from "./session-blocked-banner"
@@ -211,9 +210,6 @@ export function SessionDetailView({
   const switchedFromTo = usePanelSessionTo(session.switched_from ?? "")
   const [search, setSearch] = useSearchParams()
   const tab = TABS.find((value) => value === search.get("tab")) ?? "terminal"
-  // A hidden switch: `?console=turns` opens the turn console in place of the
-  // console of today, until the turn console replaces it.
-  const Console = search.get("console") === "turns" ? TrajectoryConsole : SessionConsole
   // Set when the panel was opened by a row that said this agent is blocked on
   // a prompt: what it is waiting for is an answer, so the console takes the
   // keyboard rather than waiting to be clicked. Read once, on arrival.
@@ -361,7 +357,7 @@ export function SessionDetailView({
       {/* `min-h-0 flex-1` so this block, not the view's own height, is what
           grows to fill the panel — and the console tab's content below
           inherits the same contract, which is how it ends up with a real
-          height to hand `SessionConsole` instead of its own fallback. */}
+          height to hand `TrajectoryConsole` instead of its own fallback. */}
       <Tabs
         value={tab}
         onValueChange={(value) => setTab(value as Tab)}
@@ -372,7 +368,7 @@ export function SessionDetailView({
           <TabsTrigger value="activity">Agent activity</TabsTrigger>
         </TabsList>
         <TabsContent value="terminal" className="min-h-0 flex flex-1 flex-col pt-3">
-          <Console
+          <TrajectoryConsole
             host={host}
             sessionId={session.id}
             status={session.status}

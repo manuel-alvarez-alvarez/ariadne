@@ -247,21 +247,6 @@ export function formQuestions(
   return [...beforeEvents, ...fromEvents]
 }
 
-/** The question a `question` event carries, as the list would read it. */
-export function questionOfEvent(event: AgentEventDto): QuestionDto | undefined {
-  if (event.kind !== "question") return undefined
-  const question = record(record(event.payload)?.question)
-  const id = text(question?.id)
-  if (!question || id === undefined) return undefined
-  return {
-    id,
-    session_id: text(question.session_id) ?? event.session_id ?? "",
-    message: text(question.message) ?? "",
-    schema: question.schema,
-    created_at: text(question.created_at) ?? event.created_at,
-  } as QuestionDto
-}
-
 /** How a question closed that the console did not see close. */
 const GONE: FormClosed = { action: "cancel", content: {}, closedBy: "unknown" }
 
