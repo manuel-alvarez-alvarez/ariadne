@@ -12,5 +12,5 @@ mod fold;
 pub(crate) mod read;
 mod steps;
 
-pub(crate) use fold::{Fold, session_state};
+pub(crate) use fold::{Fold, Moment, blank_session, session_state};
 pub(crate) use steps::step_id;

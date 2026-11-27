@@ -51,6 +51,26 @@ pub(crate) const NOTICES: usize = 20;
 /// one screen of a client; the rest are a page of the steps route away.
 pub(crate) const STEP_WINDOW: usize = 50;
 
+/// One thing the session's agent did, as [`Fold::history`] gives it.
+#[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // short-lived, in one list
+pub(crate) enum Moment {
+    Prompt(PromptDto),
+    Step(StepDto),
+    Plan(PlanDto),
+}
+
+impl Moment {
+    /// The id of the stored event that made it: ids sort in event order.
+    fn id(&self) -> &str {
+        match self {
+            Self::Prompt(prompt) => &prompt.id,
+            Self::Step(step) => step_id(step),
+            Self::Plan(plan) => &plan.plan_id,
+        }
+    }
+}
+
 /// A session's events, folded into turns.
 #[derive(Debug, Clone)]
 pub(crate) struct Fold {
@@ -254,6 +274,22 @@ fn row_state(session: &SessionDto) -> SessionStateDto {
             .zip(session.context_size)
             .map(|(used, size)| ContextWindowDto { used, size }),
         usage: session.usage,
+        cost: None,
+        commands: Vec::new(),
+    }
+}
+
+/// The state of a session with no row to read, before any event.
+pub(crate) fn blank_session(status: ariadne_core::SessionStatus) -> SessionStateDto {
+    SessionStateDto {
+        status,
+        attention_reason: None,
+        running_turn_id: None,
+        title: None,
+        mode: None,
+        config_options: Vec::new(),
+        context: None,
+        usage: Default::default(),
         cost: None,
         commands: Vec::new(),
     }
@@ -635,6 +671,68 @@ impl Fold {
                     .filter(|step| lane_of(step) == lane)
                     .cloned()
                     .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Everything the session's own agent did, whole and oldest first: each
+    /// turn's prompt, then its main-lane steps with the plans it changed, in
+    /// the order of the events that made them. A closed turn's steps are
+    /// here too, which a snapshot leaves out.
+    pub(crate) fn history(&self) -> Vec<Moment> {
+        let mut moments = Vec::new();
+        for turn in &self.turns {
+            if let Some(prompt) = &turn.prompt {
+                moments.push(Moment::Prompt(prompt.clone()));
+            }
+            let mut inside: Vec<Moment> = turn
+                .steps
+                .iter()
+                .filter(|step| lane_of(step) == MAIN_LANE)
+                .map(|step| Moment::Step(step.clone()))
+                .collect();
+            for (_, plan) in self.plans.iter().filter(|((lane, _), plan)| {
+                lane == MAIN_LANE
+                    && !plan.removed
+                    && plan.turn_id.as_deref() == Some(turn.id.as_str())
+            }) {
+                let at = inside
+                    .iter()
+                    .position(|moment| moment.id() > plan.plan_id.as_str())
+                    .unwrap_or(inside.len());
+                inside.insert(at, Moment::Plan(plan.clone()));
+            }
+            moments.extend(inside);
+        }
+        // A plan that no turn holds — one made before any prompt — comes
+        // last.
+        moments.extend(
+            self.plans
+                .iter()
+                .filter(|((lane, _), plan)| {
+                    lane == MAIN_LANE
+                        && !plan.removed
+                        && !self
+                            .turns
+                            .iter()
+                            .any(|turn| plan.turn_id.as_deref() == Some(turn.id.as_str()))
+                })
+                .map(|(_, plan)| Moment::Plan(plan.clone())),
+        );
+        moments
+    }
+
+    /// The stored rows that show a main-lane call whole: its
+    /// opener, then its newest output, diff and change.
+    pub(crate) fn call_rows(&self, step: &str) -> Vec<String> {
+        self.turns
+            .iter()
+            .find_map(|turn| {
+                let lane = turn.lanes.get(MAIN_LANE)?;
+                lane.openers
+                    .iter()
+                    .any(|opener| opener.step == step)
+                    .then(|| lane.rows(step))
             })
             .unwrap_or_default()
     }
