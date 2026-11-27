@@ -18,6 +18,7 @@ tests:
   - crates/ariadne-console/src/tui/subagents.rs
   - crates/ariadne-console/src/tui/form.rs
   - crates/ariadne-cli/src/commands/transcript.rs
+  - crates/ariadne-console/src/trajectory/print.rs
 ---
 
 # Sessions, terminals and logs
@@ -123,7 +124,7 @@ Out: ACP process ownership (021), task transitions (001), and prompt wording
 
 20. A session place survives a store restart (`crates/ariadne-store/tests/session_place.rs::the_session_place_survives_a_store_restart`).
 21. A question draws its fields above the input with the option text as written, the keys answer it field by field, Esc declines it, a form with no fields is accepted, text typed on a choice field without a companion is a prompt, a required field is not left empty, and a closed question shows each answer (`ariadne-console::tui::form::tests::an_open_question_draws_its_fields_and_the_option_text_as_written_above_the_input`, `::the_keys_answer_each_field_and_the_last_enter_sends_the_content`, `::escape_declines_the_question`, `::enter_accepts_a_form_without_fields_with_empty_content`, `::text_typed_on_a_choice_field_is_sent_as_a_prompt`, `::a_required_field_with_no_choice_left_is_not_taken`, `::left_with_text_in_the_box_does_not_change_the_question`, `::skipped_required_questions_block_submission_until_answered`, `::a_closed_question_shows_each_answer_by_the_option_text`).
-22.  `ariadne session logs` draws compact answers for closed questions, and a followed log draws the close under it (`ariadne-cli::commands::transcript::tests::a_question_draws_each_field_with_its_options_as_written_and_its_answers`, `::a_followed_question_draws_its_close_under_it`).
+22.  `ariadne session logs` draws an open question with its options as written and a closed one with its compact answer, and a followed log draws the close under it (`ariadne-console::trajectory::print::tests::a_question_prints_its_options_while_open_and_its_answer_once_closed`, `ariadne-cli::commands::transcript::tests::a_follow_prints_each_item_once_across_snapshots`).
 
 23. Stepper acceptance: paired Claude fields and typed single/multi answers use
 `ariadne-console::tui::form::tests::claude_companions_are_one_step_and_custom_answers_merge`.

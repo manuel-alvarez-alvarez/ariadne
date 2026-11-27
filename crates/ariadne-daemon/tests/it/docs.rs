@@ -76,6 +76,16 @@ async fn the_committed_api_pair_holds_every_trajectory_type() {
         "PlanDto",
         "PlanVariant",
         "ContentBlockDto",
+        "ToolCallDetailDto",
+        "ToolDetailDto",
+        "CommandDetailDto",
+        "DiffDetailDto",
+        "DiffFileDto",
+        "FileDetailDto",
+        "SearchDetailDto",
+        "FetchDetailDto",
+        "GenericDetailDto",
+        "RawToolDto",
     ] {
         let schema = &doc["components"]["schemas"][name];
         assert!(schema.is_object(), "the daemon serves {name}");
@@ -128,7 +138,13 @@ async fn the_committed_api_pair_holds_every_trajectory_type() {
             "session_patch"
         ]
     );
+    assert_eq!(
+        kinds("ToolDetailDto", "type"),
+        ["command", "diff", "file", "search", "fetch", "generic"]
+    );
     for path in [
+        "/v1/sessions/{id}/trajectory/items/{item_id}",
+        "/v1/sessions/{id}/trajectory/blobs/{event_id}/{index}",
         "/v1/sessions/{id}/trajectory",
         "/v1/sessions/{id}/trajectory/stream",
         "/v1/sessions/{id}/trajectory/turns/{turn_id}/steps",

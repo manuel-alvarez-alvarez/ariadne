@@ -21,6 +21,7 @@ tests:
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_discovery.rs
   - crates/ariadne-daemon/src/acp.rs
+  - crates/ariadne-daemon/src/http/console.rs
   - crates/ariadne-daemon/tests/it/transcript_usage.rs
   - crates/ariadne-daemon/tests/it/auto_switch.rs
   - crates/ariadne-daemon/tests/it/ai_permissions_decisions.rs
@@ -212,6 +213,14 @@ it leaves nothing to delete.
    A direct child's runs take a new id. The `item_id` of a
    `user_prompt_submit` is its turn's id, which a reconnect keeps.
    No chunk is stored, and none reaches `/v1/events` or `/v1/events/stream`.
+   A console stream open before the turn starts receives every chunk of it
+   unless it falls behind the live buffer, which is a `resync` and the end of
+   the stream (012,
+   `http/console.rs::tests::a_live_channel_that_lagged_while_the_console_opened_is_told_to_resync_first`).
+   Each chunk it receives comes below the stored whole that
+   follows it: a stored event never goes out while a chunk sent before its
+   commit is still waiting on the live channel
+   (`http/console.rs::tests::a_chunk_sent_while_another_waits_for_the_pump_goes_out_below_the_next_commit`).
 7. Tool call updates are merged per `toolCallId`: every field an update sets
    replaces the one on record, `content` included. `pre_tool_use` carries
    the call as it opened, including its input. The daemon stores a
@@ -1049,6 +1058,11 @@ it leaves nothing to delete.
   `::a_content_block_over_one_megabyte_is_stored_as_a_placeholder`).
 - Each live chunk carries the `item_id` of its stored whole
   (`acp_items.rs::each_live_chunk_and_its_stored_whole_carry_one_item_id`).
+- Each live chunk reaches a console stream open before the turn, below the
+  stored whole that follows it, unless the stream falls behind the live
+  buffer and is told to resync
+  (`http/console.rs::tests::a_live_channel_that_lagged_while_the_console_opened_is_told_to_resync_first`)
+  (`http/console.rs::tests::a_chunk_sent_while_another_waits_for_the_pump_goes_out_below_the_next_commit`).
 - A running call's progress is stored once its interval has passed, goes
   live alone inside it, and the interval starts again at each stored update
   (`acp_items.rs::a_running_calls_progress_is_stored_once_its_interval_has_passed`,

@@ -11,6 +11,7 @@ tests:
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-daemon/src/trajectory/fold.rs
   - crates/ariadne-daemon/src/trajectory/read.rs
+  - crates/ariadne-daemon/src/trajectory/detail.rs
   - crates/ariadne-daemon/src/http/trajectory.rs
   - crates/ariadne-daemon/tests/it/trajectory.rs
   - crates/ariadne-daemon/tests/it/trajectory_acp.rs
@@ -36,8 +37,7 @@ Out:
 
 - The events themselves and their payloads. They are the ACP runtime's (021).
 - The console routes and the two consoles that read them (008).
-- The item detail route and the blob route. A later task adds them, and the
-  types of the detail.
+- How a console draws the detail of a call.
 - The stored kinds of the session state an agent reports, and the display
   state the session row keeps. They are the ACP runtime's (021, rule 24).
 
@@ -89,8 +89,11 @@ Out:
 ### Turns
 
 9. A turn opens on each stored `user_prompt_submit`. The id of the turn is
-   the id of that event. The events of a session before its first prompt
-   are a turn with no prompt, opened by the first of them.
+   the id of that event. Its prompt carries the content the agent read and
+   `text`, the text as it was submitted: the first turn of a launch carries
+   the seat brief in its content, ahead of that text. The events of a
+   session before its first prompt are a turn with no prompt, opened by the
+   first of them.
 10. An event joins the running turn. Where no turn runs, it joins the newest
    turn.
 11. A turn's `state` is `running` until one of these ends it:
@@ -347,6 +350,91 @@ Out:
 48. A session on a remote host serves the same routes through the
     forwarder, with the session named by its alias (037).
 
+### The detail of a call
+
+49. `GET /v1/sessions/{id}/trajectory/items/{item_id}` answers the
+    `ToolCallDetailDto` of the `tool_call` step `item_id`: its id, its tool
+    call id, title, kind, status, `detail_rev` and `detail`. The call's
+    events are those the fold joins to the step (rule 21): from its opener
+    on, the events of its lane and its tool call id, up to the event that
+    ends the call, the next `pre_tool_use` of that id, or the end of its
+    turn. The end of its turn leaves an open call `cancelled` for a stop
+    reason `cancelled` and `interrupted` for every other end, as rule 12
+    does. The route loads at most 500 of those payloads, the opener and the
+    newest. `detail_rev` counts every update, and one more where the end of
+    the turn closed the call: the `detail_rev` of the call's step. The ACP runtime stores
+    each update with the whole call so far (021), so the newest holds it.
+50. `detail` is tagged by `type`, by the call's kind. A later field of the
+    call replaces an earlier one, as an ACP update does:
+    - `execute` is `command`: the whole command, else the title; `cwd`, the
+      input's `cwd`, `workdir` or `working_directory`; `output`, the
+      call's output text (rule 51); `exit_code`, the
+      `rawOutput`'s `exit_code`, `exitCode` or `metadata.exit`, else
+      `_meta.terminal_exit.exit_code`; and `truncated`. An output longer
+      than one megabyte keeps its last megabyte, where the result and the
+      errors are, and `truncated` is true.
+    - `edit` is `diff`: for each `diff` entry, its path, `old_text`,
+      `new_text`, `unified` and `language`. `unified` is the agent's patch,
+      under a file header from the entry's path where it has none, else the
+      hunks between the old and the new text with three lines of context.
+    - `read` is `file`: the path, the number of the first line, the
+      language and the text. Where the text sits in the wrapper of a known
+      agent and every line in it carries its number, the text loses the
+      numbers and the wrapper, and the first number is the line, whatever
+      offset the input asked for:
+      - Claude Code puts each line after its number and a tab, in a fence
+        of three backticks or more, and can end it with a notice such as
+        `[File truncated: showing 2 of 90 lines]`.
+      - OpenCode puts each line after its number, a colon and a space,
+        under a header `Read file <path>, lines <from>-<to>`, and can end
+        it with a notice such as `[Output truncated. …]`. Its range can
+        start before the offset asked for, when the offset is past the end.
+      - OpenCode 1.x puts the same lines between the lines `<path>…</path>`,
+        `<type>file</type>` and `<content>` and a closing `</content>`. A
+        notice such as `(End of file - total 1 lines)` comes before the
+        close, and a `<system-reminder>` can follow it. Its ACP call carries
+        that output as one text block (OpenCode v1.4.0, `tool/read.ts` and
+        `acp/agent.ts`).
+      A notice is no line of the file, and the text leaves it out. A text
+      in no such wrapper is the file's own, a number at the start of a line
+      included: it stays as it is, and the line is the call's first
+      location line, else the input's `line` or `offset`.
+    - `search` is `search`: the input's `pattern`, `query` or `regex`, else
+      the query of a title `Search for '<query>'` or `Search for '<query>'
+      in <path>`, as Codex names a search it ran in a shell; and the output
+      text. `fetch` is `fetch`: the input's `url`, and the output text.
+    - Every other kind is `generic`: the call's content blocks, with a
+      `blob` URL that names the event that last set the content.
+    - `language` is the name the web console's highlighter knows for the
+      file's extension, such as `rust` or `typescript`, or none.
+    These are the rules of the two consoles' folds (Sources).
+51. A call's output text is the text of its content entries, else its
+    `rawOutput` where that is text, else the `stdout` and `stderr` of a
+    `rawOutput` object, else its `output`, `aggregated_output`,
+    `formatted_output` or `text`, else the `_meta.terminal_output` data. A
+    `rawOutput` with none of these is raw data: no typed detail writes it
+    out. With `raw=true`, the answer adds `raw`: the call's raw input and
+    raw output. With `raw=false`, and without the parameter, the answer
+    has no `raw`.
+52. A running call shows the newest stored update of it. Progress that the
+    ACP runtime has not stored yet is in the stream alone (021).
+53. `GET /v1/sessions/{id}/trajectory/blobs/{event_id}/{index}` answers the
+    bytes of one image, audio or resource block of the session's stored
+    event `event_id`, with its MIME type, else `application/octet-stream`.
+    `index` is the place of the block in the event's `content`, in a call's
+    `content` entries, or in a compaction's `summary`: the place a `blob`
+    URL names (rule 28).
+54. An `item_id` that opens no `tool_call` step of the session, and a blob
+    that names no event of the session or no block with bytes, are a 404.
+    The route folds the heads of the item's turn, from its prompt to the
+    item, and the item must be one of the step openers the fold indexes
+    (rule 34). So a progress or a completion row of an open call, which
+    joins its step, names no item.
+55. A session on a remote host serves both routes through the forwarder
+    (rule 48). The forwarder passes a blob's bytes as they are, and gives
+    the session's alias to each `blob` URL of a content block. It passes a
+    call's `raw` as the agent sent it: no session id or URL in it changes.
+
 ## Acceptance criteria
 
 1. The facts of an event, its lane, and the daemon's own allow
@@ -377,6 +465,8 @@ Out:
    `fold.rs::an_item_id_names_the_message_its_chunks_and_whole_belong_to`.
 9. A closed turn carries its prompt, activity and answer, and no steps
    (rules 9, 13, 15, 17): `fold.rs::a_closed_turn_carries_its_prompt_activity_and_answer_and_no_steps`.
+   The prompt keeps its submitted text beside the seat brief (rule 9):
+   `fold.rs::a_prompt_keeps_its_submitted_text_beside_the_seat_brief`.
 10. A running turn carries its last steps (rule 14):
    `fold.rs::a_running_turn_carries_its_last_steps`.
 11. A call's preview, diff stat, subject and detail revision (rules 21, 22):
@@ -480,62 +570,101 @@ Out:
 49. A failed refill leaves its rows to load again (rule 16):
     `http/trajectory.rs::a_failed_refill_leaves_its_rows_to_load_again`.
 
-50. A plan event names its plan in its facts, and the upgrade fills the
+50. A call's detail gives its command, its directory, its latest stored
+    progress, its output and its exit code, and its raw data only with
+    `raw=true`, over HTTP (rules 49 to 52):
+    `tests/it/trajectory.rs::a_call_detail_gives_its_command_its_progress_and_raw_data_on_demand`.
+51. An edit, a read, a search and a fetch each give their shape (rule 50):
+    `detail.rs::an_edit_gives_each_file_its_texts_its_diff_and_its_language`,
+    `detail.rs::a_read_gives_its_path_first_line_language_and_text` and
+    `detail.rs::a_search_and_a_fetch_give_their_subject_and_their_result`.
+52. A call's events end with its turn and leave out other calls, and a
+    long call loads its opener and its newest updates (rule 49):
+    `detail.rs::a_call_ends_at_the_end_of_its_turn_and_skips_other_calls` and
+    `detail.rs::a_long_call_loads_its_opener_and_its_newest_updates`.
+53. Another call gives its content blocks, a blob answers its bytes and
+    MIME type, and an unknown item or blob is a 404 (rules 50, 53, 54):
+    `tests/it/trajectory.rs::a_blob_answers_the_bytes_of_its_block_and_unknown_ids_are_not_found`.
+    A progress row is no item, over HTTP and by the fold (rule 54):
+    `tests/it/trajectory.rs::a_call_detail_gives_its_command_its_progress_and_raw_data_on_demand`
+    and `detail.rs::only_an_event_that_opens_a_step_is_an_item`.
+54. A remote session serves a call's detail and a blob through the
+    forwarder, the blob URL names the alias, and `raw` is absent without
+    the parameter and with `raw=false`, and passes as it is with
+    `raw=true` (rules 51, 55):
+    `far_tasks/source_references.rs::source_trajectory_routes_reach_the_worker_session`.
+55. `ui/openapi.json` and `ui/src/api/schema.d.ts` hold every detail type,
+    every detail kind and both routes:
+    `docs.rs::the_committed_api_pair_holds_every_trajectory_type`.
+56. The provider shapes of a call (rules 50, 51): a Codex shell search,
+    `detail.rs::a_codex_shell_search_takes_its_query_from_its_title`; an
+    OpenCode read, `detail.rs::an_opencode_read_gives_the_range_it_read`; an
+    OpenCode 1.x read,
+    `detail.rs::an_opencode_1_read_gives_the_lines_inside_its_tags`; a
+    Claude Code read with a notice,
+    `detail.rs::a_claude_read_keeps_its_lines_before_a_truncation_notice`;
+    an opaque raw output,
+    `detail.rs::an_opaque_raw_output_stays_out_of_a_typed_detail`; and a
+    read in no wrapper, `detail.rs::an_unwrapped_read_keeps_its_text_as_it_is`.
+57. A call that the end of its turn interrupts has the same status and
+    `detail_rev` in its step and in its detail, over HTTP (rules 12, 49):
+    `tests/it/trajectory.rs::a_call_its_turn_interrupts_has_one_revision_in_its_step_and_its_detail`.
+58. A plan event names its plan in its facts, and the upgrade fills the
     facts of the plan events stored before it (rules 3, 6):
     `event_facts.rs::a_plan_update_and_a_removed_plan_name_their_plan` and
     `plan_facts_migration.rs::the_upgrade_fills_the_plan_facts_of_older_plan_events`.
-51. The updates of one `plan_id` change one plan in place, an old-form
+59. The updates of one `plan_id` change one plan in place, an old-form
     `plan` is one fixed plan, a `plan_removed` marks its plan, and a fold
     built again names each plan the same (rules 32, 38):
     `trajectory_acp.rs::the_updates_of_a_plan_change_it_in_place_and_a_removed_plan_is_marked`.
-52. A notice is a `note` with its severity, a compaction is one step with
+60. A notice is a `note` with its severity, a compaction is one step with
     its status and summary, and a fold built again gives each the same id
     (rules 26, 27):
     `trajectory_acp.rs::a_notice_is_a_note_and_a_compaction_is_one_step_with_its_status_and_summary`.
-53. A message with an image gives an `image` block with a blob URL and no
+61. A message with an image gives an `image` block with a blob URL and no
     bytes (rule 28):
     `trajectory_acp.rs::a_message_with_an_image_gives_an_image_block_with_a_blob_url`.
-54. A new open shows a running call's newest stored progress, and a
+62. A new open shows a running call's newest stored progress, and a
     compaction's newest update (rules 21, 22, 27):
     `trajectory_acp.rs::a_new_open_shows_the_newest_stored_progress_of_a_running_call`.
-55. A `tool_call_abandoned` ends its call `interrupted` or `cancelled`
+63. A `tool_call_abandoned` ends its call `interrupted` or `cancelled`
     (rule 21): `trajectory_acp.rs::an_abandoned_call_ends_interrupted_with_its_turn`
     and `::an_abandoned_call_ends_cancelled_with_a_cancelled_turn`.
-56. The session state holds the mode, the config options, the title, the
+64. The session state holds the mode, the config options, the title, the
     cost and the commands, and a change is a `session_patch` (rule 33):
     `trajectory_acp.rs::the_session_state_holds_what_the_agent_reports_and_changes_by_patch`
     and `fold.rs::a_display_change_is_a_session_patch_and_a_stored_list_yields_to_it`.
-57. The header of a closed turn is exact from its heads, with notices, a
+65. The header of a closed turn is exact from its heads, with notices, a
     compaction, a plan and an abandoned call in it (rules 17, 34, 38):
     `trajectory_acp.rs::the_header_of_a_closed_turn_stays_exact`. A turn of
     many more events than the budget takes the same path:
     `read.rs::a_turn_of_many_more_events_than_the_budget_loads_the_budget_at_most`.
-58. A plan of each kind folds by its lane and `plan_id`
+66. A plan of each kind folds by its lane and `plan_id`
     (rule 32): `fold.rs::a_plan_keeps_the_id_of_its_first_event`.
-59. A plan past the read budget keeps its first id for a later update
+67. A plan past the read budget keeps its first id for a later update
     (rules 32, 36):
     `read.rs::a_plan_past_the_budget_keeps_its_first_id_for_a_later_update`.
-60. A compaction takes each whole summary, an empty one included, and
+68. A compaction takes each whole summary, an empty one included, and
     changes the step of its own lane alone (rule 27):
     `fold.rs::a_compaction_takes_each_whole_summary_and_keeps_to_its_lane`.
-61. A subagent's notice is a note of its lane (rules 26, 31):
+69. A subagent's notice is a note of its lane (rules 26, 31):
     `fold.rs::a_subagents_notice_is_a_note_of_its_lane`.
-62. A compaction across a prompt changes the step of the turn it began in,
+70. A compaction across a prompt changes the step of the turn it began in,
     and the later turn counts no step for it, in a warm fold and a rebuilt
     one, the steps route included (rules 17, 27):
     `fold.rs::a_compaction_across_a_prompt_changes_its_first_step` and
     `read.rs::a_rebuilt_fold_names_plans_and_compactions_by_their_first_event`.
     A child's compaction across a prompt does the same in the child's lane:
     `read.rs::a_child_known_from_an_earlier_turn_opens_no_step_in_a_later_one`.
-63. A removal before a plan's first update names the plan, in a warm fold
+71. A removal before a plan's first update names the plan, in a warm fold
     and a rebuilt one (rule 32):
     `fold.rs::a_removal_before_a_plans_first_update_names_the_plan` and
     `read.rs::a_rebuilt_fold_names_plans_and_compactions_by_their_first_event`.
-64. A reported empty command list stands against a stored one, and a store
+72. A reported empty command list stands against a stored one, and a store
     tells a reported empty state from no report (rule 33):
     `fold.rs::a_reported_empty_command_list_stands_against_a_stored_one` and
     `crates/ariadne-store/tests/store.rs::a_reported_empty_state_is_told_from_no_report`.
-65. A child known from an earlier turn opens no step in a later one: the
+73. A child known from an earlier turn opens no step in a later one: the
     later turn's page holds its own steps, and every read counts each turn
     as a warm fold does, with the earlier turn shown, left out, or past the
     budget (rules 27, 30, 34, 44):
@@ -562,6 +691,10 @@ the stream, and not yet in a page.
 
 A page with `before` holds the subagents and plans of its own read.
 
+A call of more than 500 stored events shows the fields of its opener and its
+newest 499. An agent that sends each field only once, and not the whole call
+in each update, can lose a field of an update between them.
+
 ## Sources
 
 `crates/ariadne-api/src/trajectory.rs`,
@@ -573,5 +706,6 @@ A page with `before` holds the subagents and plans of its own read.
 `crates/ariadne-daemon/src/http/trajectory.rs`,
 `crates/ariadne-daemon/src/http/console.rs` (`Merge`, `open_console`),
 `crates/ariadne-daemon/src/http/source_sessions.rs`, and the two folds it
-replaces for a client: `crates/ariadne-console/src/transcript.rs` and
-`ui/src/features/sessions/console/transcript.ts`.
+replaces for a client: `crates/ariadne-console/src/transcript.rs` (`Tool`)
+and `ui/src/features/sessions/console/transcript.ts` (`toolOf`,
+`toolOutput` and `toolDiff`).

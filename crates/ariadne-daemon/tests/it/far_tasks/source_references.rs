@@ -611,8 +611,8 @@ async fn source_console_stream_and_terminal_connections_reach_the_worker_session
 }
 
 /// A worker session serves its trajectory through the source's forwarder:
-/// the snapshot, a page of its steps, and the stream, each naming the
-/// session by its alias.
+/// the snapshot, a page of its steps, a call's detail, a blob, and the
+/// stream, each naming the session by its alias.
 #[tokio::test]
 async fn source_trajectory_routes_reach_the_worker_session() {
     let (p, goal) = setup().await;
@@ -651,6 +651,27 @@ async fn source_trajectory_routes_reach_the_worker_session() {
             .await
             .unwrap();
     }
+    // Raw data that looks like a worker blob URL and names the worker
+    // session is the agent's own, and passes as it is.
+    let raw_input = json!({
+        "url": format!("/v1/sessions/{}/trajectory/blobs/e/0", session.id),
+        "blob": format!("/v1/sessions/{}/trajectory/blobs/e/0", session.id),
+        "session_id": session.id,
+    });
+    let call = p
+        .far
+        .store
+        .create_event(ariadne_store::NewAgentEvent {
+            session_id: Some(session.id.clone()),
+            task_id: Some(source.id.clone()),
+            kind: "pre_tool_use".into(),
+            payload: json!({"acp": {"toolCallId": "call-1", "title": "Shot", "kind": "other",
+                "status": "completed", "rawInput": raw_input,
+                "content": [{"type": "content", "content": {"type": "image",
+                    "mimeType": "image/png", "data": "aGVsbG8="}}]}}),
+        })
+        .await
+        .unwrap();
     let alias = format!("far~{}~{}", source.id, session.id);
 
     let snapshot: Value = p
@@ -673,6 +694,47 @@ async fn source_trajectory_routes_reach_the_worker_session() {
         ))
         .await;
     assert_eq!(page["steps"][0]["content"][0]["text"], "worker answer");
+    let detail: Value = p
+        .local
+        .get(&format!(
+            "/v1/sessions/{alias}/trajectory/items/{}",
+            call.id
+        ))
+        .await;
+    assert!(detail.get("raw").is_none(), "no raw data unasked: {detail}");
+    let refused: Value = p
+        .local
+        .get(&format!(
+            "/v1/sessions/{alias}/trajectory/items/{}?raw=false",
+            call.id
+        ))
+        .await;
+    assert!(
+        refused.get("raw").is_none(),
+        "no raw data refused: {refused}"
+    );
+    let raw: Value = p
+        .local
+        .get(&format!(
+            "/v1/sessions/{alias}/trajectory/items/{}?raw=true",
+            call.id
+        ))
+        .await;
+    assert_eq!(raw["raw"]["input"], raw_input, "raw data passes as it is");
+    let blob = detail["detail"]["content"][0]["blob"].as_str().unwrap();
+    assert_eq!(
+        blob,
+        format!("/v1/sessions/{alias}/trajectory/blobs/{}/0", call.id),
+        "the blob URL names the alias"
+    );
+    let response = p.local.response(crate::common::get(blob)).await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "image/png");
+    let bytes = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    assert_eq!(&bytes[..], b"hello");
 
     let source_address = Front::default().serve(&p.local).await;
     let client = ariadne_client::Client::tcp(format!("http://{source_address}"));

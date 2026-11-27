@@ -320,11 +320,20 @@ impl Merge {
     /// committed. So the pump is asked for what it holds, and what it
     /// publishes is sorted into the queue, ahead of the live event it
     /// overtook.
+    ///
+    /// The live channel is read after the bus, too. A stored event the pump
+    /// publishes was committed after every live event below it was sent, so
+    /// those are on the channel by the time the event is in hand, and one
+    /// still there would go out after it. Live events taken here have not
+    /// waited for the pump yet, so the queue settles again.
     async fn settle(&mut self) -> Result<(), Resync> {
         self.settled = true;
         self.events.drained().await;
         let mut batch: Vec<Queued> = self.queue.drain(..).collect();
         self.take_stored(&mut batch)?;
+        let waiting = batch.len();
+        self.take_live(&mut batch)?;
+        self.settled = batch.len() == waiting;
         batch.sort_by(|a, b| a.id().cmp(b.id()));
         self.queue = batch.into();
         Ok(())
@@ -1160,6 +1169,59 @@ mod tests {
         assert_eq!(
             order, expected,
             "the live event goes out after the commits it overtook, each of them once"
+        );
+    }
+
+    /// A live event waits for the pump, and the pump publishes the stored
+    /// events committed meanwhile. A chunk sent after the one that is
+    /// waiting, and before the commit that followed it, is on the live
+    /// channel by then, and goes out below that commit: the merge reads the
+    /// live channel again once the drain has answered, not only the bus.
+    #[tokio::test]
+    async fn a_chunk_sent_while_another_waits_for_the_pump_goes_out_below_the_next_commit() {
+        let (store, _dir) = test_store().await;
+        let session = session_in(&store).await;
+        let (events, mut requests) = EventBus::drained_by_hand();
+        let stored_rx = events.subscribe();
+        let (live_tx, live_rx) = broadcast::channel(16);
+        let mut merge = Merge::new(events.clone(), stored_rx, live_rx, session.clone(), None);
+
+        let first = live(&session, "agent_message_chunk");
+        live_tx.send(first.clone()).unwrap();
+
+        // While the console waits for its first drain: the next chunk goes
+        // out, then the whole it belongs to is committed and published.
+        let (second, whole) = (
+            live(&session, "agent_message_chunk"),
+            live(&session, "agent_message"),
+        );
+        let pump = tokio::spawn({
+            let (events, second, whole) = (events.clone(), second.clone(), whole.clone());
+            async move {
+                let mut asked = 0;
+                while let Some(answer) = requests.recv().await {
+                    if asked == 0 {
+                        live_tx.send(second.clone()).unwrap();
+                        events.publish(published(whole.clone()));
+                    }
+                    asked += 1;
+                    answer
+                        .send(())
+                        .expect("the console waits for the drain it asked for");
+                }
+            }
+        });
+
+        let mut order = Vec::new();
+        for _ in 0..3 {
+            order.push(merge.next().await.unwrap().unwrap().id);
+        }
+        pump.abort();
+
+        assert_eq!(
+            order,
+            [first.id, second.id, whole.id],
+            "each chunk goes out below the whole committed after it"
         );
     }
 

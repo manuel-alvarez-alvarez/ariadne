@@ -248,29 +248,10 @@ fn anything(_: &Value) -> bool {
 
 /// Event kinds accepted by transcript filtering, including live-only kinds.
 pub(crate) fn transcript_kinds() -> Vec<CompletionCandidate> {
-    [
-        "session_start",
-        "user_prompt_submit",
-        "agent_thought",
-        "agent_message",
-        "plan",
-        "pre_tool_use",
-        "post_tool_use",
-        "permission_request",
-        "permission.replied",
-        "question",
-        "question.resolved",
-        "stop",
-        "compaction_update",
-        "session.error",
-        "session_end",
-        "agent_message_chunk",
-        "agent_thought_chunk",
-        "tool_call_update",
-    ]
-    .into_iter()
-    .map(CompletionCandidate::new)
-    .collect()
+    crate::commands::transcript::STEP_KINDS
+        .into_iter()
+        .map(CompletionCandidate::new)
+        .collect()
 }
 
 // ---- tasks ---------------------------------------------------------------
@@ -923,7 +904,7 @@ mod tests {
     #[test]
     fn transcript_filtering_offers_stored_and_live_event_kinds() {
         let kinds = offered(&transcript_kinds());
-        for kind in ["agent_message", "permission.replied", "tool_call_update"] {
+        for kind in ["message", "tool_call", "permission", "error"] {
             assert!(kinds.iter().any(|candidate| candidate == kind), "{kinds:?}");
         }
     }
