@@ -1783,14 +1783,18 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     `::shows no waiting-for-you activity for an open question while no turn runs`,
     `::shows a turn activity and Stop while running_turn_id names a turn, whatever the session row says`).
     The widths have a browser proof, as jsdom lays out nothing: a Playwright
-    probe on a temporary daemon, with a long running command and four config
-    options injected, at a pane of 384 px (the narrowest, 24rem), 420, 480,
-    560, 720 and 960 px and the expanded console on a 1600 px window. At each
-    width no two facts overlapped, every shown fact fit whole in the row, the turn
-    activity took at most 0.50 of the row, and the facts dropped in rank order
-    (at 384 px only the state, the turn and the tokens show; the context
-    comes at 560 px, the model, the mode and the effort at 960 px, and every
-    fact in the expanded console)
+    probe on a temporary daemon, with four config options injected, at a pane
+    of 384 px (the narrowest, 24rem), 420, 480, 560, 720 and 960 px and the
+    expanded console on a 1600 px window. At each width, with a long running
+    command and with `npm test`, no two facts overlapped, every shown fact fit
+    whole in the row, and the facts dropped in rank order. The long command
+    took 0.50 of the row at every width, cut with an ellipsis. `npm test`
+    took 182 px, whole from 480 px up and at 0.50 with an ellipsis at 384 and
+    420 px. At 384 to 480 px only the state, the turn and the tokens show; the
+    context comes at 560 px. The model, the mode and the effort come at
+    960 px with `npm test` only. In the expanded console `npm test` shows
+    all nine facts, and the long command shows seven of them: the cost and
+    the fast-mode option drop
 99c. A warning note and a compaction always show as lines of their turn,
     whatever the fold, and an error shows as rule 94 says. The console takes
     the warning notes and the compactions from the `notices` field of the
