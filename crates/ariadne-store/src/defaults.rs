@@ -172,7 +172,7 @@ pub(crate) struct SkillSupplement {
 
 /// Every supplement Ariadne ships. A pair of skill and seat that is not here
 /// adds no text.
-pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 7] = [
+pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 8] = [
     SkillSupplement {
         skill: ORCHESTRATION_SKILL,
         seat: Seat::Orchestrator,
@@ -187,6 +187,11 @@ pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 7] = [
         skill: "code-review",
         seat: Seat::Reviewer,
         text: include_str!("../supplements/code-review/reviewer.md"),
+    },
+    SkillSupplement {
+        skill: PR_REVIEWER_SKILL,
+        seat: Seat::Reviewer,
+        text: include_str!("../supplements/pr-reviewer/reviewer.md"),
     },
     SkillSupplement {
         skill: "pr-babysit",
@@ -982,22 +987,27 @@ pub(crate) mod tests {
     /// step call that passes the work with its `merge_commit`, and the
     /// `fail_step` call for a failed check. Its `conflict-resolution`
     /// supplement is 140: the one step call, for where no skill invoked it.
-    /// The orchestrator seat's `orchestration`
+    /// The reviewer seat's `pr-reviewer` supplement is 900: the calls that
+    /// read the request, the diff and the threads, the call that answers a
+    /// thread, and the one that submits the round, which the skill dropped
+    /// with every other Ariadne word. The orchestrator seat's `orchestration`
     /// supplement is 1,800: the tool of each playbook step, from
     /// `list_hosts` to `complete_goal`, and the model rules, which name the
     /// column ranks, `local` and the ACP agents. The skill dropped all of it
     /// to name no Ariadne word, and the orchestrator seat text is 200, so the
     /// seat still pays less than the 1,750 its text once carried with the
-    /// playbook in it. The total is 4,650, the seven caps with a sentence of
-    /// room. A new pair needs a cap of its own here, argued the same way, and
-    /// the total holds them all.
+    /// playbook in it. The total is 5,550, the eight caps with a sentence of
+    /// room: it rose from 3,750 by those 1,800.
+    /// A new pair needs a cap of its own here, argued the same way, and the
+    /// total holds them all.
     #[test]
     fn supplement_size_caps_hold() {
-        const TOTAL: usize = 4_650;
+        const TOTAL: usize = 5_550;
         let cap = |skill: &str, seat: Seat| match (skill, seat) {
             (ORCHESTRATION_SKILL, Seat::Orchestrator) => 1_800,
             ("code-review", Seat::Agent) => 300,
             ("code-review", Seat::Reviewer) => 200,
+            (PR_REVIEWER_SKILL, Seat::Reviewer) => 900,
             ("pr-babysit", Seat::Agent) => 1100,
             ("pr-babysit", Seat::Keeper) => 500,
             ("merge", Seat::Agent) => 260,
@@ -1050,6 +1060,19 @@ pub(crate) mod tests {
             );
         }
         assert_eq!(skill_supplement(ORCHESTRATION_SKILL, Seat::Agent), None);
+        let pr = skill_supplement(PR_REVIEWER_SKILL, Seat::Reviewer).unwrap();
+        for call in [
+            "`get_pull_request`",
+            "`get_diff`",
+            "`list_comments`",
+            "`reply_comment`",
+            "`resolve_thread`",
+            "`escalate_comment`",
+            "`submit_review`",
+        ] {
+            assert!(pr.contains(call), "the pr-reviewer supplement and {call}");
+        }
+        assert_eq!(skill_supplement(PR_REVIEWER_SKILL, Seat::Agent), None);
         assert_eq!(skill_supplement("code-review", Seat::Orchestrator), None);
         assert_eq!(skill_supplement("code-review", Seat::Keeper), None);
         assert_eq!(skill_supplement("architecture-review", Seat::Agent), None);
