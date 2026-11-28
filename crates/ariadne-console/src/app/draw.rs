@@ -552,11 +552,10 @@ impl App {
                                 indent(Line::from(spans).style(line.style))
                             })
                             .collect();
-                    if !raw
-                        && let Some(permission) = call
-                            .permission
-                            .as_deref()
-                            .and_then(|id| self.permission_of(item.turn(), id))
+                    if let Some(permission) = call
+                        .permission
+                        .as_deref()
+                        .and_then(|id| self.permission_of(item.turn(), id))
                     {
                         for said in permission_detail(permission) {
                             for part in wrap::wrap(&said, room_of_body) {
@@ -759,7 +758,10 @@ impl App {
         };
         let first = subject.lines().next().unwrap_or_default();
         let shown = wrap::clip(first, room);
-        let cut = subject.lines().nth(1).is_some() || shown != first;
+        // A title of many lines lost its later lines to the first-line subject.
+        let title_cut =
+            matches!(step, StepDto::ToolCall(call) if call.title.trim().lines().nth(1).is_some());
+        let cut = title_cut || subject.lines().nth(1).is_some() || shown != first;
         let mut spans = vec![
             Span::raw(indent),
             Span::styled(format!("{mark} "), style),

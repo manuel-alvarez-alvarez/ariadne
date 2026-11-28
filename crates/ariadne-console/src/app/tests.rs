@@ -3410,3 +3410,49 @@ fn a_turn_line_of_any_state_shows_the_duration_first_and_only_it_when_it_has_no_
         assert_eq!(screen[1], format!("  ▸ {mark} 5s"), "{state}");
     }
 }
+
+#[tokio::test]
+async fn an_open_command_shows_the_command_when_its_multiline_title_lost_lines_to_its_row() {
+    let mut cut = call("c1", "t1", "cargo test\n--all", "completed");
+    cut["subject"] = json!(null);
+    let mut stub = Stub {
+        details: vec![detail_of(
+            "c1",
+            "execute",
+            json!({"type": "command", "command": "cargo test\n--all", "cwd": null,
+                   "output": null, "exit_code": 0, "truncated": false}),
+        )],
+        ..Stub::default()
+    };
+
+    let (_, screen) = opened(&mut stub, vec![cut], vec![key(KeyCode::Enter)]).await;
+
+    assert!(
+        screen.iter().any(|row| row == "      $ cargo test"),
+        "{screen:#?}"
+    );
+    assert!(screen.iter().any(|row| row == "      --all"), "{screen:#?}");
+}
+
+#[tokio::test]
+async fn the_raw_view_of_a_call_still_shows_its_permission_answer_and_deciders() {
+    let (_, screen) = answered_call("ai", "yes", true).await;
+    let (mut app, _) = answered_call("ai", "yes", true).await;
+    app.event(key(KeyCode::Char('r')));
+    let raw = draw(&app, WIDTH, 60);
+
+    assert!(
+        screen
+            .iter()
+            .any(|row| row.contains("permission: Allow · by ai"))
+    );
+    assert!(
+        raw.iter()
+            .any(|row| row.contains("permission: Allow · by ai")),
+        "{raw:#?}"
+    );
+    assert!(
+        raw.iter().any(|row| row.contains("learned: command")),
+        "{raw:#?}"
+    );
+}
