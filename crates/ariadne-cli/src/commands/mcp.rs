@@ -1311,17 +1311,31 @@ pub(crate) mod tests {
             .collect()
     }
 
-    /// Whether `sentence` forbids or avoids what it says, so that naming a
-    /// call in it is no instruction to make the call.
-    fn forbids(sentence: &str) -> bool {
-        const NEGATIONS: [&str; 10] = [
-            "not", "never", "avoid", "skip", "without", "omit", "ignore", "don't", "except",
-            "instead",
-        ];
-        sentence
-            .to_lowercase()
+    /// Whether `sentence` tells the seat to make `call`: the call follows
+    /// "with", "call" or "calling", as in "Pass the work with `complete_step`."
+    /// Any other lead word, such as "avoid" or "refrain from using", names
+    /// the call with no instruction to make it.
+    fn instructs(sentence: &str, call: &str) -> bool {
+        let lowered = sentence.to_lowercase();
+        const NEGATIONS: [&str; 7] = ["not", "never", "avoid", "skip", "without", "omit", "don't"];
+        if lowered
             .split(|c: char| !(c.is_alphanumeric() || c == '\''))
             .any(|word| NEGATIONS.contains(&word))
+        {
+            return false;
+        }
+        let mut from = 0;
+        while let Some(at) = lowered[from..].find(&format!("`{call}`")) {
+            let before = lowered[..from + at].trim_end();
+            if ["with", "call", "calling"]
+                .iter()
+                .any(|lead| before.ends_with(lead))
+            {
+                return true;
+            }
+            from += at + call.len() + 2;
+        }
+        false
     }
 
     /// The sentences of `text` that tie the plain word `plain` to a meaning:
@@ -1388,7 +1402,7 @@ pub(crate) mod tests {
                 lowered.find(plain).is_some_and(|at| {
                     let rest = &lowered[at + plain.len()..];
                     if call {
-                        lowered.contains(meaning) && !forbids(sentence)
+                        instructs(sentence, meaning.trim_matches('`'))
                     } else {
                         [" is ", " are "].iter().any(|verb| {
                             rest.find(verb)
@@ -1415,7 +1429,11 @@ pub(crate) mod tests {
     fn ends_with_an_action(text: &str, plain: &str, listed: &[String]) -> bool {
         let lists = |call: &str| listed.iter().any(|tool| tool == call);
         let sentences = tying_sentences(text, plain);
-        if sentences.iter().any(|sentence| forbids(sentence)) {
+        if sentences.iter().any(|sentence| {
+            calls_in(sentence)
+                .iter()
+                .any(|call| !instructs(sentence, call))
+        }) {
             return false;
         }
         let delivers = DELIVERING_CALLS.into_iter().any(lists);
@@ -1538,8 +1556,7 @@ pub(crate) mod tests {
             &reviewer
         ));
         // A sentence that names the call to forbid it is no tie.
-        let forbidding =
-            "To send the report, pass the work or return the work is to avoid `submit_review`.";
+        let forbidding = "To send the report, pass the work or return the work is to refrain from using `submit_review`.";
         for plain in END_OF_WORK {
             assert!(
                 !ends_with_an_action(forbidding, plain, &reviewer),
