@@ -16,7 +16,7 @@
 use std::path::Path;
 
 use ariadne_core::{PromptKind, Seat};
-use ariadne_store::defaults::{default_prompt_text, default_system_prompt};
+use ariadne_store::defaults::{default_prompt_text, default_system_prompt, skill_supplement};
 use ariadne_store::{Goal, GoalStep, PullRequest, Repository, Skill, Task};
 
 /// The template `kind` is rendered from: the built-in text of that kind,
@@ -87,10 +87,20 @@ pub(crate) fn fence(value: &str) -> String {
     )
 }
 
-/// System layer: what the seat owes, and then the index of the skills this
-/// agent was staffed with ([`skill_index`]).
+/// System layer: what the seat owes, then the supplement of each skill this
+/// agent was staffed with ([`skill_supplements`]), then their index
+/// ([`skill_index`]).
 pub(crate) fn system_prompt(seat: Seat, skills: &[Skill], skills_dir: Option<&Path>) -> String {
-    with_skills(default_system_prompt(seat), skills, skills_dir)
+    with_skills(seat, default_system_prompt(seat), skills, skills_dir)
+}
+
+/// The seat whose text a session beside a request runs under (029, 032): a
+/// keeper's is the keeper's, and every other one is the reviewer's.
+pub(crate) fn pull_request_seat(seat: Seat) -> Seat {
+    match seat {
+        Seat::Keeper => Seat::Keeper,
+        _ => Seat::Reviewer,
+    }
 }
 
 /// The system layer of a session that sits beside a request (029, 032):
@@ -102,19 +112,42 @@ pub(crate) fn pull_request_system_prompt(
     skills: &[Skill],
     skills_dir: Option<&Path>,
 ) -> String {
+    let seat = pull_request_seat(seat);
     let text = match seat {
         Seat::Keeper => ariadne_store::defaults::pull_request_keeper_system_prompt(),
         _ => ariadne_store::defaults::pull_request_system_prompt(),
     };
-    with_skills(text, skills, skills_dir)
+    with_skills(seat, text, skills, skills_dir)
 }
 
-fn with_skills(seat_text: &str, skills: &[Skill], skills_dir: Option<&Path>) -> String {
-    let index = skill_index(skills, skills_dir);
-    match index.is_empty() {
-        true => seat_text.trim().to_string(),
-        false => format!("{}\n\n{index}", seat_text.trim()),
-    }
+fn with_skills(seat: Seat, seat_text: &str, skills: &[Skill], skills_dir: Option<&Path>) -> String {
+    [
+        seat_text.trim().to_string(),
+        skill_supplements(seat, skills),
+        skill_index(skills, skills_dir),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
+}
+
+/// What Ariadne adds for each skill an agent in `seat` was staffed with, in
+/// the order of its staffing, or nothing where no pair has a supplement
+/// (006 rule 21). The MCP server's instructions carry it too, between the
+/// seat text and the index.
+///
+/// A supplement goes by the skill's name, so a shipped skill the user edited
+/// still gets its own. A skill of the user's own gets none: it is no shipped
+/// skill, whatever it is named.
+pub(crate) fn skill_supplements(seat: Seat, skills: &[Skill]) -> String {
+    skills
+        .iter()
+        .filter(|skill| skill.is_builtin())
+        .filter_map(|skill| skill_supplement(&skill.name, seat))
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// The index of the skills an agent was staffed with: one line per skill,
@@ -1317,5 +1350,92 @@ mod tests {
             "{many}"
         );
         assert!(many.contains("- 01other: /repos/other"), "{many}");
+    }
+
+    fn skill(name: &str, builtin: bool, document: Option<&str>) -> Skill {
+        Skill {
+            name: name.into(),
+            document: document.map(str::to_string),
+            builtin: i64::from(builtin),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    /// The system prompt is the seat text, then the supplement of each
+    /// staffed skill, then the skill index (006 rule 21). The supplement is
+    /// the one compiled in for the skill and the seat, word for word.
+    #[test]
+    fn the_system_prompt_holds_the_seat_text_then_the_supplements_then_the_index() {
+        let skills = [
+            skill("coding", true, None),
+            skill("code-review", true, None),
+        ];
+        let prompt = system_prompt(Seat::Agent, &skills, None);
+        let supplement = skill_supplement("code-review", Seat::Agent).unwrap().trim();
+        assert_eq!(
+            prompt,
+            format!(
+                "{}\n\n{supplement}\n\n{}",
+                default_system_prompt(Seat::Agent).trim(),
+                skill_index(&skills, None)
+            )
+        );
+
+        // A review session gets the reviewer seat's supplement, not the
+        // agent seat's.
+        let review = pull_request_system_prompt(Seat::Reviewer, &skills, None);
+        let reviewer = skill_supplement("code-review", Seat::Reviewer)
+            .unwrap()
+            .trim();
+        assert_eq!(
+            review,
+            format!(
+                "{}\n\n{reviewer}\n\n{}",
+                ariadne_store::defaults::pull_request_system_prompt().trim(),
+                skill_index(&skills, None)
+            )
+        );
+    }
+
+    /// A pair of skill and seat with no supplement adds no text: the prompt
+    /// is the seat text and the index alone.
+    #[test]
+    fn a_pair_with_no_supplement_adds_no_text() {
+        let skills = [
+            skill("coding", true, None),
+            skill("architecture-review", true, None),
+        ];
+        assert_eq!(skill_supplements(Seat::Agent, &skills), "");
+        assert_eq!(
+            system_prompt(Seat::Agent, &skills, None),
+            format!(
+                "{}\n\n{}",
+                default_system_prompt(Seat::Agent).trim(),
+                skill_index(&skills, None)
+            )
+        );
+        // The keeper seat has none for `code-review`.
+        let keeper = [skill("code-review", true, None)];
+        assert_eq!(skill_supplements(Seat::Keeper, &keeper), "");
+    }
+
+    /// An edited shipped skill gets the supplement of its name. A skill of
+    /// the user's own gets none, even under a name a supplement goes by.
+    #[test]
+    fn an_edited_shipped_skill_gets_its_supplement_and_a_user_skill_gets_none() {
+        let expected = skill_supplement("code-review", Seat::Agent).unwrap().trim();
+        let edited = [skill(
+            "code-review",
+            true,
+            Some("---\nname: code-review\n---\nMine."),
+        )];
+        assert_eq!(skill_supplements(Seat::Agent, &edited), expected);
+        let own = [skill(
+            "code-review",
+            false,
+            Some("---\nname: code-review\n---\nMine."),
+        )];
+        assert_eq!(skill_supplements(Seat::Agent, &own), "");
     }
 }

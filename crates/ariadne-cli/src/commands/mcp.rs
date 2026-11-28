@@ -129,6 +129,10 @@ pub(crate) struct AriadneMcp {
     /// The index of the skills this session loads, as the launcher renders
     /// it (`ARIADNE_SKILL_INDEX`). None where the session loads no skill.
     skill_index: Option<String>,
+    /// The supplement of each skill this session loads, for its seat, as
+    /// the launcher renders them (`ARIADNE_SKILL_SUPPLEMENTS`). None where
+    /// no skill of the session has one.
+    skill_supplements: Option<String>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -157,6 +161,7 @@ impl AriadneMcp {
             pull_request_id,
             found_pull_request_id: Default::default(),
             skill_index: std::env::var("ARIADNE_SKILL_INDEX").ok(),
+            skill_supplements: std::env::var("ARIADNE_SKILL_SUPPLEMENTS").ok(),
             tool_router: Self::tool_router(),
         })
     }
@@ -446,9 +451,10 @@ impl ServerHandler for AriadneMcp {
     /// seat is handed, and because a profile's prompts are the developer's to
     /// edit: what Ariadne *is* should not be something an edit can delete.
     ///
-    /// After the rules come the seat text and the skill index (006). No
-    /// adapter is proven to keep these in its system prompt, so the runtime
-    /// sends both in a turn too, after a launch and after a model switch.
+    /// After the rules come the seat text, the supplements of the skills and
+    /// the skill index (006). No adapter is proven to keep these in its
+    /// system prompt, so the runtime sends them in a turn too, after a launch
+    /// and after a model switch.
     fn get_info(&self) -> ServerConfig {
         let mut info = ServerConfig::default();
         let mut instructions = format!(
@@ -459,11 +465,13 @@ impl ServerHandler for AriadneMcp {
             session_rules(&self.seat),
             seat_text(&self.seat).trim()
         );
-        if let Some(index) = self.skill_index.as_deref().map(str::trim)
-            && !index.is_empty()
-        {
-            instructions.push_str("\n\n");
-            instructions.push_str(index);
+        for part in [&self.skill_supplements, &self.skill_index] {
+            if let Some(part) = part.as_deref().map(str::trim)
+                && !part.is_empty()
+            {
+                instructions.push_str("\n\n");
+                instructions.push_str(part);
+            }
         }
         info.instructions = Some(instructions);
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
@@ -557,6 +565,7 @@ pub(crate) mod tests {
             pull_request_id: pull_request.then(|| "01PR".into()),
             found_pull_request_id: Default::default(),
             skill_index: Some(skill_index),
+            skill_supplements: None,
             tool_router: AriadneMcp::tool_router(),
         }
     }
@@ -1212,6 +1221,29 @@ pub(crate) mod tests {
                 "{seat:?}: {instructions}"
             );
         }
+        // The supplements sit between the seat text and the index, word for
+        // word as the launcher hands them over.
+        let mut staffed = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some("http://127.0.0.1:1"), None),
+        );
+        let supplement =
+            ariadne_store::defaults::skill_supplement("code-review", ariadne_core::Seat::Agent)
+                .unwrap()
+                .trim();
+        staffed.skill_supplements = Some(supplement.to_string());
+        let instructions = staffed.get_info().instructions.expect("instructions");
+        let seat_at = instructions
+            .find(default_system_prompt(ariadne_core::Seat::Agent))
+            .expect("the seat text");
+        let supplement_at = instructions.find(supplement).expect("the supplement");
+        let index_at = instructions
+            .find(SKILL_INDEX_HEADER)
+            .expect("the skill index");
+        assert!(
+            seat_at < supplement_at && supplement_at < index_at,
+            "{instructions}"
+        );
         // A session that loads no skill is told no index.
         let mut bare = server_at(
             McpSeat::Agent,

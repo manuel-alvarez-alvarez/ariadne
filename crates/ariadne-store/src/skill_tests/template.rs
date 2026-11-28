@@ -350,10 +350,13 @@ fn each_rule_is_stated_in_exactly_one_briefing() {
         "Call it no earlier.",
         "Work only in the task's worktree",
         "Plan the goal with the user",
+        "return the work with `fail_step`",
+        "A skill uses plain words.",
     ] {
         let places = all_defaults()
             .into_iter()
             .chain(all_skills())
+            .chain(all_supplements())
             .filter(|(_, text)| text.contains(marker))
             .map(|(name, _)| name)
             .collect::<std::collections::BTreeSet<_>>();
@@ -383,4 +386,161 @@ fn manifest_dir() -> std::path::PathBuf {
     std::env::var_os("CARGO_MANIFEST_DIR")
         .expect("the test runner sets CARGO_MANIFEST_DIR")
         .into()
+}
+
+/// The word list (006 rule 21): each Ariadne word, and the plain word a
+/// shipped skill says in its place. `None` is a word no skill uses at all.
+/// The agent seat text binds each plain word back to its Ariadne word.
+pub(super) const WORD_LIST: [(&str, Option<&str>); 9] = [
+    ("orchestrator", Some("the requester")),
+    ("column", Some("stage")),
+    ("column report", Some("the report")),
+    ("fail the step", Some("return the work")),
+    ("news", Some("an update")),
+    ("briefing", Some("your instructions")),
+    ("`Repo:`", Some("the primary checkout of the repository")),
+    ("seat", None),
+    ("keeper", None),
+];
+
+/// Every tool the Ariadne MCP server lists, for any seat (013).
+const MCP_TOOLS: [&str; 25] = [
+    "get_task",
+    "complete_step",
+    "fail_step",
+    "create_task",
+    "update_task",
+    "list_models",
+    "list_hosts",
+    "list_skills",
+    "finalize_plan",
+    "list_tasks",
+    "retry_task",
+    "cancel_task",
+    "switch_session",
+    "complete_goal",
+    "fail_task",
+    "open_pull_request",
+    "get_diff",
+    "get_pull_request",
+    "list_comments",
+    "get_comment",
+    "reply_comment",
+    "escalate_comment",
+    "resolve_thread",
+    "submit_review",
+    "post_to_session",
+];
+
+/// What of Ariadne a skill `document` names: `Ariadne` itself, a tool of
+/// its MCP server, or an Ariadne word of [`WORD_LIST`], each whatever its
+/// case and in the plural too.
+fn ariadne_words_in(document: &str) -> Vec<String> {
+    let lowered = unwrapped(document).to_lowercase();
+    let words: Vec<&str> = lowered
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .flat_map(|token| token.split("__"))
+        .filter(|word| !word.is_empty())
+        .collect();
+    let mut found: Vec<String> = Vec::new();
+    for single in std::iter::once("ariadne").chain(MCP_TOOLS).chain(
+        WORD_LIST
+            .iter()
+            .map(|(word, _)| *word)
+            .filter(|w| w.chars().all(|c| c.is_ascii_alphanumeric())),
+    ) {
+        if words
+            .iter()
+            .any(|word| *word == single || word.strip_suffix('s') == Some(single))
+        {
+            found.push(single.to_string());
+        }
+    }
+    for (phrase, _) in WORD_LIST {
+        let phrase = phrase.to_lowercase().replace('`', "");
+        if !phrase.chars().all(|c| c.is_ascii_alphanumeric()) && lowered.contains(&phrase) {
+            found.push(phrase);
+        }
+    }
+    found
+}
+
+/// Fails where the skill `name`'s `document` names Ariadne, a tool of its
+/// MCP server, or an Ariadne word of [`WORD_LIST`].
+pub(super) fn assert_names_no_ariadne_word(name: &str, document: &str) {
+    let found = ariadne_words_in(document);
+    assert!(
+        found.is_empty(),
+        "the {name} skill names Ariadne words: {found:?}"
+    );
+}
+
+/// `code-review` and `architecture-review` read the same in any harness:
+/// they name no Ariadne, no MCP tool and no Ariadne word, and the agent seat
+/// text and the supplements say what their plain words stand for (006
+/// rule 21). The helper finds each kind of word it is there to catch.
+#[test]
+fn the_two_review_skills_name_no_ariadne_word() {
+    for name in ["code-review", "architecture-review"] {
+        assert_names_no_ariadne_word(name, default_skill_document(name).unwrap());
+    }
+    for (sample, word) in [
+        ("Ariadne wakes you.", "ariadne"),
+        ("Call `get_diff` first.", "get_diff"),
+        ("Send it to the Orchestrator.", "orchestrator"),
+        ("End the column.", "column"),
+        ("Read the column report.", "column report"),
+        ("Fail the step on it.", "fail the step"),
+        ("Read the news.", "news"),
+        ("Read your briefing.", "briefing"),
+        ("Open the `Repo:` path.", "repo:"),
+        ("Use the Repo: path.", "repo:"),
+        ("Call mcp__ariadne__get_diff.", "get_diff"),
+        ("Call mcp__ariadne__get_diff.", "ariadne"),
+        ("Both seats read it.", "seat"),
+        ("The keeper pushes.", "keeper"),
+    ] {
+        let found = ariadne_words_in(sample);
+        assert!(found.iter().any(|w| w == word), "{sample}: {found:?}");
+        let caught = std::panic::catch_unwind(|| assert_names_no_ariadne_word("sample", sample));
+        assert!(caught.is_err(), "the helper passes {sample}");
+    }
+    // A plain word is no Ariadne word.
+    assert!(ariadne_words_in("Return the work to the requester at this stage.").is_empty());
+}
+
+/// The agent seat text binds each plain word of a shipped skill to the
+/// Ariadne word it stands for, names the orchestrator as the requester, and
+/// names `post_to_session` as the way to reach it (006 rule 21).
+#[test]
+fn the_agent_seat_text_binds_each_plain_word_to_ariadne() {
+    let agent = default_system_prompt(ariadne_core::Seat::Agent);
+    let line = agent
+        .lines()
+        .find(|line| line.contains("A skill uses plain words."))
+        .expect("the agent seat text binds no plain word");
+    for sentence in [
+        "The requester is the orchestrator.",
+        "Reach it with `post_to_session`.",
+        "A stage is a column.",
+        "The report is the column report.",
+        "To return the work is to fail the step.",
+        "An update is news.",
+        "Your instructions are your briefing.",
+        "The primary checkout of the repository is the `Repo:` path.",
+    ] {
+        assert!(line.contains(sentence), "the binding line and {sentence}");
+    }
+    for (ariadne, plain) in WORD_LIST {
+        if let Some(plain) = plain {
+            let plain = plain.trim_start_matches("the ").trim_start_matches("an ");
+            assert!(
+                ste::sentences(line).iter().any(|s| {
+                    let s = s.to_lowercase();
+                    s.contains(&plain.to_lowercase()) && s.contains(&ariadne.to_lowercase())
+                }),
+                "the binding line ties no sentence of {plain} to {ariadne}"
+            );
+        }
+    }
 }

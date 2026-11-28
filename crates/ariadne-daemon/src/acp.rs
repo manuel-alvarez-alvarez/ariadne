@@ -5944,6 +5944,7 @@ mod tests {
                 cli_bin: "/usr/local/bin/ariadne".into(),
                 system_prompt: "SYSTEM PROMPT".into(),
                 skill_index: "SKILL INDEX".into(),
+                skill_supplements: "SKILL SUPPLEMENTS".into(),
                 skills_dir: None,
                 initial_prompt: "DO THE TASK".into(),
                 model: "test-model".into(),

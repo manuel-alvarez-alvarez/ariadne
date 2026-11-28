@@ -220,6 +220,11 @@ impl Launcher {
             None => prompts::system_prompt(seat, &skills, Some(&skills_dir)),
         };
         let skill_index = prompts::skill_index(&skills, Some(&skills_dir));
+        let text_seat = match session.pull_request_id {
+            Some(_) => prompts::pull_request_seat(seat),
+            None => seat,
+        };
+        let skill_supplements = prompts::skill_supplements(text_seat, &skills);
         if session.goal_id.is_none()
             && session.pull_request_id.is_none()
             && session.task_id.is_none()
@@ -255,6 +260,7 @@ impl Launcher {
             cli_bin: self.cfg.cli_bin.clone(),
             system_prompt,
             skill_index,
+            skill_supplements,
             skills_dir: Some(skills_dir),
             initial_prompt,
             model,
