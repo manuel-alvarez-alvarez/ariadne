@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-27
+updated: 2026-11-28
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -787,7 +787,9 @@ Out: the daemon endpoints themselves (012).
 38. Toasts show at the bottom left, clear of the header and the pane
     (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
 39. The goals board shows one global "Tasks" heading with the number of
-    shown task rows, the tasks of folded goals included. The board is one
+    shown task rows, the tasks of folded goals included. The number is a
+    badge beside the word, and the heading's name is "Tasks (N)". The board
+    draws no frame around the list. The board is one
     list, and each shown task is one full-width row. Active hides finished
     and cancelled tasks; All, Finished and custom filters show every task in
     each matching goal. Progress counts use all tasks.
@@ -1600,7 +1602,8 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     task" keeps its name and the palette's entry for a task with no goal is
     "Add a task outside any goal".
 86. The dialog for a task with no goal asks for a repository, and refuses to
-    create the task without one. Its workflow picker starts on "No workflow",
+    create the task without one. Its repository field is the searchable field
+    of the goal dialog, with one pick, which closes the search. Its workflow picker starts on "No workflow",
     its first entry. With a workflow it shows one staffing row for each column
     of that workflow. With "No workflow" it shows one staffing row with no
     column, and sends one agent with no `step` and no `workflow`. It has no
@@ -2095,6 +2098,8 @@ view.
   (`ui/src/features/command-palette/command-palette.test.tsx::offers a task with no goal over a screen with no goal open, and opens its dialog`; `::offers the goal-less task beside the goal's own when a goal is open`).
 - The dialog offers "No workflow" first with one row and no column, one row per column with a workflow, no dependency field, and the ready hosts starting on this machine
   (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::offers No workflow first, and one staffing row with no column under it`; `::staffs one row for each column of the picked workflow`; `::has no dependency field`; `::offers the ready hosts, starting on this machine`).
+- The dialog picks its repository by search in the goal dialog's field
+  (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::picks the repository by search in the field the goal dialog uses`).
 - The dialog posts the repository, the one agent and no workflow, and refuses a missing repository
   (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::creates the task in the repository with no workflow, on this machine`; `::asks for a repository before it creates anything`; `::shows the daemon's reason when it refuses the host`).
 - The panel of a goal-less task has no goal breadcrumb or goal query, and no columns without a workflow
@@ -2756,6 +2761,8 @@ view.
   progress
   (`ui/src/features/goals/goal-board.test.tsx::draws each task as one row of one list, the rows of a goal in its group, and counts them`,
   `::hides terminal tasks under Active while preserving progress`).
+- The board has no frame, and its Tasks heading shows the count as a badge
+  (`ui/src/features/goals/goal-board.test.tsx::draws the board with no frame, and the count as a badge beside the Tasks heading`).
 - The board has no line of column names
   (`ui/src/features/goals/goal-board.test.tsx::draws each task as one row of one list, the rows of a goal in its group, and counts them`).
 - A task row is one link to the task panel with one tab stop, its PR link

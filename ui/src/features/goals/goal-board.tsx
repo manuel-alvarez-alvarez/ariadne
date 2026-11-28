@@ -31,6 +31,7 @@ import { RefreshWarning } from "@/components/error-state"
 import { HostLabel } from "@/components/host-label"
 import { StatusIcon } from "@/components/status-icon"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -64,7 +65,9 @@ import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 /**
  * The board's own scrollport: sticky only works against the box that scrolls.
  * It fills {@link BOARD_FRAME}, which is what the edge fades are positioned
- * against — they have to sit outside the thing that scrolls under them.
+ * against — they have to sit outside the thing that scrolls under them. It
+ * draws no frame: the rows sit on the screen itself, and the rounding is only
+ * the shape of the keyboard's focus ring.
  *
  * `contain-paint` is what keeps that scrolling to *this* box. Without it the
  * rows hidden past the bottom edge still counted as overflow for the shell's
@@ -82,7 +85,7 @@ import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
  * and the focus ring below is this box's own rather than a descendant's — the
  * one thing containment would have clipped.
  */
-const BOARD_BOX = "h-full rounded-lg border contain-paint"
+const BOARD_BOX = "h-full rounded-lg contain-paint"
 
 /**
  * The board's slot on the screen: the height it gets, and the fades' anchor.
@@ -236,7 +239,15 @@ export function GoalBoard({
           )}
         >
           <div className="sticky top-0 z-30 bg-background px-5 py-2">
-            <h2 className="text-sm font-semibold">Tasks ({total})</h2>
+            {/* The count is a badge to the eye and "Tasks (N)" to a screen reader. */}
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              {"Tasks "}
+              <span className="sr-only">(</span>
+              <Badge variant="secondary" className="tabular-nums">
+                {total}
+              </Badge>
+              <span className="sr-only">)</span>
+            </h2>
           </div>
           <div
             className={BOARD_LIST}

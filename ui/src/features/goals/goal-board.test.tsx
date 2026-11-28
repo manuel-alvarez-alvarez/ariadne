@@ -112,6 +112,19 @@ it("makes a row one link to the task panel with one tab stop, its pull request o
   expect(stops).toEqual([own])
 })
 
+it("draws the board with no frame, and the count as a badge beside the Tasks heading", async () => {
+  const goal = aGoal({ title: GOAL_TITLE })
+  stubDaemon([
+    aTask({ id: "one", goal_id: goal.id, title: "First", status: "pending" }),
+    aTask({ id: "two", goal_id: goal.id, title: "Second", status: "in_progress" }),
+  ])
+  board([goal])
+
+  const heading = await screen.findByRole("heading", { name: "Tasks (2)" })
+  expect(within(heading).getByText("2").dataset.slot).toBe("badge")
+  expect(screen.getByRole("region", { name: "Goals board" }).className).not.toMatch(BOX)
+})
+
 it("draws a row with no border and no fill, its rail segment in the status colour", async () => {
   const goal = aGoal({ title: GOAL_TITLE })
   stubDaemon([
