@@ -106,6 +106,7 @@ export function RepositoriesPage() {
           <RepositoryRow
             repository={repository}
             tunnel={tunnel.data}
+            tunnelFailed={tunnel.isError}
             hosts={named}
             hostsPending={isPending}
             onEdit={() => openEdit(repository)}
@@ -127,6 +128,7 @@ export function RepositoriesPage() {
 function RepositoryRow({
   repository,
   tunnel,
+  tunnelFailed,
   hosts,
   hostsPending,
   onEdit,
@@ -134,6 +136,7 @@ function RepositoryRow({
 }: {
   repository: RepositoryDto
   tunnel: ForgeTunnelDto | undefined
+  tunnelFailed: boolean
   hostsPending: boolean
   hosts: HostView[]
   onEdit: () => void
@@ -184,7 +187,7 @@ function RepositoryRow({
       </TableCell>
       <TableCell className="text-xs">
         {repository.forge ? (
-          <WebhookPill forge={repository.forge} tunnel={tunnel} />
+          <WebhookPill forge={repository.forge} tunnel={tunnel} failed={tunnelFailed} />
         ) : (
           <span className="text-muted-foreground">-</span>
         )}

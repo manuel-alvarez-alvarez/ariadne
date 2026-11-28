@@ -16,7 +16,7 @@ import { forgeKey, useHostRepositories } from "@/features/forge/forge-hosts"
 import { pullRequestByKeyQueryOptions, pullRequestKey } from "./queries"
 
 /** One host a request can be worked on, and the id of its repository there. */
-export interface ReviewTarget {
+interface ReviewTarget {
   host: Host
   repository_id: string
 }
@@ -47,7 +47,12 @@ function useTargets(pull: PullRequestDto, host: Host, enabled: boolean) {
   ]
   return {
     // Until the lists answer, the request's own checkout is the one there is.
-    targets: ordered.length > 0 ? ordered : [{ host, repository_id: pull.repository_id }],
+    targets:
+      isPending || (!alone && !repositories.isSettled)
+        ? []
+        : ordered.length > 0
+          ? ordered
+          : [{ host, repository_id: pull.repository_id }],
     // The request's own host is read already: its list only finds the others.
     errors: repositories.errors.filter((each) => each.host !== host),
     /** The hosts are listed and every reachable host's repositories answered or failed. */

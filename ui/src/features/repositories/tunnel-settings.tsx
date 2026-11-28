@@ -12,6 +12,7 @@ import { toast } from "sonner"
 
 import type { ForgeTunnelDto } from "@/api"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { cn, describeError } from "@/lib/format"
 
@@ -41,24 +42,28 @@ export function TunnelSettings({ open }: { open: boolean }) {
     <Field>
       <div className="flex items-center justify-between gap-3">
         <FieldLabel htmlFor="webhook-tunnel">Webhook tunnel</FieldLabel>
-        <Switch
-          id="webhook-tunnel"
-          aria-label="Webhook tunnel"
-          checked={current?.enabled ?? false}
-          disabled={!current || update.isPending}
-          onCheckedChange={(enabled) =>
-            update.mutate(
-              { enabled },
-              {
-                onError: (error) =>
-                  toast.error(
-                    enabled ? "Could not turn the tunnel on" : "Could not turn the tunnel off",
-                    { description: describeError(error) },
-                  ),
-              },
-            )
-          }
-        />
+        {tunnel.isPending ? (
+          <Skeleton aria-label="Loading tunnel" className="h-5 w-9" />
+        ) : (
+          <Switch
+            id="webhook-tunnel"
+            aria-label="Webhook tunnel"
+            checked={current?.enabled ?? false}
+            disabled={!current || update.isPending}
+            onCheckedChange={(enabled) =>
+              update.mutate(
+                { enabled },
+                {
+                  onError: (error) =>
+                    toast.error(
+                      enabled ? "Could not turn the tunnel on" : "Could not turn the tunnel off",
+                      { description: describeError(error) },
+                    ),
+                },
+              )
+            }
+          />
+        )}
       </div>
       <FieldDescription>
         Opens a smee.io channel that forwards to the daemon, so GitHub can push pull request and
