@@ -570,6 +570,7 @@ fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
 fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
     let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
     for phrase in [
+        "Ask each question with the question tool, not in turn text.",
         "Ask one question in a turn, then stop and wait for the answer.",
         "Ask the next question only after the answer.",
         "Put no second question in the context or in the options.",
@@ -595,6 +596,39 @@ fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
         !prompt.contains("numbered list"),
         "the orchestration skill still groups open points into a numbered list: {prompt}"
     );
+}
+
+/// Step 2 (the goal) and step 7 (the plan) each tell the orchestrator to ask
+/// with the question tool and not in turn text, so the rule is proved for
+/// each step alone (003 rules 3 and 7).
+#[test]
+fn each_orchestration_step_that_asks_names_the_question_tool_and_not_turn_text() {
+    let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+    let step = |from: &str, to: &str| {
+        let start = prompt
+            .find(from)
+            .unwrap_or_else(|| panic!("{from}: {prompt}"));
+        let end = start
+            + prompt[start..]
+                .find(to)
+                .unwrap_or_else(|| panic!("{to}: {prompt}"));
+        prompt[start..end].to_string()
+    };
+    for (name, text) in [
+        (
+            "step 2",
+            step("2. Ask the user every open point", "3. Split the goal"),
+        ),
+        (
+            "step 7",
+            step("7. Show the user the tasks", "8. Call `finalize_plan`"),
+        ),
+    ] {
+        assert!(
+            text.contains("Ask each question with the question tool, not in turn text."),
+            "the orchestration skill {name}: {text}"
+        );
+    }
 }
 
 /// The workflow is settled before planning starts, not asked about task

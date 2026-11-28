@@ -118,7 +118,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    How each CLI is pointed at those files is 007.
 5. A rule every seat shares has one owner, and no other text repeats it:
    - asking the user: the session rules, picked by seat, with no tool
-     description repeats it;
+     description repeats it. The one exception is steps 2 and 7 of the
+     `orchestration` skill: each says to ask with the question tool, not in
+     turn text, where it asks, and neither says "of your own client";
    - working in the task's worktree and on the current column: the `agent`
      seat text alone; no column's skill repeats it;
    - planning the goal with the user, writing no code, and deciding no
