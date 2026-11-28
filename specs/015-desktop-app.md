@@ -3086,6 +3086,8 @@ This overrides the original requirement to keep permission responses inline. Que
 ### Loaded transcript find
 
 The console offers Find in transcript and a scoped Ctrl/Cmd+F shortcut.
+The control is an icon button with the accessible name "Find in transcript", in the header row of the console beside the title. No row holds only the find control.
+Ctrl/Cmd+F opens the find pane below the header row.
 Text fields, editors, the composer, and nested dialogs retain keyboard ownership.
 Search uses the current view's loaded block text, including folded activity and tool details.
 Each occurrence has a count and an active mark in a separate result pane.
@@ -3095,3 +3097,15 @@ Escape closes find and restores focus. Stream updates retain the selected block 
 The coverage message identifies unloaded history. Load earlier history uses the existing page action.
 
 Acceptance: `ui/src/features/sessions/console/transcript-find.test.tsx` proves result navigation, history selection stability, focus return, and shortcut ownership.
+`ui/src/features/sessions/trajectory/console-state.test.tsx::puts the find icon in the header row and opens the find pane below it` proves the place of the control and the pane.
+
+### Session panel facts and console name
+
+The control that folds the session facts of the session panel is in the line of the panel heading. It has no row of its own.
+The pane remembers the fold in the settings store (`sessionFactsOpen`), across sessions and across a restart of the app. The facts are open until the user folds them.
+The console header names the session when the agent gives no title. It shows the heading that the session panel shows.
+
+Acceptance:
+`ui/src/features/sessions/session-detail-view.test.tsx::folds the session facts from a control in the line of the panel heading` proves the place of the control.
+`::keeps the fold across a restart of the app` proves the remembered fold, and `::opens the facts when the user has not folded them` proves the default.
+`ui/src/features/sessions/trajectory/console-state.test.tsx::names the session in the header when the agent gives no title` proves the header name.
