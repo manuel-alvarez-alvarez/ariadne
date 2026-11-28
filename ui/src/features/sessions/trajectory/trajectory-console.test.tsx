@@ -987,10 +987,20 @@ it("shows the first line of a title, and a subject only when the title lacks it"
   const turn = aTurn()
   const multi = aToolStep(turn.id, { title: "Run the tests\nwith more words", subject: "npm test" })
   const same = aToolStep(turn.id, { title: "Read src/main.rs", subject: "src/main.rs" })
+  const later = aToolStep(turn.id, {
+    title: "Run it\nnpm test -- login",
+    subject: "npm test -- login",
+  })
+  // An answered permission whose call shows no row is a row of its own.
+  const asked = aPermissionStep(turn.id, {
+    state: "answered",
+    answer: { option_id: "allow", label: "Allow once", decided_by: "console" },
+    tool: { title: "Bash\nmore", subject: "Bash", kind: "execute" },
+  })
   reply(
     "GET",
     `/trajectory/turns/${turn.id}/steps`,
-    Response.json({ steps: [multi, same], earlier_steps: 0 }),
+    Response.json({ steps: [multi, same, later, asked], earlier_steps: 0 }),
   )
   renderConsole(aSnapshot([turn]))
 
@@ -1001,6 +1011,8 @@ it("shows the first line of a title, and a subject only when the title lacks it"
   expect(rows.map((row) => row.textContent?.replace(/\s+/g, " ").trim())).toEqual([
     "Run the tests npm test 12s",
     "Read src/main.rs 12s",
+    "Run it 12s",
+    "Bash",
   ])
 })
 

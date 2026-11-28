@@ -56,8 +56,8 @@ function stepFacts(
       return {
         kind: "permission",
         status: step.answer ? `${step.state} · ${step.answer.label}` : step.state,
-        title: step.tool.title,
-        subject: step.tool.subject ? firstLine(step.tool.subject) : undefined,
+        title: firstLine(step.tool.title),
+        subject: subjectBeside(step.tool.title, step.tool.subject),
       }
     case "question":
       return {
@@ -103,10 +103,10 @@ function spaced(cells: readonly ReactNode[]): ReactNode[] {
   return cells.filter(Boolean).flatMap((cell, at) => (at === 0 ? [cell] : [" ", cell]))
 }
 
-/** The first line of a subject, unless the first line of the title already holds it. */
+/** The first line of a subject, unless the title, whole, already holds it. */
 function subjectBeside(title: string, subject?: string | null): string | undefined {
   const line = subject ? firstLine(subject) : ""
-  return line && !firstLine(title).includes(line) ? line : undefined
+  return line && !title.includes(line) ? line : undefined
 }
 
 function firstLine(text: string): string {
