@@ -1136,16 +1136,6 @@ pub(super) async fn submit_review(
             .map_err(|e| ApiError::conflict(format!("{e:#}")))?,
         None => pull.head_sha.clone(),
     };
-    // An empty body with no finding is a quiet round: it has nothing new to
-    // say, so it records the reviewed revision and posts nothing (029).
-    if req.body.is_empty() && comments.is_empty() && !asked {
-        state
-            .store
-            .set_pull_request_reviewed(&pull.id, &reviewed_sha)
-            .await?;
-        state.notify_scheduler_pull_request(&pull.id);
-        return Ok((StatusCode::CREATED, Json(serde_json::json!([]))));
-    }
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
     // A change request has a P0 or P1 finding on a changed line, either

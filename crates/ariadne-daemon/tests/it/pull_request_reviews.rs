@@ -1204,10 +1204,18 @@ async fn a_quiet_submit_stores_the_checkout_head_and_calls_no_forge() {
     let id = the_request(&h).await;
     ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
-    let posts = review_posts(&stub).len();
-    // Every forge call fails from here: a quiet submit reads nothing from
-    // the forge, so it still stores the head.
-    stub.reprogram(json!([]));
+    // Let the fetches that the ask started end, so that only the submit can
+    // add a forge call. Then empty the cache: a submit that read the
+    // request would call the forge.
+    let mut calls = stub.invocations().len();
+    loop {
+        tokio::time::sleep(QUIET).await;
+        match stub.invocations().len() {
+            now if now == calls => break,
+            now => calls = now,
+        }
+    }
+    h.launcher.live.remove(&id);
     let answered: Value = h
         .json(
             as_session(
@@ -1221,7 +1229,7 @@ async fn a_quiet_submit_stores_the_checkout_head_and_calls_no_forge() {
     assert_eq!(answered, json!([]));
     let row = h.store.get_pull_request(&id).await.unwrap();
     assert_eq!(row.reviewed_sha.as_deref(), Some(first.as_str()));
-    assert_eq!(review_posts(&stub).len(), posts);
+    assert_eq!(stub.invocations().len(), calls);
 }
 
 /// A push fetched while a round runs leaves the checkout on the head the
