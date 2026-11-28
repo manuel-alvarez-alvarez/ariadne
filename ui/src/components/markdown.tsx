@@ -14,6 +14,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import { CodeBlock } from "@/components/code-block"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/format"
 
 const PROSE = [
@@ -40,7 +41,12 @@ const PROSE = [
   "[&_img]:max-w-full",
 ].join(" ")
 
-type Node = { type: string; value?: string; children?: Node[]; data?: { hName: string } }
+type Node = {
+  type: string
+  value?: string
+  children?: Node[]
+  data?: { hName: string; hProperties?: Record<string, unknown> }
+}
 
 /**
  * Raw HTML stays off, but a person writes `<kbd>Ctrl</kbd>` for a key: the
@@ -69,6 +75,62 @@ function remarkKbd() {
   return walk
 }
 
+function remarkUntrusted() {
+  let untrusted = false
+  const normalize = (node: Node) => {
+    const kids = node.children
+    if (!kids) return
+    for (let i = 1; i < kids.length - 1; i += 1) {
+      const kid = kids[i]
+      const before = kids[i - 1]
+      const after = kids[i + 1]
+      if (
+        kid &&
+        before &&
+        after &&
+        kid.type === "html" &&
+        (kid.value === "<untrusted>" || kid.value === "<end untrusted>") &&
+        before.type === "text" &&
+        before.value?.endsWith("<<") &&
+        after.type === "text" &&
+        after.value?.startsWith(">>")
+      ) {
+        before.value = before.value.slice(0, -2)
+        after.value = after.value.slice(2)
+        kid.type = kid.value === "<untrusted>" ? "trustOpen" : "trustClose"
+      }
+    }
+    kids.forEach(normalize)
+  }
+  const walk = (node: Node) => {
+    if (!node.children) return
+    node.children = node.children.flatMap((kid) => {
+      if (kid.type === "trustOpen" || kid.type === "trustClose") {
+        untrusted = kid.type === "trustOpen"
+        return []
+      }
+      if (kid.type === "text" && untrusted && kid.value) {
+        return [
+          {
+            type: "untrusted",
+            data: {
+              hName: "mark",
+              hProperties: { title: "Untrusted content", tabIndex: 0, className: ["untrusted"] },
+            },
+            children: [kid],
+          },
+        ]
+      }
+      if (kid.type !== "code" && kid.type !== "inlineCode") walk(kid)
+      return [kid]
+    })
+  }
+  return (tree: Node) => {
+    normalize(tree)
+    walk(tree)
+  }
+}
+
 /** The text of a fenced block's `code` child, and the language its fence names. */
 function fence(children: ReactNode): { code: string; language: string | undefined } | undefined {
   const child = Children.toArray(children)[0]
@@ -77,12 +139,58 @@ function fence(children: ReactNode): { code: string; language: string | undefine
   return { code, language: /language-([\w+#-]+)/.exec(child.props.className ?? "")?.[1] }
 }
 
+function UntrustedMark({ children }: { children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <mark
+            className="rounded bg-status-warn-soft text-inherit"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: The tooltip must be available on keyboard focus.
+            tabIndex={0}
+            title="Untrusted content"
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>Untrusted content</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** Keep a folded prompt plain while retaining its trust indication. */
+export function PlainPreview({ text }: { text: string }) {
+  const parts = text.split(/(`+|<<<untrusted>>>|<<<end untrusted>>>)/g)
+  let code = ""
+  let untrusted = false
+  return (
+    <>
+      {parts.map((part, index) => {
+        if (/^`+$/.test(part)) {
+          if (!code) code = part
+          else if (code === part) code = ""
+        } else if (!code && part === "<<<untrusted>>>") {
+          untrusted = true
+          return null
+        } else if (!code && part === "<<<end untrusted>>>") {
+          untrusted = false
+          return null
+        }
+        // biome-ignore lint/suspicious/noArrayIndexKey: The parts have no stable identity.
+        return untrusted && part ? <UntrustedMark key={index}>{part}</UntrustedMark> : part
+      })}
+    </>
+  )
+}
+
 export function Markdown({ children, className }: { children: string; className?: string }) {
   return (
     <div className={cn(PROSE, className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkKbd]}
+        remarkPlugins={[remarkGfm, remarkKbd, remarkUntrusted]}
         components={{
+          mark: ({ children: content }) => <UntrustedMark>{content}</UntrustedMark>,
           // A fenced block is code: highlighted where the language is known,
           // with its Copy control, and never a scroll area of its own.
           pre: ({ children: content }) => {

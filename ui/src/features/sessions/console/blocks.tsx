@@ -1,7 +1,7 @@
 import { CodeIcon, Loader2Icon, UserIcon } from "lucide-react"
 import type { KeyboardEvent } from "react"
 
-import { Markdown } from "@/components/markdown"
+import { Markdown, PlainPreview } from "@/components/markdown"
 import { NamedIcon } from "@/components/named-icon"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/format"
@@ -56,7 +56,7 @@ export function PromptBox({
           <div className="min-w-0 flex-1">
             {shut ? (
               <p className="whitespace-pre-wrap break-words text-sm">
-                {lines.slice(0, FOLDED_LINES).join("\n")}
+                <PlainPreview text={lines.slice(0, FOLDED_LINES).join("\n")} />
               </p>
             ) : (
               <Markdown>{text}</Markdown>

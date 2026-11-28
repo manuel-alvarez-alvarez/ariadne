@@ -2101,6 +2101,12 @@ view.
        (`::shows the author of each turn part as an icon, its word as the name`,
        `ui/src/features/sessions/console/blocks.test.tsx::renders developer prompts as full Markdown without a fold`).
 
+113. Display untrusted prose between `<<<untrusted>>>` and `<<<end untrusted>>>`
+     with a highlight and a tooltip on hover and keyboard focus. Hide the markers.
+     Preserve Markdown formatting and literal markers in code. An open marker
+     highlights through the current end of streamed text. Folded prompt previews
+     retain the highlight. Stored text, input, copy, export and raw data stay unchanged.
+
 ## Acceptance criteria
 
 - Goal task cards show a remote host in its host colour and explain when it
@@ -3136,6 +3142,11 @@ behaviour of rule 61.
 The tests run in jsdom and measure no layout. No test proves that the board's
 columns fit at 33.9rem, the floor of rule 39. The test of rule 39 reads the
 classes that set the floor and the hide widths, not the drawn widths.
+
+- Untrusted prose, Markdown, streaming and code examples:
+  `ui/src/components/markdown.test.tsx`; folded prompts:
+  `ui/src/features/sessions/console/blocks.test.tsx`; daemon prompts:
+  `ui/src/features/sessions/trajectory/trajectory-console.test.tsx`.
 
 ## Sources
 

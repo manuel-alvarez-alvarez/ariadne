@@ -56,3 +56,10 @@ it("shows the time of a prompt and marks a queued one", () => {
   expect(container.querySelector("[data-block-time]")?.textContent).toBe("08:30:15")
   screen.getByText("queued")
 })
+
+it("keeps untrusted text highlighted in a folded prompt", () => {
+  const text = "Start\n<<<untrusted>>>unsafe\nmore\nmore\nend<<<end untrusted>>>"
+  const { container } = render(<PromptBox text={text} fold={{ open: false, onToggle: vi.fn() }} />)
+  expect(container.querySelector("mark")?.textContent).toContain("unsafe")
+  expect(container.textContent).not.toContain("<<<untrusted>>>")
+})
