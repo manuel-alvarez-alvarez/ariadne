@@ -1429,10 +1429,12 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     “shows the panel host label when a named host is listed” proves panel labels.
     Local cases remain in `pull-request-panel.test.tsx` and
     `pull-requests-page.test.tsx`.
-70. Start review and Start babysit have a host select, shown when more than one
-    host has the request's repository registered. It is limited to those hosts,
-    defaults to the panel's host, and its models, pin and ask go to the chosen
-    host with that host's repository id. After the start, the panel opens the
+70. Start review and Start babysit choose the host in the host column of
+    their model picker, with no host select of their own. The column lists
+    only the hosts that have the request's repository registered, and starts
+    on the panel's host. With one such host, the picker shows no host column.
+    The models, the pin and the ask go to the picked host with that host's
+    repository id. After the start, the panel opens the
     new session on the chosen host: `?host=` and `?pr=` move to the request on
     that host. While a host reviews the request, the panel offers no Start
     review. While a host or a task keeps it, the panel offers no Start babysit.
@@ -1444,9 +1446,15 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     babysit by a task, in `hosts.test.tsx`.
     Tests: “opens the new review console on box” and “opens the new babysit
     console on box” in `ui/src/features/pull-requests/hosts.test.tsx`;
-    “opens the new session on the host Start review picked, not on the panel's
-    host” in `ui/src/features/forge/forge-hosts.test.tsx`, which also proves
-    the host select; “sends New turn and Stop review to the host that
+    “offers the hosts where the repository is registered in the model picker
+    of Start review, the row's host first” and “offers the hosts of the
+    repository in the model picker of Start babysit, and sends the start to
+    the picked host” prove the column, its default and the host of the models
+    and the start; “opens the new session on the host Start review picked, not
+    on the panel's host” proves the new session, all in
+    `ui/src/features/forge/forge-hosts.test.tsx`;
+    “starts and stops a review of a Dependabot request without a review assignment” in `pull-request-panel.test.tsx` proves that
+    one host shows no column; “sends New turn and Stop review to the host that
     reviews, with its repository id”, “sends New turn and Stop babysit to
     the host that keeps, with its repository id” and “links the task that
     keeps the request on the host of the task” in `hosts.test.tsx` for the
