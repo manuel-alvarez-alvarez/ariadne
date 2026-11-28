@@ -559,9 +559,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 - Every shipped skill holds to the STE limit with each wrapped sentence read
   whole, and a closing quote ends with its sentence
   (`defaults.rs::the_ste_rules_are_read_off_a_text_line_by_line`).
-- `coding` calls `complete_step` with the column report that tool's
-  description defines, covering every criterion, and names no field of it
-  itself. `code-review` names the report and the return report by
+- `coding` sends the report that the `complete_step` description defines,
+  with one line per criterion, and names no field of it itself. The agent
+  seat text owns the call. `code-review` names the report and the return report by
   name, reads the former as unverified claims, then runs the tests, the
   lint and the format check of the changed files itself and reuses a
   reported result only for a check outside them.
@@ -571,9 +571,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   `skill_tests/review.rs::the_review_skill_reviews_in_place_and_ends_on_a_step_call`,
   `tools.rs::complete_step_and_fail_step_define_their_reports`).
   No shipped skill names a whole suite.
-  Every other produce skill that ends its own column names the column
-  report the same way, restating none of its fields
-  (`skill_tests/produce.rs::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
+  Every other produce skill that ends its own stage names the report the
+  same way, restating none of its fields
+  (`skill_tests/produce.rs::a_produce_skill_names_the_report_where_it_ends_a_stage`).
   The merge skill pushes before it fast-forwards, with a squash onto the
   merge base and a guard before the push
   (`skill_tests/operate.rs::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,

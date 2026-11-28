@@ -274,8 +274,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
     reproduce each finding before it posts it, keeps the priority of a
     finding whose reproduction failed and marks its proof `Unverified:`
     rather than downgrade it to P2, and names no approval (029 rule 17).
-    `pr-babysit` names its own report only as "the column report", never a
-    field of it (006 rule 5), on a merge; `coding`, `merge` and
+    `pr-babysit` names no report of its own and its supplement holds its
+    ends (006 rule 21); `coding`, `merge` and
     `conflict-resolution` name it as "the report", and the
     `agent` seat's supplement of `merge` and of `conflict-resolution` holds
     its call: `merge` passes the
