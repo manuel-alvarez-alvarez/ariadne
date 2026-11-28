@@ -70,6 +70,11 @@ its own client: the question, the options to pick from, the option it
 recommends first, and why. Needs attention shows the question and the agent
 console.
 
+A planning orchestrator can end its turn without opening a question form.
+Needs attention then says it may have asked in text.
+Open its console, read the message, and answer there.
+The item clears when its next turn starts or the goal leaves planning.
+
 The question tool is `AskUserQuestion` in
 Claude, `request_user_input` in Codex, or `question` in opencode. Ariadne
 holds the question open until you answer it, in every permission mode, and
