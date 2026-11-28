@@ -1,3 +1,7 @@
+import { useQuery } from "@tanstack/react-query"
+import { Skeleton } from "@/components/ui/skeleton"
+import { tunnelQueryOptions } from "@/features/repositories/queries"
+import { useHostSelection } from "@/hooks/use-host-filter"
 /**
  * The open pull requests of the enabled repositories (026, 029), the first
  * tab of the Forge screen: every one, the user's own, or the ones that ask
@@ -110,6 +114,8 @@ export function PullRequestsPage() {
   // The hosts the header picker selects. The repository filter is one forge
   // repository, which each host knows under an id of its own.
   const hosts = useHostFilter()
+  const { isPending: hostsPending } = useHostSelection()
+  const tunnel = useQuery(tunnelQueryOptions())
   const showHost = useRowsShowHost()
   const repositories = useHostRepositories(hosts)
   const enabled = distinctEnabled(repositories.rows)
@@ -159,7 +165,9 @@ export function PullRequestsPage() {
         actions={
           // A live webhook brings every change here on its own: only a
           // repository that polls, or whose hook is down, waits for one.
-          needsRefresh ? (
+          hostsPending || !repositories.isSettled || tunnel.isPending ? (
+            <Skeleton aria-label="Loading refresh" className="h-9 w-24" />
+          ) : needsRefresh ? (
             <Button variant="outline" pending={refresh.isPending} onClick={() => refresh.mutate()}>
               <RefreshCwIcon />
               Refresh
@@ -217,6 +225,7 @@ export function PullRequestsPage() {
           return (
             <PullRequestRow
               row={row}
+              repositoryPending={hostsPending || !repositories.isSettled}
               repository={forgeName(
                 repositories.rows.find((r) => r.host === row.host && r.id === row.repository_id),
               )}
@@ -289,6 +298,7 @@ function NearEnd({
 function PullRequestRow({
   row,
   repository,
+  repositoryPending,
   reviews,
   keepers,
   showHost,
@@ -297,6 +307,7 @@ function PullRequestRow({
 }: {
   /** The newest of the request's rows: its forge facts. */
   row: HostRow<PullRequestDto>
+  repositoryPending: boolean
   repository: string
   /** The hosts where Ariadne reviews the request, and where a keeper keeps it. */
   reviews: Host[]
@@ -352,8 +363,12 @@ function PullRequestRow({
             ))}
           </span>
           <span className="text-xs text-muted-foreground">
-            <span className="font-mono">{repository || row.repository_id}</span> ·{" "}
-            {row.role === "author" ? "by you" : `by ${row.author_login}`} ·{" "}
+            {repositoryPending ? (
+              <Skeleton aria-label="Loading repository" className="inline-block h-4 w-28" />
+            ) : (
+              <span className="font-mono">{repository || row.repository_id}</span>
+            )}{" "}
+            · {row.role === "author" ? "by you" : `by ${row.author_login}`} ·{" "}
             <span className="font-mono">{row.head_branch}</span> →{" "}
             <span className="font-mono">{row.base_branch}</span>
           </span>

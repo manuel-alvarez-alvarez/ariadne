@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/ui/skeleton"
 /**
  * A form's workflow picker: every workflow in the catalog, by name.
  *
@@ -53,6 +54,7 @@ export function WorkflowSelect<V extends FieldValues>({
   onValueChange?: (value: string) => void
 }) {
   const workflows = useQuery({ ...workflowsQueryOptions(host), enabled })
+  if (workflows.isPending) return <Skeleton aria-label="Loading workflows" className="h-9 w-full" />
   const options = [
     ...(allowInherit ? [{ value: INHERIT, label: "Repository default" }] : []),
     ...(workflows.data ?? []).map((workflow) => ({ value: workflow.name, label: workflow.name })),

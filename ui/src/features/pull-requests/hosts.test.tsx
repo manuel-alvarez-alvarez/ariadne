@@ -13,6 +13,7 @@ import { pull } from "@/test/pull-request"
 import { byContent } from "@/test/text-content"
 import { PullRequestPanel } from "./pull-request-panel"
 import { PullRequestsPage } from "./pull-requests-page"
+import { useReviewTargets } from "./review-hosts"
 
 const BOX_ORIGIN = "http://box.test:7676"
 
@@ -443,9 +444,9 @@ it.each([
         route: "/forge/pull-requests?pr=repo-local%3A42",
       },
     )
-    const button = await screen.findByRole("button", { name: start })
-    expect(button.hasAttribute("disabled")).toBe(true)
-    fireEvent.click(button)
+    expect(await screen.findByLabelText("Loading review actions")).toBeTruthy()
+    expect(screen.getByLabelText("Loading babysit actions")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: start })).toBeNull()
     expect(screen.queryByRole("dialog")).toBeNull()
     answered = true
     await queryClient.invalidateQueries({ queryKey: qk.pullRequests.detail("box", "repo-box:42") })
@@ -528,3 +529,13 @@ it.each([
     expect(screen.getByRole("dialog", { name: title })).toBe(dialog)
   },
 )
+
+function Targets() {
+  const targets = useReviewTargets(pull, "local")
+  return <output aria-label="Review targets">{targets.length}</output>
+}
+it("offers no review targets until the other hosts answer", async () => {
+  stubHosts({ local: { "/v1/repositories": [] }, box: { "/v1/repositories": () => undefined } })
+  renderScreen(<Targets />)
+  await waitFor(() => expect(screen.getByLabelText("Review targets").textContent).toBe("0"))
+})

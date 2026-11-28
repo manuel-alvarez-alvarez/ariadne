@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/ui/skeleton"
 /**
  * What an agent runs on, as one control: the model, and the effort that model
  * is run at.
@@ -430,9 +431,12 @@ export function PinPicker({
                         ? undefined
                         : models
                           ? "No agent has a model to show."
-                          : "Loading the catalog…"
+                          : undefined
                     }
                   >
+                    {!models ? (
+                      <Skeleton aria-label="Loading catalog" className="m-2 h-24 w-32" />
+                    ) : null}
                     <OptionList
                       label="Agents"
                       rows={agentRows}

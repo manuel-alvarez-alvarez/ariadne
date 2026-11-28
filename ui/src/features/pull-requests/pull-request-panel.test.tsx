@@ -247,7 +247,7 @@ it("offers a manual Start review on every request that asks for my review", asyn
   daemon(() => pull)
   renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
   await screen.findByText("#42 Fix widgets")
-  expect(screen.getByRole("button", { name: "Start review" })).toBeTruthy()
+  expect(await screen.findByRole("button", { name: "Start review" })).toBeTruthy()
 })
 
 it("links the task of a review", async () => {
@@ -387,14 +387,14 @@ it("offers Start babysit on a request of mine that no task keeps", async () => {
   daemon(() => ({ ...pull, role: "author", author_login: "me" }))
   renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
   await screen.findByText("#42 Fix widgets")
-  expect(screen.getByRole("button", { name: "Start babysit" })).toBeTruthy()
+  expect(await screen.findByRole("button", { name: "Start babysit" })).toBeTruthy()
 })
 
 it("offers Start babysit on a request that asks for my review", async () => {
   daemon(() => pull)
   renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
   await screen.findByText("#42 Fix widgets")
-  expect(screen.getByRole("button", { name: "Start babysit" })).toBeTruthy()
+  expect(await screen.findByRole("button", { name: "Start babysit" })).toBeTruthy()
 })
 
 it("offers no Start babysit on a request of mine a task already keeps", async () => {
@@ -410,8 +410,8 @@ it.each(["alice", "dependabot[bot]"])(
     daemon(() => ({ ...pull, author_login: author, review_requested: false }))
     renderScreen(<PullRequestPanel id="repo:42" onClose={() => {}} />)
     await screen.findByText("#42 Fix widgets")
-    expect(screen.getByRole("button", { name: "Start review" })).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Start babysit" })).toBeTruthy()
+    expect(await screen.findByRole("button", { name: "Start review" })).toBeTruthy()
+    expect(await screen.findByRole("button", { name: "Start babysit" })).toBeTruthy()
   },
 )
 

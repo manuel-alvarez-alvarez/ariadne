@@ -31,7 +31,7 @@ import { skillsQueryOptions } from "@/features/skills/queries"
 import { cn } from "@/lib/format"
 
 import { useAskReview } from "./queries"
-import { ReviewHostSelect, type ReviewTarget, useReviewTargets } from "./review-hosts"
+import { ReviewHostSelect, useReviewTargets } from "./review-hosts"
 
 /** The review session's own playbook: always loaded, never picked. */
 const PLAYBOOK = "pr-reviewer"
@@ -59,8 +59,11 @@ export function StartReviewDialog({
 }) {
   const targets = useReviewTargets(pull, host, open)
   const [chosen, setChosen] = useState<Host | null>(null)
-  const target = targets.find((each) => each.host === chosen) ?? (targets[0] as ReviewTarget)
-  const models = useQuery({ ...modelsQueryOptions(target.host), enabled: open })
+  const target = targets.find((each) => each.host === chosen) ?? targets[0]
+  const models = useQuery({
+    ...modelsQueryOptions(target?.host ?? host),
+    enabled: open && !!target,
+  })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const ask = useAskReview()
   const [pin, setPin] = useState({ model: "", effort: "" })
@@ -86,7 +89,7 @@ export function StartReviewDialog({
   }
 
   function start() {
-    if (!canStart) return
+    if (!canStart || !target) return
     ask.mutate(
       {
         host: target.host,
@@ -120,7 +123,7 @@ export function StartReviewDialog({
           <ReviewHostSelect
             id="review-host"
             targets={targets}
-            value={target.host}
+            value={target?.host ?? host}
             onChange={(next) => {
               setChosen(next)
               // A model of one host is not offered on another.
@@ -130,7 +133,7 @@ export function StartReviewDialog({
           <Field>
             <FieldLabel htmlFor="review-pin">Model</FieldLabel>
             <PinPicker
-              host={target.host}
+              host={target?.host ?? host}
               id="review-pin"
               label="Model"
               model={pin.model}
@@ -163,7 +166,11 @@ export function StartReviewDialog({
         </div>
         <DialogFooter>
           <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-          <Button disabled={!pin.model || !canStart} pending={ask.isPending} onClick={start}>
+          <Button
+            disabled={!target || !pin.model || !canStart}
+            pending={ask.isPending}
+            onClick={start}
+          >
             <BotIcon />
             Start review
           </Button>

@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/ui/skeleton"
 /**
  * Why the task is where it is, as a card above its technical facts.
  *
@@ -91,6 +92,9 @@ export function TaskSummary({
     detail =
       "Pending. Its dependencies are finished or it has none, and no other cause is recorded."
   }
+
+  if (results.some((result) => result.isPending))
+    return <Skeleton aria-label="Loading dependencies" className="h-20 w-full" />
 
   const warn = stalled || asking.length > 0
   return (

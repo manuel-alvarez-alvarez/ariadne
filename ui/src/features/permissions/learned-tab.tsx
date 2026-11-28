@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/ui/skeleton"
 /**
  * The Learned tab: every choice a repository's agents made, or had made for
  * them — a console pick under `learn` or `ai`, or a denial the AI model
@@ -139,32 +140,38 @@ export function LearnedPermissionsTab() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Select
-          value={repositoryFilter ?? ALL}
-          onValueChange={setRepositoryFilter}
-          items={repositoryItems}
-        >
-          <SelectTrigger
-            aria-label="Filter by repository"
-            className="w-48"
-            title={filterTriggerTitle}
+        {repositories.isPending ? (
+          <Skeleton aria-label="Loading repository filter" className="h-9 w-48" />
+        ) : (
+          <Select
+            value={repositoryFilter ?? ALL}
+            onValueChange={setRepositoryFilter}
+            items={repositoryItems}
           >
-            <SelectValue>{filterTriggerLabel}</SelectValue>
-          </SelectTrigger>
-          {/* Wide enough for a full path, and not tied to the trigger's own
+            <SelectTrigger
+              aria-label="Filter by repository"
+              className="w-48"
+              title={filterTriggerTitle}
+            >
+              <SelectValue>{filterTriggerLabel}</SelectValue>
+            </SelectTrigger>
+            {/* Wide enough for a full path, and not tied to the trigger's own
               narrow width — see `select.tsx`'s `w-(--anchor-width)` default. */}
-          <SelectContent alignItemWithTrigger={false} className="w-80">
-            <SelectItem value={ALL}>All repositories</SelectItem>
-            {(repositories.data ?? []).map((repository) => (
-              <SelectItem key={repository.id} value={repository.id} aria-label={repository.path}>
-                <span className="flex min-w-0 flex-col overflow-hidden py-0.5">
-                  <span className="truncate">{folderName(repository.path)}</span>
-                  <span className="truncate text-xs text-muted-foreground">{repository.path}</span>
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            <SelectContent alignItemWithTrigger={false} className="w-80">
+              <SelectItem value={ALL}>All repositories</SelectItem>
+              {(repositories.data ?? []).map((repository) => (
+                <SelectItem key={repository.id} value={repository.id} aria-label={repository.path}>
+                  <span className="flex min-w-0 flex-col overflow-hidden py-0.5">
+                    <span className="truncate">{folderName(repository.path)}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {repository.path}
+                    </span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       <DataTable

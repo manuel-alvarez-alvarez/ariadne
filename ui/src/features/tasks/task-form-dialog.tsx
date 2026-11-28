@@ -4,7 +4,6 @@ import { XIcon } from "lucide-react"
 import { useMemo } from "react"
 import { Controller, useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
-
 import { ApiError, type GoalDto, type Host, type TaskDto } from "@/api"
 import {
   FormDialog,
@@ -19,6 +18,7 @@ import { MarkdownField } from "@/components/markdown-field"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { goalQueryOptions } from "@/features/goals/queries"
 import { RepositoryCombobox } from "@/features/goals/repository-combobox"
 import { PinPicker } from "@/features/models/pin-picker"
@@ -126,7 +126,7 @@ function TaskFormDialog({
     }
   }
 
-  if (!actualGoal && !editing?.execution_context && !detail.isError) return null
+  const goalPending = !goal && !editing?.execution_context && detail.isPending
 
   return (
     <FormDialog open={open} onOpenChange={onOpenChange} dirty={form.formState.isDirty}>
@@ -146,7 +146,7 @@ function TaskFormDialog({
         }
         submitLabel={editing ? "Save changes" : "Create task"}
         pending={submit.isPending}
-        submitDisabled={!hasModel}
+        submitDisabled={goalPending || !hasModel}
         onKeyDown={submitOnChord}
       >
         <FormDialogBody>
@@ -173,32 +173,37 @@ function TaskFormDialog({
           />
           <Field>
             <FieldLabel htmlFor="task-repo">Repository</FieldLabel>
-            <Controller
-              control={form.control}
-              name="repo_id"
-              render={({ field }) => (
-                <RepositoryCombobox
-                  id="task-repo"
-                  repositories={actualGoal?.repos ?? repositories.data ?? []}
-                  value={
-                    editing
-                      ? [editing.repo_id]
-                      : field.value
-                        ? [field.value]
-                        : soleRepository
-                          ? [soleRepository.id]
-                          : []
-                  }
-                  onChange={(ids) => field.onChange(ids[0] ?? "")}
-                  single
-                  disabled={!!editing}
-                />
-              )}
-            />
+            {goalPending || (!actualGoal && repositories.isPending) ? (
+              <Skeleton aria-label="Loading repository" className="h-9 w-full" />
+            ) : (
+              <Controller
+                control={form.control}
+                name="repo_id"
+                render={({ field }) => (
+                  <RepositoryCombobox
+                    id="task-repo"
+                    repositories={actualGoal?.repos ?? repositories.data ?? []}
+                    value={
+                      editing
+                        ? [editing.repo_id]
+                        : field.value
+                          ? [field.value]
+                          : soleRepository
+                            ? [soleRepository.id]
+                            : []
+                    }
+                    onChange={(ids) => field.onChange(ids[0] ?? "")}
+                    single
+                    disabled={!!editing}
+                  />
+                )}
+              />
+            )}
           </Field>
           <Field>
             <FieldLabel>Workflow agents</FieldLabel>
             <div className="flex flex-col gap-3">
+              {goalPending ? <Skeleton aria-label="Loading steps" className="h-20 w-full" /> : null}
               {steps.map((step, index) => (
                 <div key={step.id} className="grid gap-2 sm:grid-cols-[10rem_1fr_1fr]">
                   <span className="pt-2 text-sm font-medium">{step.title}</span>
@@ -237,7 +242,9 @@ function TaskFormDialog({
             </div>
             <FieldDescription>Each row staffs one workflow column.</FieldDescription>
           </Field>
-          {taskItems.length > 0 ? (
+          {goalPending || tasks.isPending ? (
+            <Skeleton aria-label="Loading dependencies" className="h-9 w-full" />
+          ) : taskItems.length > 0 ? (
             <Field>
               <FieldLabel>Depends on</FieldLabel>
               {dependencies.fields.map((row, index) => (

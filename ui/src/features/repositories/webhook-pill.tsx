@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/ui/skeleton"
 /**
  * The repositories table's Webhook cell (026, 027): one pill that says how
  * the repository's requests reach Ariadne, and whether that works.
@@ -17,8 +18,7 @@ import { cn } from "@/lib/format"
 /** How the requests of an enabled integration arrive, and whether that works. */
 function delivery(forge: ForgeDto, tunnel: ForgeTunnelDto | undefined) {
   const { webhook } = forge
-  // While the tunnel is still loading, the hook itself says which it is.
-  const tunnelled = tunnel ? tunnel.enabled : webhook.state === "live"
+  const tunnelled = tunnel?.enabled ?? false
   const working = tunnelled
     ? webhook.state === "live" && !webhook.fetch_error
     : !webhook.fetch_error
@@ -46,6 +46,7 @@ export function WebhookPill({
 }) {
   // A disabled integration neither listens nor fetches.
   if (!forge.enabled) return <span className="text-muted-foreground">-</span>
+  if (!tunnel) return <Skeleton aria-label="Loading webhook mode" className="h-5 w-16" />
   const { mode, working } = delivery(forge, tunnel)
   return (
     <Tooltip>

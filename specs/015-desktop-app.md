@@ -2132,7 +2132,25 @@ view.
      It never presents a local default as the remote answer.
      This includes host controls, sync blocks, table cells, forms, labels and colours.
 
+114. Forms and pull request controls follow rule 113.
+     The tunnel switch and webhook mode wait for the tunnel query.
+     Repository and workflow fields wait for their catalogs.
+     Task steps, repository and dependency options wait for goal detail and their own queries.
+     Learned-permission repository filters wait for repository names.
+     Dependency summaries and the pin catalog show Skeletons while their queries load.
+     Pull request Refresh and repository labels wait for repositories and tunnel state, as applicable.
+     Review targets wait for the other hosts' repositories.
+     Review and babysit controls show Skeletons until every host answers or fails.
+
 ## Acceptance criteria
+
+- Forms show Skeletons while remote values load (rule 114)
+  (`ui/src/features/tasks/form-loading.test.tsx`,
+  `ui/src/features/workflows/workflow-select.test.tsx::shows a skeleton until workflows answer`).
+- Pull request controls wait for remote data (rule 114)
+  (`ui/src/features/pull-requests/pull-requests-page.test.tsx::shows skeletons for refresh and repository labels until remote data answers`,
+  `ui/src/features/pull-requests/hosts.test.tsx::starts no %s while box has not answered, and none once box holds the work`).
+
 
 - Remote loading follows rule 113
   (`ui/src/hooks/hosts-loading.test.tsx::keeps All unresolved until the hosts answer`,
