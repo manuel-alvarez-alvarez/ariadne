@@ -269,11 +269,14 @@ written into the system prompt (006), and the lifecycle the seats sit in
     reproduce each finding before it posts it, keeps the priority of a
     finding whose reproduction failed and marks its proof `Unverified:`
     rather than downgrade it to P2, and names no approval (029 rule 17).
-    `coding`, `merge` and `pr-babysit` name their own report only as "the
-    column report", never a field of it (006 rule 5) — `merge` alongside
-    the base branch's sha, `pr-babysit` on a merge; every other produce
-    skill that ends its own column — `conflict-resolution`,
-    `documentation`, `research`, `spec-writing` —
+    `coding` and `pr-babysit` name their own report only as "the column
+    report", never a field of it (006 rule 5) — `pr-babysit` on a merge;
+    `merge` and `conflict-resolution` name it as "the report", and the
+    `agent` seat's supplement of each holds its call: `merge` passes the
+    work with the base branch's sha as `merge_commit` and returns it with
+    `fail_step` for a failed check, and `conflict-resolution` passes the
+    work only where no skill invoked it. Every other produce skill that
+    ends its own column — `documentation`, `research`, `spec-writing` —
     calls `complete_step` with the column report the same way, and
     `conflict-resolution` returns to the skill that invoked it, and calls
     nothing, where one did.
@@ -409,10 +412,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
     server and no Ariadne word of the word list of 006 rule 21. It says
     the plain word of that list instead, and the seat text and the
     supplement of its skill and seat say what the plain word stands for.
-    `code-review` and `architecture-review` hold to this today, proven by
-    the one helper `assert_names_no_ariadne_word` in
-    `skill_tests/template.rs`; the other nine skills move to it in later
-    changes.
+    `code-review`, `architecture-review`, `merge` and `conflict-resolution`
+    hold to this today, proven by the one helper
+    `assert_names_no_ariadne_word` in `skill_tests/template.rs`; the other
+    seven skills move to it in later changes.
     The body stays under 500 lines and within the caps of 006 rule 13.
     The template is proven by structure and words
     (`skill_tests/template.rs::every_skill_obeys_the_template`,
@@ -571,6 +574,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
   and `architecture-review` adds one line to the one verdict of its
   column and names no step call
   (`skill_tests/review.rs::architecture_review_adds_to_the_one_verdict_of_its_column`).
+- `merge` and `conflict-resolution` name no Ariadne, no MCP tool and no
+  Ariadne word of the word list
+  (`skill_tests/template.rs::merge_and_conflict_resolution_name_no_ariadne_word`),
+  and their calls are the `agent` seat's supplements
+  (`skill_tests/operate.rs::the_merge_supplement_holds_the_step_calls_the_skill_dropped`,
+  `skill_tests/operate.rs::the_conflict_resolution_supplement_holds_the_call_that_ends_the_stage`).
 - `code-review` and `architecture-review` name no Ariadne, no MCP tool and
   no Ariadne word of the word list
   (`skill_tests/template.rs::the_two_review_skills_name_no_ariadne_word`),

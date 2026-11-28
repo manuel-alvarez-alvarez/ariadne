@@ -110,13 +110,7 @@ fn a_task_is_one_commit_and_nothing_amends_a_pushed_one() {
 /// description alone defines.
 #[test]
 fn a_produce_skill_names_the_column_report_where_it_ends_a_column() {
-    for name in [
-        "coding",
-        "conflict-resolution",
-        "documentation",
-        "research",
-        "spec-writing",
-    ] {
+    for name in ["coding", "documentation", "research", "spec-writing"] {
         let document = unwrapped(default_skill_document(name).unwrap());
         assert!(
             document.contains("Call `complete_step` with the column report"),
