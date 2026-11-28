@@ -401,8 +401,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       Each seat ties every plain word that a skill it can load says (rule
       5). The tie is in the session rules, the seat text, the supplement of
       the skill the seat loads on every session, or that skill's own
-      supplement for the seat. A tie says the word, then "is" or "are", or
-      names the call the word stands for. A tie of a word that ends the
+      supplement for the seat. A tie states the meaning that rule 5 gives
+      the word in that seat: the meaning follows the word and its "is" or
+      "are", or the sentence that says the word names the call it stands
+      for. A sentence that says the word with another meaning, such as "An
+      update is late.", ties nothing. A tie of a word that ends the
       work — send the report, pass the work, return the work — names an
       action the seat can take: a call that the seat lists and that
       delivers the work (`complete_step`, `fail_step` or `submit_review`),
@@ -475,8 +478,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   Each seat ties every plain word that a skill it can load says, and the
   test fails on a word no text of the seat ties
   (`mcp.rs::each_seat_ties_every_plain_word_its_skills_use`), and the
-  test fails on an end of work that names no action the seat can take,
-  such as a reviewer told only to end its turn. The reviewer
+  test fails on a tie that states no meaning or the wrong one, and on an
+  end of work that names no action the seat can take, such as a reviewer
+  told only to end its turn. The reviewer
   and keeper seats read one block of ties, and no other seat reads it
   (`mcp.rs::the_request_seats_share_one_block_of_ties`).
   The four seat texts and the end of the keeper briefing ship word for

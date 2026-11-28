@@ -1330,8 +1330,60 @@ pub(crate) mod tests {
             .collect()
     }
 
-    fn ties(text: &str, plain: &str) -> bool {
-        !tying_sentences(text, plain).is_empty()
+    /// The Ariadne meaning that the plain word `plain` has in `seat`, as
+    /// 006 rule 21 states it: a backticked call, or the words a tie says
+    /// after "is" or "are". `None` is a word the seat has no meaning for, so
+    /// a skill of the seat that says it fails the test.
+    fn meaning_of(seat: &McpSeat, plain: &str) -> Option<&'static str> {
+        Some(match (seat, plain) {
+            (McpSeat::Orchestrator, "stage") => "a column",
+            (McpSeat::Orchestrator, "your instructions") => "the briefing",
+            (McpSeat::Agent, "requester") => "the orchestrator",
+            (McpSeat::Agent, "stage") => "a column",
+            (McpSeat::Agent, "the report") => "the column report",
+            (McpSeat::Agent, "update") => "news",
+            (McpSeat::Agent, "primary checkout") => "the `repo:` path",
+            (McpSeat::Agent, "send the report" | "pass the work") => "`complete_step`",
+            (McpSeat::Agent, "return the work") => "`fail_step`",
+            (McpSeat::PullRequestReviewer | McpSeat::PullRequestKeeper, word) => match word {
+                "requester" => "the user",
+                "stage" => "one turn",
+                "the report" => "the request body",
+                "update" => "news",
+                "primary checkout" => "the repository path from `get_pull_request`",
+                "send the report" | "pass the work" | "return the work" => match seat {
+                    McpSeat::PullRequestReviewer => "`submit_review`",
+                    _ => "to write the result in your turn text",
+                },
+                _ => return None,
+            },
+            _ => return None,
+        })
+    }
+
+    /// Whether `text` ties the plain word `plain` to `meaning` in one
+    /// sentence. A call meaning is named anywhere in the sentence that says
+    /// the word, as in "Pass the work with `complete_step`." Any other
+    /// meaning follows the word and its "is" or "are", as in "An update is
+    /// news." A sentence that says the word with no meaning ties nothing.
+    fn ties(text: &str, plain: &str, meaning: &str) -> bool {
+        let call = meaning.starts_with('`');
+        ariadne_store::defaults::ste::sentences(text)
+            .into_iter()
+            .any(|sentence| {
+                let lowered = sentence.to_lowercase();
+                lowered.find(plain).is_some_and(|at| {
+                    let rest = &lowered[at + plain.len()..];
+                    if call {
+                        lowered.contains(meaning)
+                    } else {
+                        [" is ", " are "].iter().any(|verb| {
+                            rest.find(verb)
+                                .is_some_and(|v| rest[v + verb.len()..].starts_with(meaning))
+                        })
+                    }
+                })
+            })
     }
 
     /// The plain words that end a stage's work: each stands for the action
@@ -1401,9 +1453,12 @@ pub(crate) mod tests {
                     .into_iter()
                     .filter(|plain| says(document, plain))
                 {
+                    let meaning = meaning_of(&seat, plain).unwrap_or_else(|| {
+                        panic!("the {skill} skill says \"{plain}\", which has no meaning in the {seat:?} seat")
+                    });
                     assert!(
-                        ties(&text, plain),
-                        "the {skill} skill says \"{plain}\", and the {seat:?} seat ties it to nothing"
+                        ties(&text, plain, meaning),
+                        "the {skill} skill says \"{plain}\", and the {seat:?} seat does not tie it to {meaning}"
                     );
                     if END_OF_WORK.contains(&plain) {
                         assert!(
@@ -1418,10 +1473,35 @@ pub(crate) mod tests {
         // The helpers find what they are there to find.
         assert!(says("Send the updates.", "update"));
         assert!(!says("Read the requests.", "requester"));
-        assert!(ties("A rule.\nAn update is news.", "update"));
-        assert!(!ties("Read each update. News is late.", "update"));
-        assert!(ties("Pass the work with `complete_step`.", "pass the work"));
-        assert!(!ties("An update opens with `- Review again:`.", "update"));
+        assert!(ties("A rule.\nAn update is news.", "update", "news"));
+        assert!(ties(
+            "Pass the work with `complete_step`.",
+            "pass the work",
+            "`complete_step`"
+        ));
+        // A sentence that says the word but not its meaning ties nothing.
+        for (misleading, plain, meaning) in [
+            ("An update is late.", "update", "news"),
+            ("Read each update. News is late.", "update", "news"),
+            ("An update opens with `- Review again:`.", "update", "news"),
+            (
+                "The report is not the column report.",
+                "the report",
+                "the column report",
+            ),
+            (
+                "The requester is a user of the orchestrator.",
+                "requester",
+                "the orchestrator",
+            ),
+            (
+                "Pass the work with `fail_step`.",
+                "pass the work",
+                "`complete_step`",
+            ),
+        ] {
+            assert!(!ties(misleading, plain, meaning), "{misleading}");
+        }
         // An end of work names a call the seat lists, or the turn text where
         // it lists no delivering call.
         let reviewer = ["submit_review".to_string()];
