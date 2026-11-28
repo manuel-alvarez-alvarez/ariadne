@@ -40,8 +40,8 @@ function stepFacts(
       return {
         kind: step.kind ?? "tool",
         status: step.status,
-        title: step.title,
-        subject: step.subject && step.subject !== step.title ? firstLine(step.subject) : undefined,
+        title: firstLine(step.title),
+        subject: subjectBeside(step.title, step.subject),
         duration: elapsed(step.started_at, step.ended_at ?? now),
         stat: step.kind === "edit" ? (step.diff_stat ?? undefined) : undefined,
       }
@@ -56,8 +56,8 @@ function stepFacts(
       return {
         kind: "permission",
         status: step.answer ? `${step.state} · ${step.answer.label}` : step.state,
-        title: step.tool.title,
-        subject: step.tool.subject ? firstLine(step.tool.subject) : undefined,
+        title: firstLine(step.tool.title),
+        subject: subjectBeside(step.tool.title, step.tool.subject),
       }
     case "question":
       return {
@@ -79,8 +79,8 @@ function stepFacts(
       return {
         kind: "subagent",
         status: step.state ?? "running",
-        title: step.title,
-        subject: step.task ? firstLine(step.task) : undefined,
+        title: firstLine(step.title),
+        subject: step.task ? subjectBeside(step.title, step.task) : undefined,
         duration: elapsed(step.started_at, step.ended_at ?? now),
         count: `${step.activity.steps} ${step.activity.steps === 1 ? "step" : "steps"}`,
       }
@@ -101,6 +101,12 @@ function stepFacts(
  */
 function spaced(cells: readonly ReactNode[]): ReactNode[] {
   return cells.filter(Boolean).flatMap((cell, at) => (at === 0 ? [cell] : [" ", cell]))
+}
+
+/** The first line of a subject, unless the title, whole, already holds it. */
+function subjectBeside(title: string, subject?: string | null): string | undefined {
+  const line = subject ? firstLine(subject) : ""
+  return line && !title.includes(line) ? line : undefined
 }
 
 function firstLine(text: string): string {

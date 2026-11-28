@@ -320,7 +320,7 @@ async fn the_terminal_draws_the_full_screen_console_at_the_client_size() {
         "the bottom row is the last row:\n{screen}"
     );
     assert!(
-        rows[4].contains("▸") && rows[4].contains("1 tool call") && rows[5].contains("done"),
+        rows[1].contains("▸") && rows[1].contains("1 tool call") && rows[2].contains("done"),
         "the turns are drawn from the top, each with its answer:\n{screen}"
     );
     assert_eq!(client.statuses, [SessionStatus::Idle]);
@@ -665,15 +665,15 @@ async fn a_click_message_opens_and_closes_the_turn_under_it() {
         .await;
     assert!(!client.screen().contains("Read"), "{}", client.screen());
 
-    // The activity line of the second turn, which ran the tool.
-    client.mouse(TerminalMouse::Click, 4, 4).await;
+    // The activity line of the only turn, which ran the tool.
+    client.mouse(TerminalMouse::Click, 4, 1).await;
 
     client
         .read_until("the steps of the clicked turn", |screen| {
             screen.contains("▾") && screen.contains("Read")
         })
         .await;
-    client.mouse(TerminalMouse::Click, 4, 4).await;
+    client.mouse(TerminalMouse::Click, 4, 1).await;
     client
         .read_until("the clicked turn closed again", |screen| {
             !screen.contains("Read") && screen.contains("done")
@@ -686,15 +686,15 @@ async fn a_click_message_opens_and_closes_the_turn_under_it() {
 #[tokio::test]
 async fn a_wheel_message_scrolls_the_transcript() {
     let (_dir, _stub, _h, session, address) = idle_daemon().await;
-    // The transcript has six lines and four rows to show them in: the
+    // The transcript has three lines and one row to show them in: the
     // screen less the box and the bottom row.
-    let mut client = Client::open(address, &session.id, 100, 9).await;
+    let mut client = Client::open(address, &session.id, 100, 6).await;
     client
         .read_until("the end of the transcript", |screen| {
             screen.contains("done") && screen.contains(READY)
         })
         .await;
-    let first = "before the first prompt";
+    let first = "task: Develop";
     assert!(!client.screen().contains(first), "{}", client.screen());
 
     client.mouse(TerminalMouse::WheelUp, 4, 1).await;

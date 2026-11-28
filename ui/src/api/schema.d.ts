@@ -5101,6 +5101,8 @@ export interface components {
         RawToolDto: {
             input?: unknown;
             output?: unknown;
+            /** @description The original tool name supplied by the agent. */
+            title?: string | null;
         };
         /**
          * @description One learned permission to write whole, as another daemon pushes it (037).
@@ -6106,6 +6108,8 @@ export interface components {
             activity: components["schemas"]["ActivityDto"];
             /** @description The last message of the session's own agent in the turn. */
             answer: components["schemas"]["ContentBlockDto"][];
+            /** @description The message step that supplies the answer. */
+            answer_step_id: string | null;
             /**
              * @description What waits on a person, and the errors, whatever the state of the
              *     turn: the pending permissions and open questions the read loaded,

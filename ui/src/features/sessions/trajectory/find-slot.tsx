@@ -10,7 +10,7 @@
 import type { StepDto, TurnDto } from "@/api"
 
 import { TranscriptFind } from "../console/transcript-find"
-import { contentText, foldSteps, type StepPage } from "./store"
+import { contentText, foldSteps, promptText, type StepPage } from "./store"
 
 export function TrajectoryFind({
   turns,
@@ -42,8 +42,7 @@ function findEntries(
 ): { id: string; text: string }[] {
   return turns.flatMap((turn) => {
     const entries: { id: string; text: string }[] = []
-    if (turn.prompt)
-      entries.push({ id: `${turn.id}:prompt`, text: contentText(turn.prompt.content) })
+    if (turn.prompt) entries.push({ id: `${turn.id}:prompt`, text: promptText(turn.prompt) })
     const seen = new Set<string>()
     for (const step of [
       ...foldSteps(turn, pages[turn.id]).steps,

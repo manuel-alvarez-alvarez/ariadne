@@ -20,7 +20,7 @@
  */
 
 import { BotIcon, ChevronDownIcon, ChevronRightIcon, CircleHelpIcon } from "lucide-react"
-import { memo, type ReactNode, useState } from "react"
+import { Fragment, memo, type ReactNode, useState } from "react"
 
 import type { ContentBlockDto, Host, QuestionDto, StepDto, TurnDto } from "@/api"
 import { Markdown } from "@/components/markdown"
@@ -46,7 +46,7 @@ import { StepDetail } from "./step-detail"
 import { groupSteps, type ToolStep } from "./step-groups"
 import { StateIcon } from "./step-icons"
 import { GroupRow } from "./step-row"
-import { contentText, foldSteps, type StepPage } from "./store"
+import { contentText, foldSteps, promptText, type StepPage } from "./store"
 
 /** How many of its last steps a running turn shows under its activity line. */
 const LIVE_STEPS = 3
@@ -112,7 +112,13 @@ export const TurnView = memo(function TurnView({
         call.type === "tool_call" && shown.has(call.id) && permissionOf(call, answered) === step,
     )
   const steps = open
-    ? fold.steps.filter((step) => !isPending(step) && !isNotice(step) && !marked(step, calls))
+    ? fold.steps.filter(
+        (step) =>
+          !isPending(step) &&
+          !isNotice(step) &&
+          !marked(step, calls) &&
+          step.id !== turn.answer_step_id,
+      )
     : []
   const blocks = running ? liveBlocks(turn) : turn.answer
   const answer = contentText(blocks)
@@ -151,9 +157,17 @@ export const TurnView = memo(function TurnView({
     >
       {turn.prompt ? (
         <PromptBox
-          text={contentText(turn.prompt.content)}
+          text={promptText(turn.prompt)}
           time={formatClock(turn.started_at)}
           role={turn.prompt.source === "daemon" ? "Developer" : "You"}
+          fold={
+            turn.prompt.source === "daemon"
+              ? {
+                  open: folds[promptFoldId(turn.prompt.id)] === true,
+                  onToggle: () => onToggle(promptFoldId(turn.prompt?.id ?? turn.id)),
+                }
+              : undefined
+          }
         />
       ) : null}
       <ActivityLine turn={turn} now={now} open={open} onToggle={() => onToggle(turn.id)} />
@@ -330,6 +344,11 @@ function liveBlocks(turn: TurnDto): ContentBlockDto[] {
   return message?.type === "message" ? message.content : turn.answer
 }
 
+/** The fold id of a daemon prompt, beside the turns' and the plans' in the console's kept folds. */
+function promptFoldId(promptId: string): string {
+  return `prompt:${promptId}`
+}
+
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`
 }
@@ -346,8 +365,16 @@ function ActivityLine({
   onToggle: () => void
 }) {
   const time = elapsed(turn.started_at, turn.ended_at ?? now) ?? "0s"
-  const { steps, files_changed: files, failed } = turn.activity
+  const { steps, files_changed: files, failed, cancelled, subagents } = turn.activity
   const Chevron = open ? ChevronDownIcon : ChevronRightIcon
+  // The steps and each count above zero: a quiet turn is its duration alone.
+  const facts = [
+    steps > 0 ? { text: plural(steps, "step", "steps") } : null,
+    files > 0 ? { text: plural(files, "file changed", "files changed") } : null,
+    failed > 0 ? { text: `${failed} failed`, danger: true } : null,
+    cancelled > 0 ? { text: `${cancelled} cancelled` } : null,
+    subagents > 0 ? { text: plural(subagents, "subagent", "subagents") } : null,
+  ].filter((fact) => fact !== null)
   return (
     <button
       type="button"
@@ -357,12 +384,12 @@ function ActivityLine({
     >
       <Chevron aria-hidden className="size-3.5 shrink-0" />
       <StateIcon state={turn.state} /> <span>{time}</span>
-      <span aria-hidden>·</span>
-      <span>{plural(steps, "step", "steps")}</span>
-      <span aria-hidden>·</span>
-      <span>{plural(files, "file changed", "files changed")}</span>
-      <span aria-hidden>·</span>
-      <span className={cn(failed > 0 && "text-status-danger-fg")}>{failed} failed</span>
+      {facts.map((fact) => (
+        <Fragment key={fact.text}>
+          <span aria-hidden>·</span>
+          <span className={cn(fact.danger && "text-status-danger-fg")}>{fact.text}</span>
+        </Fragment>
+      ))}
     </button>
   )
 }

@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-11-27
+updated: 2026-11-28
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44, 03f9c8b7, 29e6d84e, 1b09ac10, 66240a5a]
 tests:
@@ -346,7 +346,7 @@ Out: the daemon endpoints themselves (012).
     `kbd` and inline code styled, a single newline in a prompt still a line
     break, and a fenced block a `CodeBlock`
     (`ui/src/features/sessions/console/blocks.test.tsx::renders a prompt as Markdown: headings, task lists, a fenced block, and a single newline still breaks`,
-    `::renders developer prompts as full Markdown without a fold`,
+    `::renders a developer prompt as Markdown, folded to 4 lines with Show more where it is longer`,
     `::draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text`,
     `::shows the time of a prompt and marks a queued one`).
 22. An input box posts a prompt as `{"text"}` to
@@ -787,7 +787,9 @@ Out: the daemon endpoints themselves (012).
 38. Toasts show at the bottom left, clear of the header and the pane
     (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
 39. The goals board shows one global "Tasks" heading with the number of
-    shown task rows, the tasks of folded goals included. The board is one
+    shown task rows, the tasks of folded goals included. The number is a
+    badge beside the word, and the heading's name is "Tasks (N)". The board
+    draws no frame around the list. The board is one
     list, and each shown task is one full-width row. Active hides finished
     and cancelled tasks; All, Finished and custom filters show every task in
     each matching goal. Progress counts use all tasks.
@@ -1600,7 +1602,8 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     task" keeps its name and the palette's entry for a task with no goal is
     "Add a task outside any goal".
 86. The dialog for a task with no goal asks for a repository, and refuses to
-    create the task without one. Its workflow picker starts on "No workflow",
+    create the task without one. Its repository field is the searchable field
+    of the goal dialog, with one pick, which closes the search. Its workflow picker starts on "No workflow",
     its first entry. With a workflow it shows one staffing row for each column
     of that workflow. With "No workflow" it shows one staffing row with no
     column, and sends one agent with no `step` and no `workflow`. It has no
@@ -1626,10 +1629,21 @@ the ops of each update by id.
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the turn console in the session view, with no parameter`).
 90. A turn shows its prompt, one activity line and its answer. A closed turn
     with nothing in its `attention` is these three rows. The activity line
-    gives the time of the turn, its steps, the files it changed and its
-    failed calls, as `1m 04s · 5 steps · 2 files changed · 1 failed`, after
-    the icon of the turn's state (rule 112)
-    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws a closed turn as its prompt, one activity line and its answer`).
+    gives the duration of the turn, then the count of its steps, then each of
+    the files changed, the failed, the cancelled and the subagents only where
+    it is above zero, as `1m 04s · 5 steps · 2 files changed · 1 failed`,
+    after the icon of the turn's state (rule 112). A turn with no steps shows
+    the duration alone
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws a closed turn as its prompt, one activity line and its answer`,
+    `::shows the duration, then the steps, then each count above zero`).
+90a. A daemon prompt shows its `text`, the prompt without the seat brief, and
+    without its `untrusted` marks. Where it is more than 4 lines, it shows its
+    first 4 lines and a `Show more` control, which opens the whole prompt as
+    Markdown; `Show less` folds it again. A typed prompt shows whole. The
+    console keeps the fold of each prompt with its other folds
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows a daemon prompt without its seat brief and its untrusted marks`,
+    `::folds a daemon prompt of more than 4 lines, and keeps its fold off the screen`,
+    `::shows a typed prompt whole, and a daemon prompt of 4 lines whole`).
 91. The activity line is a button with `aria-expanded`. It opens to the step
     rows of the turn, which it reads from
     `GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps`. A row shows the
@@ -1647,6 +1661,11 @@ the ops of each update by id.
     `ui/src/features/sessions/trajectory/store.test.ts::keeps a row seen live in an open fold after its turn ends`,
     `::shows the live status of a step over a page read before it`,
     `::shows the steps of an open fold in the turn's order, each counted once`).
+    A row shows the first line of the title, and the subject after it only
+    where the title does not contain the subject. An open turn does not show
+    the message step that is its `answer_step_id` as a row
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the first line of a title, and a subject only when the title lacks it`,
+    `::does not show the message step that is the answer of an open turn`).
 92. The running turn shows its last 3 steps under its activity line, and
     each new step pushes the oldest one out. Its newest message is its
     answer, and a `text_append` op extends it as it streams. The rows and
@@ -1814,17 +1833,22 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     call's `permission` id or by its tool call id, and not a row of its own
     where the call's row shows. The mark gives `✓` or `✗` by the kind of the
     option chosen, the option's label, and who decided: `you`, `AI`, a
-    learned rule or `auto`
-    (`ui/src/features/sessions/trajectory/console-state.test.tsx::marks an answered permission on the row of its call, with who decided`).
+    learned rule or `auto`. An allow that `auto` or a learned permission gave
+    has no mark. An allow by the AI or by a person is a mark in the muted
+    colour, and a rejection is one in the danger colour. The open detail of
+    the call shows the answer and who decided, for each decider
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::marks an answered permission on the row of its call, with who decided`,
+    `::marks only what a person or the AI allowed, or anything rejected, and says who in the detail`).
 99e. The title that the agent gives the session shows as the subtitle of the
     console, under its stream line, and a `session_patch` changes it
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the title that the agent gives as the subtitle of the console`).
 99f. Find (`trajectory/find-slot.tsx`, over `console/transcript-find.tsx`) searches the loaded turns and the
-    loaded steps: the prompt and the answer of each turn shown, and each
+    loaded steps: the prompt as shown (a daemon prompt without its seat brief) and the answer of each turn shown, and each
     step the console holds for it, including live steps, full pages, attention
     and the notices of the turn. Each step appears once by ID.
     Find reports when older turns are unloaded and loads them on request
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::finds the text of the loaded turns and the loaded steps`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::finds the shown prompt of a daemon turn, not its seat brief`,
     `ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn from its notices, and reads no steps for them`).
 99g. The console expands into a modal and collapses back. Expand, collapse and a change of tab each
     mount a new pane. The console keeps the draft, the scroll place and
@@ -1938,8 +1962,10 @@ view.
      `before=<step id>`, in place and in the full view. Where `can_cancel` is true, the
      row has a Cancel control that posts `{"subagent_id"}` to
      `POST /v1/sessions/{id}/console/cancel`. Where it is false, the row has
-     none
-     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::draws a subagent step with its title, task, state, time and step count, opens it to its steps, and cancels it`,
+     none. The open detail of a subagent has no set height and no scroll of
+     its own: its steps scroll with the transcript
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::opens a subagent's steps in the scroll of the transcript, with no box of its own`,
+     `::draws a subagent step with its title, task, state, time and step count, opens it to its steps, and cancels it`,
      `::offers no cancel on a subagent the agent does not let cancel`,
      `::reads the earlier steps of a subagent with Show N earlier`).
 107. `Open` shows the whole content of a step, with no set height, in the
@@ -2095,6 +2121,8 @@ view.
   (`ui/src/features/command-palette/command-palette.test.tsx::offers a task with no goal over a screen with no goal open, and opens its dialog`; `::offers the goal-less task beside the goal's own when a goal is open`).
 - The dialog offers "No workflow" first with one row and no column, one row per column with a workflow, no dependency field, and the ready hosts starting on this machine
   (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::offers No workflow first, and one staffing row with no column under it`; `::staffs one row for each column of the picked workflow`; `::has no dependency field`; `::offers the ready hosts, starting on this machine`).
+- The dialog picks its repository by search in the goal dialog's field
+  (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::picks the repository by search in the field the goal dialog uses`).
 - The dialog posts the repository, the one agent and no workflow, and refuses a missing repository
   (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::creates the task in the repository with no workflow, on this machine`; `::asks for a repository before it creates anything`; `::shows the daemon's reason when it refuses the host`).
 - The panel of a goal-less task has no goal breadcrumb or goal query, and no columns without a workflow
@@ -2756,6 +2784,8 @@ view.
   progress
   (`ui/src/features/goals/goal-board.test.tsx::draws each task as one row of one list, the rows of a goal in its group, and counts them`,
   `::hides terminal tasks under Active while preserving progress`).
+- The board has no frame, and its Tasks heading shows the count as a badge
+  (`ui/src/features/goals/goal-board.test.tsx::draws the board with no frame, and the count as a badge beside the Tasks heading`).
 - The board has no line of column names
   (`ui/src/features/goals/goal-board.test.tsx::draws each task as one row of one list, the rows of a goal in its group, and counts them`).
 - A task row is one link to the task panel with one tab stop, its PR link
