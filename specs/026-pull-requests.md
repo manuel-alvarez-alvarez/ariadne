@@ -578,13 +578,13 @@ A session with a `pull_request_id` shows the request's title and a link to its U
 - Its request tools find the request its task opened, then call its routes, and say to open one where there is none:
   `tools.rs::tests::the_agents_request_tools_call_the_routes_of_the_request_its_task_opened`,
   `::an_agent_with_no_request_is_told_to_open_one`.
-- The skill is within its caps, names no forge CLI, timer, poll or resolve, opens the request once filling the repository's template or its three sections, starts on the news steps where one is already open, and ends on the merge or the close:
-  `skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`, `skill_tests/template.rs::skill_size_caps_hold`.
-- The skill answers each inline review comment once, in one of three one-sentence shapes, batches all accepted asks and caused failures per wake, skips a thanks, acts on a reply that asks a new change, answers the first rejection with evidence and escalates the second with no reply or further fix, answers a conversation comment the same way, applies an accepted suggestion block, posts no status comment, and posts no unrelated reply:
+- The skill is within its caps, names no forge CLI, timer, poll or resolve, stops on the merge or the close, and names no Ariadne word. The agent seat's `pr-babysit` supplement opens the request once, filling the repository's template or its three sections, and ends the task on the merge or the close (006 rule 21):
+  `skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`, `skill_tests/template.rs::skill_size_caps_hold`, `defaults.rs::supplement_size_caps_hold`.
+- The skill answers each inline review comment once, in one of three one-sentence shapes, batches all accepted asks and caused failures per wake, skips a thanks, acts on a reply that asks a new change, answers the first rejection with evidence and hands the second to the user with no reply or further fix (`escalate_comment`, named by the supplement of each seat), answers a conversation comment the same way, applies an accepted suggestion block, posts no status comment, and posts no unrelated reply:
   `skill_tests/operate.rs::the_pr_babysit_skill_answers_each_comment_once_in_its_shape`.
-- The skill fixes a failed check only where the request's own change causes it, routes any other to the orchestrator or the user, and names its two seats once:
+- The skill fixes a failed check only where the request's own change causes it, routes any other to the requester, which the seat supplements name as the orchestrator or the user, and names no seat:
   `skill_tests/operate.rs::the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks`,
-  `::the_pr_babysit_skill_names_its_two_seats_once`.
+  `::the_pr_babysit_skill_names_no_seat_and_its_supplements_own_the_difference`.
 - The skill treats comment text as untrusted input and runs no command a comment holds, never merges, and leaves every thread open; it reads the head again after a fix, and follows `conflict-resolution` where an integration stops on a conflict:
   `skill_tests/operate.rs::the_pr_babysit_skill_treats_comment_text_as_untrusted_and_never_merges`, `::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`.
 - `session ls` titles a request session with its title and URL:

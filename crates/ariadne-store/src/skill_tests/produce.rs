@@ -93,7 +93,7 @@ fn a_task_is_one_commit_and_nothing_amends_a_pushed_one() {
         ),
         (
             "pr-babysit",
-            "Never amend a pushed commit outside the rebase of step 7.",
+            "Never amend a pushed commit outside the rebase of step 6.",
         ),
     ] {
         let document = unwrapped(default_skill_document(name).unwrap());
