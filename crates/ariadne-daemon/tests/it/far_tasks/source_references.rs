@@ -700,7 +700,7 @@ async fn source_trajectory_stream_and_terminal_connections_reach_the_worker_sess
         "the clicked turn open, redrawn at 60 columns",
         |screen| {
             let contents = screen.contents();
-            contents.contains("✓ message")
+            contents.contains("▾")
                 && contents
                     .lines()
                     .nth(19)

@@ -19,7 +19,8 @@ Use `research` when the user asks a question and wants no plan.
 
    Done when you can name each repository the goal touches.
 2. Ask the user every open point, one question at a time. Ask only where
-   the answer changes what gets built. Ask one question in a turn, then stop
+   the answer changes what gets built. Ask each question with the question
+   tool, not in turn text. Ask one question in a turn, then stop
    and wait for the answer. Ask the next question only after the answer. Put
    no second question in the context or in the options. Give each question
    five parts, in this order:
@@ -70,7 +71,8 @@ Use `research` when the user asks a question and wants no plan.
 
    Done when every agent has one model.
 7. Show the user the tasks and the models. Ask about the plan one question at
-   a time, with its five parts. Ask about tracer size once. Then ask about
+   a time, with its five parts. Ask each question with the question tool, not
+   in turn text. Ask about tracer size once. Then ask about
    every dependency as one list, each with its reason.
    Revise until the user writes an explicit yes.
 

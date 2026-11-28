@@ -22,8 +22,8 @@ software that exists. Use `research` when the goal asks which option to pick.
    there are none, add the path and the format to your questions.
 
    Done when you can name the format, or the question that settles it.
-3. Post every open question to the orchestrator in one `post_to_session`.
-   Give each question its options and your pick. The orchestrator asks the
+3. Send every open question to the requester in one message.
+   Give each question its options and your pick. The requester asks the
    user.
 
    Done when every question has an answer.
@@ -40,14 +40,14 @@ software that exists. Use `research` when the goal asks which option to pick.
    part.
 
    Done when every criterion names a test and every unbuilt test is marked.
-7. Post the finished spec to the orchestrator with `post_to_session`. Ask
+7. Send the finished spec to the requester. Ask
    it to agree.
 
-   Done when the orchestrator has agreed to the spec.
+   Done when the requester has agreed to the spec.
 8. Commit the spec once, under the repository's commit rules.
 
    Done when the branch holds the spec in one commit.
-9. Call `complete_step` with the column report.
+9. Send the report.
 
    Done when the report has been submitted.
 

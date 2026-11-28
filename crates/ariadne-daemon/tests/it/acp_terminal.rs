@@ -320,7 +320,7 @@ async fn the_terminal_draws_the_full_screen_console_at_the_client_size() {
         "the bottom row is the last row:\n{screen}"
     );
     assert!(
-        rows[1].contains("▸") && rows[1].contains("1 tool call") && rows[2].contains("done"),
+        rows[1].contains("▸") && rows[1].contains("1 step") && rows[2].contains("done"),
         "the turns are drawn from the top, each with its answer:\n{screen}"
     );
     assert_eq!(client.statuses, [SessionStatus::Idle]);

@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(
             table(&printer, &folded),
             "10:00:00  USER  prompt t1\n\
-             \x20 completed · 2 steps · 2 tool calls\n\
+             \x20 completed · 2 steps\n\
              10:05:00  AGENT  answer t1\n\n"
         );
         assert_eq!(
@@ -548,7 +548,7 @@ mod tests {
             "10:00:00  USER  prompt t1\n\
              \x20 10:01:00  tool_call  call c1 · completed\n\
              \x20 10:01:00  tool_call  call c2 · failed\n\
-             \x20 completed · 2 steps · 2 tool calls\n\
+             \x20 completed · 2 steps\n\
              10:05:00  AGENT  answer t1\n\n"
         );
         let kinds = Filters {
@@ -714,7 +714,7 @@ mod tests {
              tool_call · call c1 · completed\n\
              tool_call · call c2 · completed\n\
              tool_call · call c3 · completed\n\
-             turn · completed · 2 steps · 2 tool calls\n"
+             turn · completed · 2 steps\n"
         );
         server.abort();
     }
@@ -761,7 +761,7 @@ mod tests {
         assert_eq!(
             output,
             "prompt · prompt t1\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              answer · answer t1\n\
              prompt · prompt t2\n\
              tool_call · call c1 · completed\n"
@@ -884,10 +884,10 @@ mod tests {
         assert_eq!(
             out,
             "prompt · prompt t2\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              answer · answer t2\n\
              prompt · prompt t3\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              answer · answer t3\n"
         );
     }
@@ -926,12 +926,12 @@ mod tests {
         assert_eq!(
             out,
             "prompt · prompt t1\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              prompt · prompt t2\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              answer · answer t2\n\
              prompt · prompt t3\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              answer · answer t3\n"
         );
         assert_eq!(
@@ -1100,14 +1100,14 @@ mod tests {
                 out,
                 "10:00:00  USER  prompt t1\n\
                  \x20 10:02:00  question  Which base?\n\
-                 \x20 completed · 2 steps · 2 tool calls\n\
+                 \x20 completed · 2 steps\n\
                  10:05:00  AGENT  answer t1\n\
                  \n\
                  10:00:00  USER  prompt t2\n\
                  \x20 in the turn of 10:00:00: prompt t1\n\
                  \x20 10:02:00  question  Which base?\n\
                  \x20   answer: base: next\n\
-                 \x20 completed · 2 steps · 2 tool calls\n\
+                 \x20 completed · 2 steps\n\
                  10:05:00  AGENT  answer t2\n\
                  \n",
                 "with --steps: {steps}"
@@ -1161,14 +1161,14 @@ mod tests {
                 out,
                 "10:00:00  USER  prompt t1\n\
                  \x20 10:02:00  question  Which base?\n\
-                 \x20 completed · 2 steps · 2 tool calls\n\
+                 \x20 completed · 2 steps\n\
                  10:05:00  AGENT  answer t1\n\
                  \n\
                  10:00:00  USER  prompt t2\n\
                  \x20 in the turn of 10:00:00: prompt t1\n\
                  \x20 10:02:00  question  Which base?\n\
                  \x20   answer: base: next\n\
-                 \x20 completed · 2 steps · 2 tool calls\n\
+                 \x20 completed · 2 steps\n\
                  10:05:00  AGENT  answer t2\n\
                  \n",
                 "with --steps: {steps}"
