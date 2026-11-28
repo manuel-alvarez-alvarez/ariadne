@@ -147,8 +147,17 @@ async fn ingest_event_inner(
                 // daemon never finished, and only the newest status event of
                 // the session says what the row is: a stop whose update was
                 // lost moves the row to idle, while an older replayed setup
-                // moves nothing. The clock, the usage and the flags are
-                // never replayed (021).
+                // moves nothing. The clock and the flags are never
+                // replayed (021).
+                // Its usage is cumulative, so it is restored only where it
+                // raises what the session holds from the same source.
+                if let Some((source, usage)) = usage_for_event(&req.payload)
+                    && let Some(moved) = store
+                        .restore_session_usage(&session.id, &source, usage)
+                        .await?
+                {
+                    crate::metrics::record_tokens(store, &session.id, moved).await;
+                }
                 if !superseded && let Some(status) = status_for_event(&req.kind) {
                     let later = store
                         .session_event_heads(&session.id, Some(&event.id), None, STATUS_KINDS)

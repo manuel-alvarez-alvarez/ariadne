@@ -329,3 +329,68 @@ async fn a_replayed_completed_event_keeps_the_activity_clock() {
         before
     );
 }
+
+#[tokio::test]
+async fn a_replayed_stop_restores_its_usage_without_lowering_a_newer_total() {
+    use ariadne_api::events::IngestEventRequest;
+    use ariadne_daemon::http::ingest_relay_event;
+    use ariadne_store::NewAgentEvent;
+    let home = tempfile::tempdir().unwrap();
+    let store = Store::open(home.path().join("store.db")).await.unwrap();
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    let payload = |input: u64| {
+        json!({"session_id": "conversation", "ariadne_usage": {
+            "source": "conversation", "input_tokens": input,
+            "cached_input_tokens": 4, "output_tokens": 3}})
+    };
+    let stop = |input: u64| IngestEventRequest {
+        session_id: session.id.clone(),
+        launch: Some("launch".into()),
+        kind: "stop".into(),
+        payload: payload(input),
+    };
+    // Stored, and the daemon went down before it wrote the counters.
+    store
+        .create_event_once(
+            NewAgentEvent {
+                session_id: Some(session.id.clone()),
+                task_id: None,
+                kind: "stop".into(),
+                payload: payload(12),
+            },
+            &format!("{}:launch:output:9:0", session.id),
+        )
+        .await
+        .unwrap();
+    ingest_relay_event(&store, &stop(12), "output:9", 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.session_usage(&session.id).await.unwrap().input_tokens,
+        12
+    );
+
+    // A later report raised the total; the replay must not lower it.
+    ingest_relay_event(&store, &stop(20), "output:10", 0)
+        .await
+        .unwrap();
+    ingest_relay_event(&store, &stop(12), "output:9", 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.session_usage(&session.id).await.unwrap().input_tokens,
+        20
+    );
+}

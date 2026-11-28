@@ -58,6 +58,30 @@ impl Store {
         source: &str,
         usage: TokenUsage,
     ) -> Result<Option<TokenUsage>> {
+        self.write_session_usage(session_id, source, usage, false)
+            .await
+    }
+
+    /// The same write for a report seen a second time, which may be older
+    /// than one already stored: totals are cumulative, so it is written only
+    /// where no counter of the stored row is higher.
+    pub async fn restore_session_usage(
+        &self,
+        session_id: &str,
+        source: &str,
+        usage: TokenUsage,
+    ) -> Result<Option<TokenUsage>> {
+        self.write_session_usage(session_id, source, usage, true)
+            .await
+    }
+
+    async fn write_session_usage(
+        &self,
+        session_id: &str,
+        source: &str,
+        usage: TokenUsage,
+        raise_only: bool,
+    ) -> Result<Option<TokenUsage>> {
         let mut tx = self.w().begin().await?;
         let held: Option<(i64, i64, i64)> = sqlx::query_as(
             "SELECT input_tokens, cached_input_tokens, output_tokens
@@ -76,9 +100,12 @@ impl Store {
                     cached_input_tokens = excluded.cached_input_tokens,
                     output_tokens       = excluded.output_tokens,
                     updated_at          = excluded.updated_at
-              WHERE input_tokens        <> excluded.input_tokens
+              WHERE (input_tokens        <> excluded.input_tokens
                  OR cached_input_tokens <> excluded.cached_input_tokens
-                 OR output_tokens       <> excluded.output_tokens",
+                 OR output_tokens       <> excluded.output_tokens)
+                AND (? = 0 OR (input_tokens        <= excluded.input_tokens
+                           AND cached_input_tokens <= excluded.cached_input_tokens
+                           AND output_tokens       <= excluded.output_tokens))",
         )
         .bind(session_id)
         .bind(source)
@@ -86,6 +113,7 @@ impl Store {
         .bind(stored(usage.cached_input_tokens))
         .bind(stored(usage.output_tokens))
         .bind(now())
+        .bind(i64::from(raise_only))
         .execute(&mut *tx)
         .await?
         .rows_affected()
