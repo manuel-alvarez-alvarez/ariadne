@@ -405,7 +405,10 @@ Out:
     reason `cancelled` and `interrupted` for every other end, as rule 12
     does. The route loads at most 500 of those payloads, the opener and the
     newest. `detail_rev` counts every update, and one more where the end of
-    the turn closed the call: the `detail_rev` of the call's step. The ACP runtime stores
+    the turn closed the call: the `detail_rev` of the call's step. A call
+    that is `pending` with its turn running, and with no unanswered
+    permission request for it, reads `running` in the detail as in its row.
+    The ACP runtime stores
     each update with the whole call so far (021), so the newest holds it.
 50. `detail` is tagged by `type`, by the call's kind. A later field of the
     call replaces an earlier one, as an ACP update does:
@@ -768,6 +771,15 @@ Out:
     `fold.rs::command_previews_accept_empty_fences_and_crlf`.
 86. The API documents contain answer IDs and raw tool titles (rules 15, 51):
     `docs.rs::the_committed_api_pair_holds_every_trajectory_type`.
+
+87. A lifecycle note that came while no turn ran reads with the next
+    prompt's turn on a steps page and on a cold read, and a warning before
+    the first prompt opens a turn with a steps page (rule 22):
+    `read.rs::a_lifecycle_note_before_a_prompt_reads_with_that_turn` and
+    `read.rs::a_warning_before_the_first_prompt_has_a_steps_page`.
+88. The detail of a pending call reads `running` or `pending` as its row
+    does (rules 21, 49):
+    `detail.rs::a_pending_call_executes_unless_it_waits_for_a_permission`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and

@@ -36,9 +36,17 @@ const TURN_ENDS: &[&str] = &[
     "session_end",
 ];
 
+/// The kinds that tell whether a call waits for a permission.
+const PERMISSION_KINDS: &[&str] = &["permission_request", "permission.replied"];
+
 /// The kinds whose heads [`call_events`] walks.
 pub(crate) fn detail_kinds() -> Vec<&'static str> {
-    CALL_KINDS.iter().chain(TURN_ENDS).copied().collect()
+    CALL_KINDS
+        .iter()
+        .chain(TURN_ENDS)
+        .chain(PERMISSION_KINDS)
+        .copied()
+        .collect()
 }
 
 /// The most output of a command one detail carries: the end of it, where
@@ -57,6 +65,10 @@ pub(crate) struct CallEvents {
     pub(crate) updates: u64,
     /// The state the end of its turn left an open call in.
     pub(crate) ended: Option<ToolCallStatus>,
+    /// Whether the call is open in a turn that still runs and waits for no
+    /// permission: a `pending` call then reads `running`, as the row does
+    /// (rule 21).
+    pub(crate) executing: bool,
 }
 
 /// The events of the call the step `item_id` opened, from the heads of the
@@ -75,9 +87,23 @@ pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> 
     let mut status = first.status.as_deref().and_then(status_of);
     let mut ids = vec![opener.id.clone()];
     let mut ended = None;
+    let mut asked: Vec<Option<String>> = Vec::new();
+    let mut open = true;
     for head in rest {
         if status.is_some_and(is_terminal) {
+            open = false;
             break;
+        }
+        match head.kind.as_str() {
+            "permission_request" => {
+                asked.push(facts(head).call);
+                continue;
+            }
+            "permission.replied" => {
+                asked.pop();
+                continue;
+            }
+            _ => {}
         }
         if TURN_ENDS.contains(&head.kind.as_str()) {
             let head_facts = facts(head);
@@ -87,6 +113,7 @@ pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> 
                     _ => ToolCallStatus::Interrupted,
                 },
             );
+            open = false;
             break;
         }
         let head_facts = facts(head);
@@ -94,6 +121,7 @@ pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> 
             continue;
         }
         if head.kind == "pre_tool_use" {
+            open = false;
             break;
         }
         if let Some(next) = head_facts.status.as_deref().and_then(status_of) {
@@ -110,10 +138,15 @@ pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> 
     } else {
         ids
     };
+    let executing = open
+        && !status.is_some_and(is_terminal)
+        && first.call.is_some()
+        && !asked.contains(&first.call);
     Some(CallEvents {
         load,
         updates,
         ended,
+        executing,
     })
 }
 
@@ -180,6 +213,9 @@ pub(crate) fn detail_of(
     // The end of the turn closes an open call, and that change counts in
     // its `detail_rev` as the fold counts it (rule 12).
     let mut detail_rev = call.updates;
+    if step.status == ToolCallStatus::Pending && call.executing {
+        step.status = ToolCallStatus::Running;
+    }
     if !is_terminal(step.status)
         && let Some(ended) = call.ended
     {
@@ -682,6 +718,7 @@ mod tests {
             load: vec!["0001".into()],
             updates: 0,
             ended: None,
+            executing: false,
         };
         detail_of("session", &events, &call, false).unwrap().detail
     }
@@ -849,6 +886,7 @@ mod tests {
                 load: vec!["0001".into(), "0003".into()],
                 updates: 1,
                 ended: Some(ToolCallStatus::Interrupted),
+                executing: false,
             }
         );
         assert_eq!(
@@ -856,6 +894,27 @@ mod tests {
             None,
             "a prompt is no call"
         );
+    }
+
+    /// A call opened `pending` runs while its turn runs, unless a permission
+    /// it asked for is unanswered: the detail says what the row says (rules
+    /// 21 and 49).
+    #[test]
+    fn a_pending_call_executes_unless_it_waits_for_a_permission() {
+        let opener = head(
+            "0001",
+            "pre_tool_use",
+            json!({"call": "c-1", "status": "pending"}),
+        );
+        let ask = head("0002", "permission_request", json!({"call": "c-1"}));
+        let reply = head("0003", "permission.replied", json!({}));
+        let stop = head("0004", "stop", json!({}));
+        let run = |heads: Vec<EventHead>| call_events(&heads, "0001", 500).unwrap().executing;
+
+        assert!(run(vec![opener.clone()]));
+        assert!(!run(vec![opener.clone(), ask.clone()]));
+        assert!(run(vec![opener.clone(), ask.clone(), reply]));
+        assert!(!run(vec![opener, stop]));
     }
 
     /// A call of more updates than the budget loads its opener and its

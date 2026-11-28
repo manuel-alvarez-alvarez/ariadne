@@ -169,8 +169,18 @@ fn scratch(session_id: &str) -> Fold {
     )
 }
 
+/// The kinds a turn takes no start from: the lifecycle notes wait for the
+/// next prompt (rule 22), and the others open no turn.
+const NO_START: &[&str] = &[
+    "session_start",
+    "session_end",
+    "stop",
+    "available_commands_update",
+    "display_state_update",
+];
+
 /// The starts of a session's turns up to `upper`: each prompt, and the
-/// session's first event where it comes before the first prompt.
+/// first event that opens a turn where it comes before the first prompt.
 async fn turn_starts(
     store: &Store,
     session_id: &str,
@@ -179,15 +189,56 @@ async fn turn_starts(
     let mut starts = store
         .session_event_heads(session_id, None, Some(upper), &[PROMPT])
         .await?;
-    if let Some(oldest) = store.oldest_session_event_id(session_id).await?
-        && starts.first().is_none_or(|first| first.id > oldest)
-    {
-        let first = store
-            .session_event_heads(session_id, Some(&oldest), Some(&oldest), &[])
-            .await?;
-        starts.splice(0..0, first);
+    let before = starts.first().map(|first| first.id.clone());
+    let early = store
+        .session_event_heads(session_id, None, Some(upper), &[])
+        .await?;
+    let opener = early
+        .into_iter()
+        .take_while(|head| before.as_ref().is_none_or(|first| head.id < *first))
+        .find(|head| !NO_START.contains(&head.kind.as_str()));
+    if let Some(opener) = opener {
+        starts.insert(0, opener);
     }
     Ok(starts)
+}
+
+/// The lifecycle events each prompt takes as notes, by prompt id: those that
+/// came while no turn ran, as the fold queues them (rule 22).
+async fn queued_lifecycle(
+    store: &Store,
+    session_id: &str,
+    upper: &str,
+) -> Result<BTreeMap<String, Vec<EventHead>>, StoreError> {
+    let heads = store
+        .session_event_heads(
+            session_id,
+            None,
+            Some(upper),
+            &[
+                PROMPT,
+                "stop",
+                "session.error",
+                "session_start",
+                "session_end",
+            ],
+        )
+        .await?;
+    let mut queued = BTreeMap::new();
+    let mut waiting: Vec<EventHead> = Vec::new();
+    let mut running = false;
+    for head in heads {
+        match head.kind.as_str() {
+            PROMPT => {
+                queued.insert(head.id.clone(), std::mem::take(&mut waiting));
+                running = true;
+            }
+            "stop" | "session.error" => running = false,
+            _ if running => running = false,
+            _ => waiting.push(head),
+        }
+    }
+    Ok(queued)
 }
 
 /// The ids a read loads, under one budget.
@@ -380,8 +431,10 @@ async fn read_turns_within(
     let shown = &candidates[candidates.len() - candidates.len().min(turns.max(1))..];
     let mut held: BTreeSet<usize> = shown.iter().copied().collect();
     held.extend(attention_turns(&starts, &pairs, shown.first().copied()));
+    let queued = queued_lifecycle(store, session_id, upper).await?;
     let mut heads = Vec::new();
     for (first, last) in runs(&held) {
+        heads.extend(queued.get(&starts[first].id).cloned().unwrap_or_default());
         let upto = match starts.get(last + 1) {
             Some(next) => {
                 store
@@ -565,9 +618,15 @@ pub(crate) async fn read_steps(
     let Some(upper) = upper else {
         return Ok(None);
     };
-    let heads = store
-        .session_event_heads(session_id, Some(turn_id), Some(&upper), &[])
-        .await?;
+    let mut heads = queued_lifecycle(store, session_id, &newest)
+        .await?
+        .remove(turn_id)
+        .unwrap_or_default();
+    heads.extend(
+        store
+            .session_event_heads(session_id, Some(turn_id), Some(&upper), &[])
+            .await?,
+    );
     let pairs = store
         .session_event_heads(session_id, None, Some(&upper), PAIR_KINDS)
         .await?;
@@ -2018,6 +2077,62 @@ mod tests {
             call.status,
             ariadne_api::trajectory::ToolCallStatus::Interrupted
         );
+    }
+
+    /// A lifecycle note that came while no turn ran belongs to the next
+    /// prompt's turn on every path: a steps page and a cold read hold it as
+    /// the warm fold does (rule 22).
+    #[tokio::test]
+    async fn a_lifecycle_note_before_a_prompt_reads_with_that_turn() {
+        let (store, session, _dir) = session().await;
+        commit(&store, &session, "session_start", json!({})).await;
+        let turn = prompt(&store, &session).await;
+
+        let page = read_steps(&store, &session, &turn, MAIN_LANE, None, 10, 500)
+            .await
+            .unwrap()
+            .unwrap();
+        let held = folded(&session, page.read).held_steps(&turn, MAIN_LANE);
+        assert_eq!(held.len(), 1, "{held:?}");
+
+        let read = read_turns(&store, &session, None, 5, None, 500)
+            .await
+            .unwrap();
+        let cold = folded(&session, read);
+        assert_eq!(cold.held_steps(&turn, MAIN_LANE).len(), 1);
+    }
+
+    /// A warning before the first prompt opens a turn of its own, whose steps
+    /// page exists, whatever lifecycle note came before it.
+    #[tokio::test]
+    async fn a_warning_before_the_first_prompt_has_a_steps_page() {
+        let (store, session, _dir) = session().await;
+        commit(&store, &session, "session_start", json!({})).await;
+        let warning = commit(
+            &store,
+            &session,
+            "notice",
+            json!({"severity": "warning", "title": "Slow"}),
+        )
+        .await;
+        let turn = prompt(&store, &session).await;
+
+        let page = read_steps(&store, &session, &warning, MAIN_LANE, None, 10, 500)
+            .await
+            .unwrap()
+            .expect("the warning's turn has a page");
+        assert_eq!(
+            folded(&session, page.read)
+                .held_steps(&warning, MAIN_LANE)
+                .len(),
+            1
+        );
+        let page = read_steps(&store, &session, &turn, MAIN_LANE, None, 10, 500)
+            .await
+            .unwrap()
+            .unwrap();
+        let held = folded(&session, page.read).held_steps(&turn, MAIN_LANE);
+        assert_eq!(held.len(), 1, "the prompt's turn holds the start: {held:?}");
     }
 
     /// The newest turn's step window comes before the subagents of the
