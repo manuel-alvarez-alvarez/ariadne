@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, screen, within } from "@testing-library/react"
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it } from "vitest"
 
@@ -762,4 +762,28 @@ it("names a waiting task's icon by its state word and keeps the dependencies in 
   expect(
     (await screen.findAllByText("Pending — Waits for 1 task to merge")).length,
   ).toBeGreaterThan(0)
+})
+
+it("withholds far copies and the task count until daemon identities arrive", async () => {
+  const far = aTask({
+    id: "far",
+    goal_id: null,
+    title: "Pending far work",
+    execution_context: {
+      source_goal: null,
+      source_daemon_id: "source",
+      execution_owner: "worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  const seen = stubHosts({ local: { "/v1/tasks": [far] }, box: { "/v1/tasks": [far] } })
+  renderScreen(<GoalBoard hosts={["local", "box"]} goals={[]} />)
+  await waitFor(() =>
+    expect(seen.filter((request) => request.url.pathname === "/v1/tasks")).toHaveLength(2),
+  )
+  expect(screen.queryByText("Pending far work")).toBeNull()
+  expect(screen.getByLabelText("Loading task count")).toBeTruthy()
 })

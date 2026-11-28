@@ -53,7 +53,7 @@ import {
   serializeStatusFilter,
   toggleStatusFilter,
 } from "./filters"
-import { BoardSkeleton, GoalBoard } from "./goal-board"
+import { GoalBoard } from "./goal-board"
 import { goalsQueryOptions } from "./queries"
 import { GOAL_STATUS_META, GOAL_STATUSES, isTerminalGoalStatus } from "./status"
 import { useStatusFilter } from "./use-status-filter"
@@ -104,6 +104,7 @@ export function GoalsListPage() {
   const selection = useHostSelection()
   const hosts = selection.read
   const goals = useHostLists(hosts, (host) => goalsQueryOptions(host, { statuses }))
+  const pending = selection.isPending || goals.pending.length > 0
   const merged = useMemo(
     () => [...goals.rows].sort((a, b) => b.id.localeCompare(a.id) || a.host.localeCompare(b.host)),
     [goals.rows],
@@ -244,9 +245,7 @@ export function GoalsListPage() {
         <HostCoverage absent={selection.absent} loading={goals.pending} hostCount={hosts.length} />
       ) : null}
 
-      {goals.isPending ? <BoardSkeleton /> : null}
-
-      {merged.length && shown.length === 0 ? (
+      {!pending && merged.length && shown.length === 0 ? (
         <EmptyState
           icon={<TargetIcon className="size-5" />}
           title="No goals match"
@@ -254,33 +253,32 @@ export function GoalsListPage() {
         />
       ) : null}
 
-      {shown.length || !goals.isPending ? (
-        <GoalBoard
-          hosts={hosts}
-          goals={shown}
-          activeOnly={active}
-          query={query}
-          showHost={showHost}
-          // With no goal and no task, the board is the empty state alone. The
-          // screen is the one the user is here to fill, so the empty state
-          // carries the way to fill it rather than only naming the gap.
-          empty={
-            goals.pending.length === 0 && !failedEverywhere && merged.length === 0 ? (
-              <EmptyState
-                icon={<TargetIcon className="size-5" />}
-                title={empty.title}
-                description={empty.description}
-                action={
-                  <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
-                    <PlusIcon />
-                    New goal
-                  </Button>
-                }
-              />
-            ) : undefined
-          }
-        />
-      ) : null}
+      <GoalBoard
+        hosts={hosts}
+        pending={pending}
+        goals={shown}
+        activeOnly={active}
+        query={query}
+        showHost={showHost}
+        // With no goal and no task, the board is the empty state alone. The
+        // screen is the one the user is here to fill, so the empty state
+        // carries the way to fill it rather than only naming the gap.
+        empty={
+          !pending && !failedEverywhere && merged.length === 0 ? (
+            <EmptyState
+              icon={<TargetIcon className="size-5" />}
+              title={empty.title}
+              description={empty.description}
+              action={
+                <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
+                  <PlusIcon />
+                  New goal
+                </Button>
+              }
+            />
+          ) : undefined
+        }
+      />
 
       <CreateStandaloneTaskDialog
         open={createTaskOpen}

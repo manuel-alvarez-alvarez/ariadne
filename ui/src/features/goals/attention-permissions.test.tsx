@@ -12,7 +12,7 @@ import { afterEach, beforeEach, expect, it } from "vitest"
 import type { AttentionItemDto } from "@/api"
 import { aGoal, aSession, aSessionPage, aTask } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
-import { forgetHosts, stubHosts } from "@/test/hosts"
+import { forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { aPermissionStep, aSnapshot, aTurn } from "@/test/trajectory"
 import { AttentionPopover } from "./attention-strip"
 import { GoalBoard } from "./goal-board"
@@ -47,16 +47,19 @@ function turnWith(...steps: ReturnType<typeof aPermissionStep>[]) {
 }
 
 function stub(trajectory: unknown, input?: (url: URL, request: Request) => Response | undefined) {
-  return stubHosts({
-    local: {
-      "/v1/tasks": [task],
-      "/v1/goals": [goal],
-      "/v1/sessions": aSessionPage([session]),
-      "/v1/attention": { items: [ITEM], complete: true },
-      "/v1/sessions/S1/trajectory": trajectory,
-      "/v1/sessions/S1/console/input": input ?? (() => new Response(null, { status: 204 })),
+  return stubHosts(
+    {
+      local: {
+        "/v1/tasks": [task],
+        "/v1/goals": [goal],
+        "/v1/sessions": aSessionPage([session]),
+        "/v1/attention": { items: [ITEM], complete: true },
+        "/v1/sessions/S1/trajectory": trajectory,
+        "/v1/sessions/S1/console/input": input ?? (() => new Response(null, { status: 204 })),
+      },
     },
-  })
+    [LOCAL],
+  )
 }
 
 function board() {
@@ -197,27 +200,30 @@ it("disables the buttons of every view of the permission while one view posts", 
 
 it("keeps an answered permission disabled when the attention list refresh fails", async () => {
   let answered = false
-  stubHosts({
-    local: {
-      "/v1/tasks": [task],
-      "/v1/goals": [goal],
-      "/v1/sessions": aSessionPage([session]),
-      "/v1/attention": () =>
-        answered
-          ? new Response(JSON.stringify({ error: { code: "down", message: "Unavailable" } }), {
-              status: 503,
-              headers: { "content-type": "application/json" },
-            })
-          : new Response(JSON.stringify({ items: [ITEM], complete: true }), {
-              headers: { "content-type": "application/json" },
-            }),
-      "/v1/sessions/S1/trajectory": aSnapshot([turnWith(aPermissionStep("T"))]),
-      "/v1/sessions/S1/console/input": () => {
-        answered = true
-        return new Response(null, { status: 204 })
+  stubHosts(
+    {
+      local: {
+        "/v1/tasks": [task],
+        "/v1/goals": [goal],
+        "/v1/sessions": aSessionPage([session]),
+        "/v1/attention": () =>
+          answered
+            ? new Response(JSON.stringify({ error: { code: "down", message: "Unavailable" } }), {
+                status: 503,
+                headers: { "content-type": "application/json" },
+              })
+            : new Response(JSON.stringify({ items: [ITEM], complete: true }), {
+                headers: { "content-type": "application/json" },
+              }),
+        "/v1/sessions/S1/trajectory": aSnapshot([turnWith(aPermissionStep("T"))]),
+        "/v1/sessions/S1/console/input": () => {
+          answered = true
+          return new Response(null, { status: 204 })
+        },
       },
     },
-  })
+    [LOCAL],
+  )
   const { queryClient } = board()
 
   const block = await card()
@@ -237,18 +243,21 @@ it("shows the permission now pending after the attention list changes", async ()
     tool: { title: "Bash", subject: "second", kind: "execute" },
   })
   let current = first
-  stubHosts({
-    local: {
-      "/v1/tasks": [task],
-      "/v1/goals": [goal],
-      "/v1/sessions": aSessionPage([session]),
-      "/v1/attention": { items: [ITEM], complete: true },
-      "/v1/sessions/S1/trajectory": () =>
-        new Response(JSON.stringify(aSnapshot([turnWith(current)])), {
-          headers: { "content-type": "application/json" },
-        }),
+  stubHosts(
+    {
+      local: {
+        "/v1/tasks": [task],
+        "/v1/goals": [goal],
+        "/v1/sessions": aSessionPage([session]),
+        "/v1/attention": { items: [ITEM], complete: true },
+        "/v1/sessions/S1/trajectory": () =>
+          new Response(JSON.stringify(aSnapshot([turnWith(current)])), {
+            headers: { "content-type": "application/json" },
+          }),
+      },
     },
-  })
+    [LOCAL],
+  )
   const { queryClient } = board()
 
   await screen.findByText("first")

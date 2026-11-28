@@ -2132,7 +2132,20 @@ view.
      It never presents a local default as the remote answer.
      This includes host controls, sync blocks, table cells, forms, labels and colours.
 
+114. Multi-host lists follow rule 113 until the hosts list and every read host answer or fail.
+     They retain arrived rows and append skeleton rows while other hosts load.
+     Empty states and counts wait for all answers. The board keeps its task count unresolved.
+     It withholds far task copies until daemon identities resolve.
+     Attention counts wait for all hosts. Session titles show skeletons while goals and tasks load.
+     Agents retain skeleton tabs for pending hosts and hide unresolved model counts in Refresh.
+     Issues wait for every host's repositories. The host coverage line from rule 80 stays.
+
 ## Acceptance criteria
+
+- Multi-host loading follows rules 113 and 114
+  (`ui/src/hooks/multi-host-loading.test.tsx`,
+  `ui/src/features/goals/hosts.test.tsx::keeps skeleton rows below answered goals until every host answers`,
+  `ui/src/features/goals/goal-board.test.tsx::withholds far copies and the task count until daemon identities arrive`).
 
 - Remote loading follows rule 113
   (`ui/src/hooks/hosts-loading.test.tsx::keeps All unresolved until the hosts answer`,

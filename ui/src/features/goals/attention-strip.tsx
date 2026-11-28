@@ -2,7 +2,6 @@
 
 import { ListIcon, RotateCcwIcon } from "lucide-react"
 import { useRef, useState } from "react"
-
 import { HostLabel } from "@/components/host-label"
 import { IconButton } from "@/components/icon-button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -13,6 +12,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { Skeleton } from "@/components/ui/skeleton"
 import { SESSION_ATTENTION_META } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META } from "@/features/tasks"
 import { describeError, shortId } from "@/lib/format"
@@ -40,18 +40,33 @@ export function AttentionPopover() {
               type="button"
               ref={triggerRef}
               className="h-8 rounded-md border px-2 text-sm text-status-warn-fg"
-              aria-label={`Needs attention, ${attention.items.length} items`}
+              aria-label={
+                attention.isPending
+                  ? "Needs attention, loading"
+                  : `Needs attention, ${attention.items.length} items`
+              }
             />
           }
         >
           Needs attention{" "}
           <span className="ml-1">
-            {attention.items.length || (attention.isPending ? "…" : "!")}
+            {attention.isPending ? (
+              <Skeleton className="inline-block h-4 w-6" />
+            ) : (
+              attention.items.length || "!"
+            )}
           </span>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-[min(24rem,calc(100vw-1rem))] p-0">
           <header className="flex items-center justify-between border-b px-3 py-2 font-semibold">
-            <span>Needs attention · {attention.items.length}</span>
+            <span>
+              Needs attention ·{" "}
+              {attention.isPending ? (
+                <Skeleton className="inline-block h-4 w-6" />
+              ) : (
+                attention.items.length
+              )}
+            </span>
             <IconButton
               variant="ghost"
               size="icon-xs"
@@ -63,17 +78,18 @@ export function AttentionPopover() {
               }}
             />
           </header>
-          {attention.isPending && attention.items.length === 0 ? (
-            <p role="status" className="px-3 py-2">
-              Loading attention…
-            </p>
-          ) : null}
           {unavailable ? <HostErrors attention={attention} className="px-3 py-2" /> : null}
           <ul className="max-h-[min(70vh,32rem)] divide-y overflow-y-auto">
             {attention.items.map((item) => (
               <AttentionBlock key={rowKey(item)} item={item} onSelect={() => setOpen(false)} />
             ))}
           </ul>
+          {attention.isPending ? (
+            <div role="status" aria-label="Loading attention" className="px-3 py-2">
+              <Skeleton className="h-10 w-full" />
+            </div>
+          ) : null}
+
           {attention.partial ? (
             <HostErrors
               attention={attention}
@@ -158,7 +174,11 @@ function AttentionDrawer({
       <SheetHeader>
         <SheetTitle>Needs attention</SheetTitle>
         <SheetDescription>
-          Showing {shown.length} of {attention.items.length}
+          {attention.isPending ? (
+            <Skeleton className="h-4 w-24" />
+          ) : (
+            `Showing ${shown.length} of ${attention.items.length}`
+          )}
         </SheetDescription>
       </SheetHeader>
       <div className="flex flex-wrap gap-2">
@@ -194,14 +214,11 @@ function AttentionDrawer({
           </select>
         </label>
       </div>
-      {attention.isPending && attention.items.length === 0 ? (
-        <p role="status">Loading attention…</p>
-      ) : null}
       {unavailable ? <HostErrors attention={attention} /> : null}
       {!attention.isPending && !unavailable && attention.items.length === 0 ? (
         <p>Nothing needs attention.</p>
       ) : null}
-      {attention.items.length > 0 && shown.length === 0 ? (
+      {!attention.isPending && attention.items.length > 0 && shown.length === 0 ? (
         <p>No attention items match these filters.</p>
       ) : null}
       <ul className="divide-y rounded-md border">
@@ -209,6 +226,11 @@ function AttentionDrawer({
           <AttentionBlock key={rowKey(item)} item={item} onSelect={onSelect} expanded />
         ))}
       </ul>
+      {attention.isPending ? (
+        <div role="status" aria-label="Loading attention">
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : null}
       {attention.partial ? (
         <HostErrors attention={attention} className="text-xs text-muted-foreground" partial />
       ) : null}
