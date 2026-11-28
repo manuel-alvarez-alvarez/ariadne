@@ -413,8 +413,13 @@ export function PinPicker({
                   heading="Model"
                   columnRef={modelsRef}
                   className="col-span-2"
-                  empty={results.length === 0 ? "Nothing in the catalog matches." : undefined}
+                  empty={
+                    models && results.length === 0 ? "Nothing in the catalog matches." : undefined
+                  }
                 >
+                  {!models ? (
+                    <Skeleton aria-label="Loading catalog" className="m-2 h-24 w-32" />
+                  ) : null}
                   <OptionList
                     label="Models"
                     rows={results.map((entry) => modelRow(entry, true))}

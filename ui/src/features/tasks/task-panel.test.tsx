@@ -198,6 +198,22 @@ it("shows a skeleton while dependency status loads without claiming a blocker", 
   expect(screen.queryByText(/Dependency status is not loaded/)).toBeNull()
 })
 
+it("keeps the recorded reason of a failed task while its dependencies load", async () => {
+  const task = aTask({
+    status: "failed",
+    step: null,
+    reason: "Workflow failed",
+    depends_on: ["dep-unloaded"],
+  })
+  daemonFetch.mockImplementation(() => new Promise(() => {}))
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+  const summary = await screen.findByRole("region", { name: "Execution summary" })
+  expect(summary.textContent).toContain("Workflow failed")
+  expect(within(summary).getByLabelText("Loading dependencies")).toBeTruthy()
+})
+
 it("shows an unknown cause when dependency status fails to load", async () => {
   const task = aTask({ status: "pending", step: null, depends_on: ["dep-unloaded"] })
   daemonFetch.mockImplementation(async (input) => {

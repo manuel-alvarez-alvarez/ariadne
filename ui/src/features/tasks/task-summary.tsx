@@ -93,8 +93,17 @@ export function TaskSummary({
       "Pending. Its dependencies are finished or it has none, and no other cause is recorded."
   }
 
-  if (results.some((result) => result.isPending))
+  const loading = results.some((result) => result.isPending)
+  // A recorded status and reason stand on their own; only what the
+  // dependencies decide waits for them.
+  const recorded =
+    task.status === "failed" ||
+    task.status === "cancelled" ||
+    task.status === "finished" ||
+    task.status === "in_progress"
+  if (loading && !recorded)
     return <Skeleton aria-label="Loading dependencies" className="h-20 w-full" />
+  const pendingList = loading && task.status !== "finished"
 
   const warn = stalled || asking.length > 0
   return (
@@ -112,7 +121,7 @@ export function TaskSummary({
         </p>
         {detail ? <p className="pl-4 text-xs text-muted-foreground">{detail}</p> : null}
       </div>
-      {listed || stalled || asking.length > 0 ? (
+      {listed || pendingList || stalled || asking.length > 0 ? (
         <ul className="divide-y border-t text-xs">
           {stalled ? (
             <Row tone={STALLED_META.text}>
@@ -125,6 +134,11 @@ export function TaskSummary({
           {listed?.items.map((dependency) => (
             <DependencyRow key={dependency.id} label={listed.label} {...dependency} />
           ))}
+          {pendingList ? (
+            <Row>
+              <Skeleton aria-label="Loading dependencies" className="h-4 w-40" />
+            </Row>
+          ) : null}
         </ul>
       ) : null}
     </section>
