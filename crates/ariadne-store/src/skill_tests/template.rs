@@ -439,6 +439,7 @@ fn ariadne_words_in(document: &str) -> Vec<String> {
     let lowered = unwrapped(document).to_lowercase();
     let words: Vec<&str> = lowered
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .flat_map(|token| token.split("__"))
         .filter(|word| !word.is_empty())
         .collect();
     let mut found: Vec<String> = Vec::new();
@@ -456,7 +457,7 @@ fn ariadne_words_in(document: &str) -> Vec<String> {
         }
     }
     for (phrase, _) in WORD_LIST {
-        let phrase = phrase.to_lowercase();
+        let phrase = phrase.to_lowercase().replace('`', "");
         if !phrase.chars().all(|c| c.is_ascii_alphanumeric()) && lowered.contains(&phrase) {
             found.push(phrase);
         }
@@ -492,7 +493,10 @@ fn the_two_review_skills_name_no_ariadne_word() {
         ("Fail the step on it.", "fail the step"),
         ("Read the news.", "news"),
         ("Read your briefing.", "briefing"),
-        ("Open the `Repo:` path.", "`repo:`"),
+        ("Open the `Repo:` path.", "repo:"),
+        ("Use the Repo: path.", "repo:"),
+        ("Call mcp__ariadne__get_diff.", "get_diff"),
+        ("Call mcp__ariadne__get_diff.", "ariadne"),
         ("Both seats read it.", "seat"),
         ("The keeper pushes.", "keeper"),
     ] {
