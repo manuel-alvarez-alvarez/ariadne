@@ -471,6 +471,7 @@ it("replaces the state on a reconnect and shows no item two times", () => {
 
 it("shows the session's status, the running turn and the token totals in the status row", () => {
   const snapshot = aSnapshot([aTurn({ state: "running", ended_at: null })])
+  snapshot.session.status = "running"
   snapshot.session.usage = { input_tokens: 1200, output_tokens: 340, cached_input_tokens: 0 }
   renderConsole(snapshot, "running")
 
@@ -478,6 +479,37 @@ it("shows the session's status, the running turn and the token totals in the sta
   within(row).getByText("running")
   within(row).getByText("thinking")
   within(row).getByText(/↑1\.2k ↓340/)
+})
+
+it("takes the state word and the busy state from the trajectory once its snapshot came", () => {
+  // The session row says running; the trajectory says idle and names no turn.
+  const snapshot = aSnapshot([aTurn()])
+  snapshot.session.status = "idle"
+  renderConsole(snapshot, "running")
+
+  const row = screen.getByRole("region", { name: "Session status" })
+  expect(row.textContent).toBe("idle")
+  expect(within(row).queryByText("thinking")).toBeNull()
+  expect(screen.queryByRole("button", { name: "Stop the turn" })).toBeNull()
+})
+
+it("shows a turn activity and Stop while running_turn_id names a turn, whatever the session row says", () => {
+  const snapshot = aSnapshot([aTurn({ state: "running", ended_at: null })])
+  snapshot.session.status = "running"
+  renderConsole(snapshot, "idle")
+
+  within(screen.getByRole("region", { name: "Session status" })).getByText("thinking")
+  screen.getByRole("button", { name: "Stop the turn" })
+})
+
+it("shows no waiting-for-you activity for an open question while no turn runs", () => {
+  const turn = aTurn()
+  const snapshot = aSnapshot([{ ...turn, attention: [aQuestionStep(turn.id)] }])
+  renderConsole(snapshot, "running")
+
+  const row = screen.getByRole("region", { name: "Session status" })
+  expect(within(row).queryByText("waiting for you")).toBeNull()
+  expect(screen.queryByRole("button", { name: "Stop the turn" })).toBeNull()
 })
 
 it("moves the keyboard to the pane's Close button on ⌘Escape, and closes nothing", async () => {

@@ -244,12 +244,7 @@ it("cancels a turn of a remote session on its host and shows the host's stream r
   const stream = await consoleStream()
   act(() => {
     stream.succeed()
-    stream.emit(
-      "snapshot",
-      aSnapshot([aTurn({ state: "running", ended_at: null, answer: [] })], {
-        session: { ...aSnapshot([]).session, status: "running" },
-      }),
-    )
+    stream.emit("snapshot", aSnapshot([aTurn({ state: "running", ended_at: null, answer: [] })]))
   })
 
   fireEvent.click(await screen.findByRole("button", { name: "Stop the turn" }))
