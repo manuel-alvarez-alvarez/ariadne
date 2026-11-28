@@ -61,6 +61,8 @@ enum Command {
     Wake(String),
     Mode(String, Mode),
     Changed(String, oneshot::Sender<()>),
+    /// A retry made the hook live. The loop checks that it still is.
+    HookLive(String),
 }
 #[derive(Clone)]
 pub struct ForgePoll {
@@ -284,6 +286,14 @@ pub fn start(
                         sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
                         if existed && let Some(worker) = workers.get(&id) { worker.wake.notify_one(); }
                     }
+                    Some(Command::HookLive(id)) => {
+                        sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
+                        let live = matches!(
+                            store.forge_integration(&id).await,
+                            Ok(Some(row)) if row.enabled && row.webhook_enabled && row.webhook_state == "live"
+                        );
+                        if live && let Some(worker) = workers.get(&id) { worker.mode.send_replace(Mode::WakeOnly); }
+                    }
                     Some(Command::Mode(id, mode)) => {
                         sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
                         if let Some(worker) = workers.get(&id) { worker.mode.send_replace(mode); }
@@ -357,13 +367,16 @@ async fn sync(
                 .remove(id);
             handoff.bus.pull_requests_changed(id);
         }
-        if let Some(row) = row
-            && row.webhook_id.is_some()
-        {
+        if row.is_some() {
             let Some(_turn) = handoff.hook_turn_now(id) else {
                 return;
             };
-            if let Err(error) = super::hooks::reconcile(store, cfg, row, &Public::default()).await {
+            // Read again under the turn: a retry may have saved a hook.
+            if let Ok(Some(row)) = store.forge_integration(id).await
+                && row.webhook_id.is_some()
+                && let Err(error) =
+                    super::hooks::reconcile(store, cfg, row, &Public::default()).await
+            {
                 warn!(%error, repository = id, "cannot remove forge hook");
             }
         }
@@ -408,7 +421,7 @@ async fn sync(
             .remove(id);
         handoff.bus.pull_requests_changed(id);
     }
-    let before = (
+    let mut before = (
         row.webhook_state.clone(),
         row.webhook_url.clone(),
         row.webhook_id,
@@ -422,7 +435,22 @@ async fn sync(
         let Some(_turn) = handoff.hook_turn_now(id) else {
             return;
         };
-        match super::hooks::reconcile(store, cfg, row, public_url).await {
+        // A retry that held the turn may have saved a hook since the read
+        // above: reconcile what the store holds now, or a second hook is made.
+        let fresh = match store.forge_integration(id).await {
+            Ok(Some(fresh)) => fresh,
+            Ok(None) => return,
+            Err(error) => {
+                warn!(%error, repository = id, "cannot read forge integration");
+                return;
+            }
+        };
+        before = (
+            fresh.webhook_state.clone(),
+            fresh.webhook_url.clone(),
+            fresh.webhook_id,
+        );
+        match super::hooks::reconcile(store, cfg, fresh, public_url).await {
             Ok(current) => row = current,
             Err(error) => {
                 warn!(%error, repository = id, "cannot reconcile forge hook");
@@ -502,7 +530,7 @@ async fn retry_hook(store: &Store, cfg: &Arc<Config>, handoff: &Handoff, id: &st
     match super::hooks::reconcile(store, cfg, row, &public_url).await {
         Ok(current) if current.webhook_state == "live" => {
             if let Some(commands) = handoff.commands.upgrade() {
-                let _ = commands.send(Command::Mode(id.into(), Mode::WakeOnly));
+                let _ = commands.send(Command::HookLive(id.into()));
             }
         }
         Ok(_) => {}
