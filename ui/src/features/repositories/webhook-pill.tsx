@@ -51,13 +51,15 @@ export function WebhookPill({
 }) {
   // A disabled integration neither listens nor fetches.
   if (!forge.enabled) return <span className="text-muted-foreground">-</span>
-  if (!tunnel && failed)
+  // A repository whose webhook is off polls, so no tunnel answer is waited for.
+  const waiting = forge.webhook_enabled && !tunnel
+  if (waiting && failed)
     return (
       <span className="text-muted-foreground" title="The tunnel could not be read">
         unknown
       </span>
     )
-  if (!tunnel) return <Skeleton aria-label="Loading webhook mode" className="h-5 w-16" />
+  if (waiting) return <Skeleton aria-label="Loading webhook mode" className="h-5 w-16" />
   const { mode, working } = delivery(forge, tunnel)
   return (
     <Tooltip>

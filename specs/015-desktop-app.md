@@ -2164,6 +2164,7 @@ view.
      A failed dependency query shows an unknown cause and marks the dependency as not loaded.
      A recorded task status and reason stay visible while dependencies load.
      A failed tunnel query ends the webhook Skeleton with an unknown mode.
+     A repository whose webhook is off shows polling without the tunnel.
      The pin catalog Skeleton also shows while a search waits for the catalog.
      Pull request Refresh and repository labels wait for repositories and tunnel state, as applicable.
      Review targets wait for the other hosts' repositories.
@@ -2186,7 +2187,8 @@ view.
   `::shows an unknown cause when dependency status fails to load`,
   `::keeps the recorded reason of a failed task while its dependencies load`).
 - A failed tunnel read ends the webhook Skeleton (rule 116)
-  (`ui/src/features/repositories/repositories-page.test.tsx::ends the webhook skeleton when the tunnel cannot be read`).
+  (`ui/src/features/repositories/repositories-page.test.tsx::ends the webhook skeleton when the tunnel cannot be read`,
+  `::shows polling at once for a repository whose webhook is off, whatever the tunnel does`).
 - A catalog search waits behind the Skeleton (rule 116)
   (`ui/src/features/models/pin-picker.test.tsx::keeps the catalog skeleton, not the empty message, while a search waits for the catalog`).
 - Pull request controls wait for remote data (rule 116)
