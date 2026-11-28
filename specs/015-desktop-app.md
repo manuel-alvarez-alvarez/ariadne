@@ -1645,9 +1645,12 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     column, and sends one agent with no `step` and no `workflow`. It has no
     `depends_on` field.
 87. The dialog's host picker lists the `ready` hosts and starts on `local`, this
-    machine. It posts to `POST /v1/tasks` of the settings daemon, with `host`
-    only for a host other than `local`, and shows the daemon's reason where the
-    daemon refuses the host.
+    machine. It sits directly above the staffing rows. Each row's model picker
+    offers the models of the picked host (its `GET /v1/models`), and a host
+    change clears the picked model and effort of every row. The repositories
+    and workflows stay `local`'s. The dialog posts to `POST /v1/tasks` of the
+    settings daemon, with `host` only for a host other than `local`, and shows
+    the daemon's reason where the daemon refuses the host.
 88. The panel of a task with no goal has no goal breadcrumb and reads no goal.
     It shows the task's own `steps`, or no columns for a task with no workflow.
 
@@ -2189,7 +2192,7 @@ view.
 - The palette offers New task for a task with no goal, and a distinct entry beside a goal's own
   (`ui/src/features/command-palette/command-palette.test.tsx::offers a task with no goal over a screen with no goal open, and opens its dialog`; `::offers the goal-less task beside the goal's own when a goal is open`).
 - The dialog offers "No workflow" first with one row and no column, one row per column with a workflow, no dependency field, and the ready hosts starting on this machine
-  (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::offers No workflow first, and one staffing row with no column under it`; `::staffs one row for each column of the picked workflow`; `::has no dependency field`; `::offers the ready hosts, starting on this machine`).
+  (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::offers No workflow first, and one staffing row with no column under it`; `::staffs one row for each column of the picked workflow`; `::has no dependency field`; `::offers the ready hosts, starting on this machine`; `::shows the host picker directly above the staffing rows`; `::offers the models of the picked host in each staffing row`; `::clears the picked model and effort of each row when the host changes`).
 - The dialog picks its repository by search in the goal dialog's field
   (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::picks the repository by search in the field the goal dialog uses`).
 - The dialog posts the repository, the one agent and no workflow, and refuses a missing repository
