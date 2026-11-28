@@ -773,7 +773,11 @@ impl App {
             }
         };
         let first = subject.lines().next().unwrap_or_default();
-        let shown = wrap::clip(first, room);
+        let shown = if room == 0 {
+            String::new()
+        } else {
+            wrap::clip(first, room)
+        };
         let mut spans = vec![
             Span::raw(indent),
             Span::styled(format!("{mark} "), style),
@@ -1167,10 +1171,19 @@ fn allowed(permission: &PermissionStepDto) -> bool {
     let Some(answer) = permission.answer.as_ref() else {
         return false;
     };
-    permission
+    // Learn mode answers with an id of the agent, not one of the options
+    // shown, so the label the answer carries is the second way to find it.
+    let chosen = permission
         .options
         .iter()
         .find(|option| Some(&option.id) == answer.option_id.as_ref())
+        .or_else(|| {
+            permission
+                .options
+                .iter()
+                .find(|option| option.name == answer.label)
+        });
+    chosen
         .and_then(|option| option.kind.as_deref())
         .is_none_or(|kind| kind.starts_with("allow"))
 }
@@ -1199,7 +1212,16 @@ fn prompt_line(said: &str) -> String {
         let mut line = line.trim();
         loop {
             let before = line;
-            line = line.trim_start_matches(['#', '>']).trim_start();
+            line = line.trim_start_matches('>').trim_start();
+            let hashes = line.chars().take_while(|c| *c == '#').count();
+            if (1..=6).contains(&hashes)
+                && line[hashes..]
+                    .chars()
+                    .next()
+                    .is_none_or(char::is_whitespace)
+            {
+                line = line[hashes..].trim_start();
+            }
             for bullet in ["- ", "* ", "+ "] {
                 line = line.strip_prefix(bullet).unwrap_or(line).trim_start();
             }

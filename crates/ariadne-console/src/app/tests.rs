@@ -2165,6 +2165,16 @@ fn tail_mark_style(app: &App, width: u16) -> ratatui::style::Style {
 
 /// A turn whose one call carries a permission answered as given.
 async fn answered_call(decided_by: &str, option: &str, open_detail: bool) -> (App, Vec<String>) {
+    answered_call_as(decided_by, option, "Allow", open_detail).await
+}
+
+/// The same, with the label the answer carries.
+async fn answered_call_as(
+    decided_by: &str,
+    option: &str,
+    label: &str,
+    open_detail: bool,
+) -> (App, Vec<String>) {
     let mut bash = call("c1", "t1", "Bash", "completed");
     bash["permission"] = json!("p1");
     let answered = step(
@@ -2174,7 +2184,7 @@ async fn answered_call(decided_by: &str, option: &str, open_detail: bool) -> (Ap
         json!({"tool_call_id": "c1", "state": "answered",
                "options": [{"id": "yes", "name": "Allow", "kind": "allow_once"},
                            {"id": "no", "name": "Reject", "kind": "reject_once"}],
-               "answer": {"option_id": option, "label": "Allow", "decided_by": decided_by},
+               "answer": {"option_id": option, "label": label, "decided_by": decided_by},
                "ai": "the command only reads", "learned": "command"}),
     );
     let mut stub = Stub {
@@ -2238,6 +2248,41 @@ async fn an_answered_permission_is_a_mark_on_the_row_of_its_call() {
     );
     let mark = tail_mark_style(&app, 80);
     assert_eq!(mark.fg, Some(ratatui::style::Color::Red));
+}
+
+#[tokio::test]
+async fn a_learn_mode_rejection_with_an_id_of_the_agent_is_still_a_red_mark() {
+    let (mut app, _) = answered_call_as("console", "agent-reject-once", "Reject", false).await;
+    app.event(key(KeyCode::Esc));
+    let screen = draw(&app, 80, HEIGHT);
+    assert!(
+        screen
+            .iter()
+            .any(|row| *row == flush_at("    ✓ $ Bash · Bash subject", "✗ 2s", 80)),
+        "{screen:#?}"
+    );
+}
+
+#[test]
+fn a_row_whose_subject_has_no_room_keeps_its_whole_tail() {
+    let stat = json!({"diff_stat": {"files": 1, "added": 12, "removed": 3}});
+    let app = open_turn(vec![kinded("a", "edit", "completed", stat)]);
+
+    let screen = draw(&app, 18, HEIGHT);
+
+    assert!(
+        screen
+            .iter()
+            .any(|row| row.trim_end().ends_with("+12 -3 2s")),
+        "{screen:#?}"
+    );
+    assert!(screen.iter().all(|row| !row.contains('…')), "{screen:#?}");
+}
+
+#[test]
+fn a_daemon_prompt_keeps_an_issue_number_and_strips_a_real_heading() {
+    let app = app_with(vec![briefed("#430 needs review")]);
+    assert_eq!(draw(&app, WIDTH, HEIGHT)[0], "» daemon #430 needs review");
 }
 
 #[tokio::test]
