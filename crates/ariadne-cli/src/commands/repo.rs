@@ -458,6 +458,7 @@ mod tests {
                 error: None,
                 last_delivery_at: Some("2026-10-07T10:00:00Z".into()),
                 fetch_error: Some("gh: HTTP 502".into()),
+                rights_refused: false,
             },
             kind: ariadne_core::ForgeKind::Github,
             host: "github.com".into(),

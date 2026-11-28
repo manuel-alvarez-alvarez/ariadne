@@ -337,6 +337,7 @@ mod tests {
             fetch_error: None,
             webhook_enabled: true,
             poll_interval_minutes: None,
+            webhook_rights_refused: false,
             detected_at: String::new(),
             updated_at: String::new(),
         }

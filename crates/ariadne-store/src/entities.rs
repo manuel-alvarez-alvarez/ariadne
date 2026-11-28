@@ -381,6 +381,9 @@ pub struct ForgeIntegration {
     pub webhook_enabled: bool,
     /// Whole minutes between timer fetches, 1 to 60; None means the default.
     pub poll_interval_minutes: Option<i64>,
+    /// Whether the forge refused the last hook registration for rights:
+    /// timer fetches retry it while this holds.
+    pub webhook_rights_refused: bool,
     pub detected_at: String,
     pub updated_at: String,
 }

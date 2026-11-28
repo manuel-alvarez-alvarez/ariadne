@@ -526,12 +526,26 @@ Issues row opens the same goal dialog, already filled in.
 Run `gh auth login` for that host, then enable again;
 the refusal carries `gh`'s own message, not a generic one.
 
-**The webhook reads `polling` or `failed`, with an `error` about rights.**
-Registering a webhook needs admin rights on the repository — a broader
-grant than opening requests or posting reviews needs. Sign in as, or ask,
-an account that administers the repository, then let reconciliation retry;
-until then the repository keeps working on its `Timer` fallback, nothing
-is lost, only slower.
+**The Webhook pill reads `polling` in amber, with an `error` about rights.**
+GitHub refused the hook, often with "Not Found (HTTP 404)". A webhook
+needs two things, and either one can be missing:
+
+- admin rights on the repository, a broader grant than opening requests or
+  posting reviews needs. Sign in as, or ask, an account that administers it.
+- the `admin:repo_hook` scope on the `gh` token. Add it with
+  `gh auth refresh -h <host> -s admin:repo_hook`, where `<host>` is the
+  forge host, such as `github.com`.
+
+Until then the repository keeps working on its `Timer` fallback: nothing is
+lost, only slower. Each timer fetch tries the hook again first. The first
+try that works makes the hook `live`, with no daemon restart. To stop the
+retries, turn off the webhook for this repository, with the switch in its
+form or `ariadne repo update <repo-id> --webhook off`. It then polls with no
+error.
+
+**The webhook reads `failed`, with an `error`.**
+A hook that was `live` broke on a later update or deletion. Ariadne keeps
+its ID and polls on the timer, and the next URL change or enable retries it.
 
 **The tunnel reads `down`.**
 This is Ariadne retrying on its own with a capped backoff, not a fixed

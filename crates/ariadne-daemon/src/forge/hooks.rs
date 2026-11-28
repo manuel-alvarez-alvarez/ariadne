@@ -60,6 +60,22 @@ pub(super) fn hook_id(answer: &str) -> Result<i64, String> {
 pub(super) fn missing(error: &str) -> bool {
     error.contains("HTTP 404") || error.contains("404 Not Found")
 }
+/// Whether a refused hook create is a refusal for rights. GitHub answers 404
+/// to an account without admin rights, and `gh` adds a hint where its token
+/// lacks the `admin:repo_hook` scope. Other answers name the missing scope or
+/// the admin rights.
+pub(super) fn rights_refusal(error: &str) -> bool {
+    let error = error.to_lowercase();
+    [
+        "http 404",
+        "404 not found",
+        "admin:repo_hook",
+        "scope",
+        "admin rights",
+    ]
+    .iter()
+    .any(|word| error.contains(word))
+}
 
 impl ForgeClient {
     async fn create_hook(
@@ -105,6 +121,7 @@ pub(crate) async fn reconcile(
         .hook(&row.kind, &row.repository_id)
         .filter(|_| row.enabled && row.webhook_enabled);
     row.webhook_error = None;
+    row.webhook_rights_refused = false;
     if let Some(url) = desired {
         if row.webhook_secret.is_none() {
             let mut bytes = [0; 32];
@@ -114,6 +131,7 @@ pub(crate) async fn reconcile(
             store.set_webhook(&row).await.map_err(|e| e.to_string())?;
         }
         let secret = row.webhook_secret.as_deref().unwrap();
+        let creating = row.webhook_id.is_none();
         let result = match row.webhook_id {
             None => client.create_hook(&row, &url, secret).await.map(|id| {
                 row.webhook_id = Some(id);
@@ -139,6 +157,7 @@ pub(crate) async fn reconcile(
                     "failed"
                 }
                 .into();
+                row.webhook_rights_refused = creating && rights_refusal(&error);
                 row.webhook_error = Some(error.replace(secret, "[redacted]"));
             }
         }
@@ -212,5 +231,30 @@ pub(crate) async fn remove_replaced(
         && !missing(&error)
     {
         tracing::warn!(%error, repository = previous.repository_id, "cannot delete the replaced forge hook");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rights_refusal;
+
+    #[test]
+    fn a_create_refusal_for_rights_names_404_the_hook_scope_or_admin_rights() {
+        for error in [
+            "gh: Not Found (HTTP 404)\nThis API operation needs the \"admin:repo_hook\" scope.",
+            "HTTP 404: Not Found",
+            "404 Not Found",
+            "HTTP 403: Must have admin rights to Repository.",
+            "your token has not been granted the required scopes",
+        ] {
+            assert!(rights_refusal(error), "{error}");
+        }
+        for error in [
+            "HTTP 422: Validation Failed",
+            "HTTP 502: Bad Gateway",
+            "the forge returned no hook id",
+        ] {
+            assert!(!rights_refusal(error), "{error}");
+        }
     }
 }

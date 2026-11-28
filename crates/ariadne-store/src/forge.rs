@@ -84,6 +84,9 @@ pub(crate) async fn write_forge(
              webhook_last_delivery_at = CASE
                  WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner AND name = excluded.name
                  THEN webhook_last_delivery_at ELSE NULL END,
+             webhook_rights_refused = CASE
+                 WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner AND name = excluded.name
+                 THEN webhook_rights_refused ELSE 0 END,
              detected_at = CASE
                  WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner
                       AND name = excluded.name AND remote = excluded.remote

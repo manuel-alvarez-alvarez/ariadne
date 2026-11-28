@@ -61,6 +61,8 @@ enum Command {
     Wake(String),
     Mode(String, Mode),
     Changed(String, oneshot::Sender<()>),
+    /// A timer fetch is due: retry a hook the forge refused for rights first.
+    Retry(String, oneshot::Sender<()>),
 }
 #[derive(Clone)]
 pub struct ForgePoll {
@@ -105,6 +107,9 @@ struct Handoff {
     live: LivePulls,
     /// Caps how many of this fetch's host's repositories run at once.
     host_limits: HostFetchLimits,
+    /// Where a worker asks for a hook retry. Weak, so the poll still ends
+    /// once its handle is dropped.
+    commands: mpsc::WeakUnboundedSender<Command>,
 }
 struct Worker {
     identity: (String, String, String, String),
@@ -205,6 +210,7 @@ pub fn start(
 ) -> ForgePoll {
     let scheduler: Waker = Arc::default();
     let pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>> = Arc::default();
+    let (commands, mut requests) = mpsc::unbounded_channel();
     let handoff = Handoff {
         details: timeouts.forge_details,
         scheduler: scheduler.clone(),
@@ -213,11 +219,11 @@ pub fn start(
         pulls_seen: pulls_seen.clone(),
         live,
         host_limits: HostFetchLimits::default(),
+        commands: commands.downgrade(),
     };
     let webhook_url = crate::webhooks::WebhookUrl::new(cfg.webhook_public_url.clone());
     let mut urls = webhook_url.subscribe();
     let mut events = events.subscribe();
-    let (commands, mut requests) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         let mut workers = HashMap::new();
         let mut public_url = urls.borrow_and_update().clone();
@@ -233,6 +239,10 @@ pub fn start(
                     None => break,
                     Some(Command::Changed(id, done)) => {
                         sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
+                        let _ = done.send(());
+                    }
+                    Some(Command::Retry(id, done)) => {
+                        retry(&store, &cfg, &workers, &id, &public_url).await;
                         let _ = done.send(());
                     }
                     Some(Command::Wake(id)) => {
@@ -431,6 +441,48 @@ async fn sync(
     }
 }
 
+/// Register again a hook the forge refused for rights (rule 8 of 027), while
+/// the integration is enabled with its webhook switch on. A hook that goes
+/// live puts the worker in `WakeOnly`. The timer fetch that asked for the
+/// retry is the catch-up fetch, so no wake follows.
+async fn retry(
+    store: &Store,
+    cfg: &Arc<Config>,
+    workers: &HashMap<String, Worker>,
+    id: &str,
+    public_url: &Public,
+) {
+    let Some(worker) = workers.get(id) else {
+        return;
+    };
+    let row = match store.forge_integration(id).await {
+        Ok(Some(row)) if row.enabled && row.webhook_enabled && row.webhook_rights_refused => row,
+        Ok(_) => return,
+        Err(error) => {
+            warn!(%error, repository = id, "cannot read forge integration");
+            return;
+        }
+    };
+    match super::hooks::reconcile(store, cfg, row, public_url).await {
+        Ok(current) if current.webhook_state == "live" => {
+            worker.mode.send_replace(Mode::WakeOnly);
+        }
+        Ok(_) => {}
+        Err(error) => warn!(%error, repository = id, "cannot retry forge hook"),
+    }
+}
+
+/// Ask the poll to retry a hook refused for rights, and wait until it has.
+async fn retry_hook(handoff: &Handoff, id: &str) {
+    let Some(commands) = handoff.commands.upgrade() else {
+        return;
+    };
+    let (done, wait) = oneshot::channel();
+    if commands.send(Command::Retry(id.into(), done)).is_ok() {
+        let _ = wait.await;
+    }
+}
+
 /// End a repository's fetch worker before deleting its held list. A worker
 /// can complete a list read while shutdown begins, so clearing first would
 /// let that completing worker restore the list after its integration changed.
@@ -468,7 +520,12 @@ async fn worker(
         mut interval,
     } = signals;
     let mut backoff = *interval.borrow_and_update();
+    // Whether the timer, not a wake, started this fetch.
+    let mut timed = false;
     loop {
+        if std::mem::take(&mut timed) {
+            retry_hook(&handoff, &id).await;
+        }
         let base = *interval.borrow();
         // `fetch` itself acquires its host's permit, on the integration it
         // rereads there and then — never on a host captured here, which a
@@ -537,7 +594,10 @@ async fn worker(
                     debounce(&wake, timeouts.forge_wake_debounce).await;
                     break;
                 },
-                _ = tokio::time::sleep(backoff), if timer => break,
+                _ = tokio::time::sleep(backoff), if timer => {
+                    timed = true;
+                    break;
+                },
                 changed = mode.changed() => if changed.is_err() { return; },
                 changed = interval.changed() => {
                     if changed.is_err() { return; }
@@ -1080,6 +1140,7 @@ mod tests {
             fetch_error: None,
             webhook_enabled: true,
             poll_interval_minutes: None,
+            webhook_rights_refused: false,
             detected_at: String::new(),
             updated_at: String::new(),
         }

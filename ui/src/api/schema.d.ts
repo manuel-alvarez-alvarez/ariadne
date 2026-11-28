@@ -6274,6 +6274,12 @@ export interface components {
              */
             fetch_error?: string | null;
             last_delivery_at?: string | null;
+            /**
+             * @description Whether the forge refused the last hook registration for rights: the
+             *     account lacks admin rights on the repository, or the forge token lacks
+             *     the hook scope. The repository polls, and each timer fetch retries it.
+             */
+            rights_refused?: boolean;
             state: string;
             url?: string | null;
         };
