@@ -116,9 +116,36 @@ pub(crate) fn brief(text: &str, width: usize, style: Style) -> Line<'static> {
     if width == 0 {
         return Line::default();
     }
-    let first = text.lines().next().unwrap_or_default();
-    let (clean, regions) = trust_regions(first);
-    let clipped = crate::wrap::clip(&clean, width);
+    brief_selected(text, width, style, |clean| {
+        clean
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or(&clean[clean.len()..])
+    })
+}
+
+pub(crate) fn brief_selected(
+    text: &str,
+    width: usize,
+    style: Style,
+    select: impl FnOnce(&str) -> &str,
+) -> Line<'static> {
+    if width == 0 {
+        return Line::default();
+    }
+    let (clean, regions) = trust_regions(text);
+    let first = select(&clean);
+    let start = first.as_ptr() as usize - clean.as_ptr() as usize;
+    let regions: Vec<_> = regions
+        .into_iter()
+        .filter_map(|r| {
+            let a = r.start.max(start);
+            let b = r.end.min(start + first.len());
+            (a < b).then_some(a.saturating_sub(start)..b.saturating_sub(start))
+        })
+        .collect();
+    let clean = first;
+    let clipped = crate::wrap::clip(clean, width);
     let shortened = clipped != clean;
     let end = if shortened {
         clipped.len() - '…'.len_utf8()

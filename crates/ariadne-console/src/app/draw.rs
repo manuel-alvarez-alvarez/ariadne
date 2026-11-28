@@ -338,7 +338,7 @@ impl App {
                 let at = Item::Prompt(turn.id.clone());
                 rows.push(Row::head(
                     {
-                        let mut line = markdown::brief(&prompt_line(&said), room, DIM);
+                        let mut line = markdown::brief_selected(&said, room, DIM, prompt_line);
                         line.spans.insert(0, Span::styled(lead, DAEMON));
                         line
                     },
@@ -1217,7 +1217,7 @@ pub(super) fn permission_detail(permission: &PermissionStepDto) -> Vec<String> {
 
 /// The first line of a prompt that has text, without its Markdown block
 /// mark: a heading, a quote, a list bullet or a number.
-fn prompt_line(said: &str) -> String {
+fn prompt_line(said: &str) -> &str {
     for line in said.lines() {
         let mut line = line.trim();
         loop {
@@ -1249,10 +1249,10 @@ fn prompt_line(said: &str) -> String {
         }
         if !line.is_empty() && !line.starts_with("```") && !line.chars().all(|c| "-*_=".contains(c))
         {
-            return line.to_string();
+            return line;
         }
     }
-    String::new()
+    &said[said.len()..]
 }
 
 /// The line at the cursor: its text in one reversed style across the whole

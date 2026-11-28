@@ -3736,3 +3736,16 @@ async fn a_call_whose_detail_failed_still_shows_its_permission_answer_and_decide
         assert!(screen.iter().any(|row| row == line), "{line}: {screen:#?}");
     }
 }
+
+#[test]
+fn daemon_prompt_preview_skips_delimiter_lines_and_keeps_trust() {
+    let app = app_with(vec![briefed(
+        "<<<untrusted>>>\n## Important task\n<<<end untrusted>>>",
+    )]);
+    let drawn = buffer(&app, WIDTH, HEIGHT);
+    assert_eq!(rows(&drawn)[0], "» daemon Important task");
+    assert_eq!(
+        style_of(&drawn, "Important task").bg,
+        Some(ratatui::style::Color::DarkGray)
+    );
+}
