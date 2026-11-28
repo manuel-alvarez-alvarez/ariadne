@@ -287,9 +287,9 @@ the ACP runtime that takes a prompt (021).
   A replayed event that is the newest status event of its session finishes
   the status a stop left half done, even when an advisory event follows it
   (`acp_recovery.rs::a_replayed_stop_left_half_applied_still_moves_the_session_to_idle`).
-  A replay restores usage the daemon never wrote, and never lowers a newer
-  total of the same source
-  (`acp_recovery.rs::a_replayed_stop_restores_its_usage_without_lowering_a_newer_total`).
+  A replay restores usage the daemon never wrote, and never replaces the
+  newer report of the same source
+  (`acp_recovery.rs::a_replayed_stop_restores_its_usage_without_replacing_a_newer_report`).
   A replay never moves the activity clock
   (`acp_recovery.rs::a_replayed_completed_event_keeps_the_activity_clock`).
 - A situation held back from a busy orchestrator is logged once with its

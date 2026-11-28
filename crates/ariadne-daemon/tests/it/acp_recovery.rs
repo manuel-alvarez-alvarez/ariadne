@@ -331,7 +331,7 @@ async fn a_replayed_completed_event_keeps_the_activity_clock() {
 }
 
 #[tokio::test]
-async fn a_replayed_stop_restores_its_usage_without_lowering_a_newer_total() {
+async fn a_replayed_stop_restores_its_usage_without_replacing_a_newer_report() {
     use ariadne_api::events::IngestEventRequest;
     use ariadne_daemon::http::ingest_relay_event;
     use ariadne_store::NewAgentEvent;
@@ -382,8 +382,8 @@ async fn a_replayed_stop_restores_its_usage_without_lowering_a_newer_total() {
         12
     );
 
-    // A later report raised the total; the replay must not lower it.
-    ingest_relay_event(&store, &stop(20), "output:10", 0)
+    // A later report corrected the total downward; the replay must keep it.
+    ingest_relay_event(&store, &stop(8), "output:10", 0)
         .await
         .unwrap();
     ingest_relay_event(&store, &stop(12), "output:9", 0)
@@ -391,6 +391,6 @@ async fn a_replayed_stop_restores_its_usage_without_lowering_a_newer_total() {
         .unwrap();
     assert_eq!(
         store.session_usage(&session.id).await.unwrap().input_tokens,
-        20
+        8
     );
 }

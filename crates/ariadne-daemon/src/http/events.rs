@@ -149,24 +149,40 @@ async fn ingest_event_inner(
                 // lost moves the row to idle, while an older replayed setup
                 // moves nothing. The clock and the flags are never
                 // replayed (021).
-                // Its usage is cumulative, so it is restored only where it
-                // raises what the session holds from the same source.
-                if let Some((source, usage)) = usage_for_event(&req.payload)
-                    && let Some(moved) = store
-                        .restore_session_usage(&session.id, &source, usage)
-                        .await?
-                {
-                    crate::metrics::record_tokens(store, &session.id, moved).await;
-                }
-                if !superseded && let Some(status) = status_for_event(&req.kind) {
-                    let later = store
-                        .session_event_heads(&session.id, Some(&event.id), None, STATUS_KINDS)
-                        .await?;
-                    if later.iter().all(|head| head.id == event.id) {
-                        store
-                            .set_session_status_if_live(&session.id, status, req.launch.as_deref())
-                            .await?;
+                // Its usage is cumulative per source, and the newest report
+                // of a source is its total, whether it rose or fell. It is
+                // restored only where no later status event reports the
+                // same source (021).
+                let later = store
+                    .session_event_heads(&session.id, Some(&event.id), None, STATUS_KINDS)
+                    .await?;
+                if let Some((source, usage)) = usage_for_event(&req.payload) {
+                    let ids: Vec<String> = later
+                        .iter()
+                        .filter(|head| head.id != event.id)
+                        .map(|head| head.id.clone())
+                        .collect();
+                    let superseded_report = store.events_by_ids(&ids).await?.iter().any(|e| {
+                        serde_json::from_str(&e.payload)
+                            .ok()
+                            .and_then(|payload| usage_for_event(&payload))
+                            .is_some_and(|(s, _)| s == source)
+                    });
+                    if !superseded_report
+                        && let Some(moved) = store
+                            .upsert_session_usage(&session.id, &source, usage)
+                            .await?
+                    {
+                        crate::metrics::record_tokens(store, &session.id, moved).await;
                     }
+                }
+                if !superseded
+                    && let Some(status) = status_for_event(&req.kind)
+                    && later.iter().all(|head| head.id == event.id)
+                {
+                    store
+                        .set_session_status_if_live(&session.id, status, req.launch.as_deref())
+                        .await?;
                 }
                 return Ok(Some(event));
             }
