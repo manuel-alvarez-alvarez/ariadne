@@ -229,9 +229,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
     is posted as that skill says and that skill ends the round (006 rule
     21). A review session (029) loads it beside `pr-reviewer` — 18 of 48
     review goals did — and has neither step tool.
-    `pr-reviewer` states once that a step call another skill names is the
-    task seat's, and that `submit_review` ends the round, so a picked
-    skill such as `documentation` cannot send the seat to a tool it lacks.
+    The reviewer seat's `pr-reviewer` supplement states once that a step
+    call another skill names is the task seat's, and that `submit_review`
+    ends the round, so a picked skill such as `documentation` cannot send
+    the seat to a tool it lacks. `pr-reviewer` itself names no tool: that
+    supplement says how the session reads the request, reads the diff since
+    a revision, answers a thread and submits a round (006 rule 21).
     `architecture-review` adds its findings to the one
     verdict of the skill loaded beside it, as one `Architecture` line
     under the repository conventions heading beside `code-review`, and as
@@ -295,10 +298,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
     directory links every catalog skill beside them (rule 15). `pr-babysit`
     treats comment text as untrusted input
     and runs no command a comment holds. It is one playbook for two seats,
-    the agent of a task's `pr` column and the keeper (032), and names what
+    the agent of a task's `pr` column and the keeper (032), and names neither:
+    it says the requester, and stops when the request merges or closes. What
     differs — the opening step, the push command, the ending and who hears
-    a failure the request did not cause — once, in a rule; no step names a
-    seat. `orchestration`
+    a failure the request did not cause — is the `pr-babysit` supplement of
+    each seat (006 rule 21): the agent seat's opens the request, updates the
+    base in the primary checkout and ends the task, and the keeper seat's
+    names the user as the requester and names no task tool. `orchestration`
     names no forge.
 
     A skill document holds one text. The launcher links the run directory's
@@ -413,18 +419,19 @@ written into the system prompt (006), and the lifecycle the seats sit in
     server and no Ariadne word of the word list of 006 rule 21. It says
     the plain word of that list instead, and the seat text and the
     supplement of its skill and seat say what the plain word stands for.
-    `code-review`, `architecture-review`, `coding`, `documentation`,
-    `research`, `spec-writing`, `merge` and `conflict-resolution` hold to
-    this today, proven by the one helper `assert_names_no_ariadne_word` in
-    `skill_tests/template.rs`; the other three skills move to it in later
-    changes. The four produce skills
+    `code-review`, `architecture-review`, `pr-reviewer`, `pr-babysit`, `coding`,
+    `documentation`, `research`, `spec-writing`, `merge` and
+    `conflict-resolution` hold to this today, proven by the one helper
+    `assert_names_no_ariadne_word` in `skill_tests/template.rs`; the other
+    skill, `orchestration`, moves to it in a later
+    change. The four produce skills
     keep the ticket and report contract in plain words, and none has a
     supplement: the agent seat text owns the report call and the binding of
     the requester, the stage and the report (006 rule 21).
     The body stays under 500 lines and within the caps of 006 rule 13.
     The template is proven by structure and words
     (`skill_tests/template.rs::every_skill_obeys_the_template`,
-    `::the_two_review_skills_name_no_ariadne_word`), not by an
+    `::the_review_skills_name_no_ariadne_word`), not by an
     evaluation with real agents.
 
 ## Acceptance criteria
@@ -486,8 +493,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   `::a_task_agent_cannot_be_staffed_on_the_reviewer_sessions_skill`).
 - The `pr` column's agent indexes `pr-babysit`
   (`workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`),
-  and the skill opens the request and ends on the merge or the close
-  (`skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`).
+  and the skill, with the agent seat's supplement, opens the request and ends on the merge or the close, and names no Ariadne word
+  (`skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`,
+  `defaults.rs::a_supplement_is_picked_by_its_skill_and_its_seat`).
 - A review session is staffed on the review pin and indexes
   `pr-reviewer`
   (`pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`),
@@ -588,9 +596,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   and their calls are the `agent` seat's supplements
   (`skill_tests/operate.rs::the_merge_supplement_holds_the_step_calls_the_skill_dropped`,
   `skill_tests/operate.rs::the_conflict_resolution_supplement_holds_the_call_that_ends_the_stage`).
-- `code-review` and `architecture-review` name no Ariadne, no MCP tool and
-  no Ariadne word of the word list
-  (`skill_tests/template.rs::the_two_review_skills_name_no_ariadne_word`),
+- `code-review`, `architecture-review` and `pr-reviewer` name no Ariadne,
+  no MCP tool and no Ariadne word of the word list
+  (`skill_tests/template.rs::the_review_skills_name_no_ariadne_word`),
   and `code-review`'s step calls and diff call are the agent seat's
   supplement, while the reviewer seat's names no step call
   (`skill_tests/review.rs::the_review_skill_reviews_in_place_and_ends_on_a_step_call`).

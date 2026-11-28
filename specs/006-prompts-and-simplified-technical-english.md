@@ -157,6 +157,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      `code-review` supplement alone. The skill once said its two step calls
      were the task seat's; a supplement is picked by seat, so that rule
      left with them;
+   - how a review session reads a request, reads the diff since a revision,
+     answers and resolves a thread, escalates one and submits a round, for
+     `pr-reviewer`: `get_pull_request`, `get_diff` with `since`,
+     `list_comments`, `reply_comment`, `resolve_thread`, `escalate_comment`
+     and `submit_review` with the event `comment` and the `title` field, and
+     that a step call another skill names is the task seat's: that seat's
+     `pr-reviewer` supplement alone;
    - that a review session posts each `code-review` finding as
      `pr-reviewer` says, and that `pr-reviewer` ends the round: the
      `reviewer` seat's `code-review` supplement alone, which names no step
@@ -364,9 +371,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       supplement repeats the binding.
     - Each supplement has a cap of its own and obeys the STE rules of rule
       11, the same as a default text (rule 13).
-    - Four ship, and `coding`, `documentation`, `research` and `spec-writing`
+    - Seven ship, and `coding`, `documentation`, `research` and `spec-writing`
       have none, since each holds no Ariadne rule of its own: the seat text
-      owns their report call and the binding of the requester. `code-review` in the `agent` seat holds the `get_diff` call
+      owns their report call and the binding of the requester. The `reviewer`
+      seat's `pr-reviewer` supplement holds the calls listed for `pr-reviewer` in
+      rule 5, so that skill names no tool. `code-review`
+      in the `agent` seat holds the `get_diff` call
       for the whole change, and the `fail_step` and `complete_step` calls
       that return and pass the work. `code-review` in the `reviewer` seat
       hands the round to `pr-reviewer` and names no step call.
@@ -375,6 +385,14 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       `conflict-resolution` in the `agent` seat holds the `complete_step`
       call for where no skill invoked it. `architecture-review` has none:
       the seat text binds its plain words.
+      `pr-babysit` in the `agent` seat holds the open of the request (the push,
+      `open_pull_request`, the title and the body), the read, reply and
+      `escalate_comment` calls, the update of the base in the primary checkout
+      on a merge, and the ends, `complete_step` on a merge and `fail_task` on a
+      close. `pr-babysit` in the `keeper` seat holds the same read, reply and
+      `escalate_comment` calls, the user as the requester, the push command of
+      the briefing and the end of turn, and names no task tool. The cap of each
+      is argued in `defaults.rs::supplement_size_caps_hold`.
 
 ## Acceptance criteria
 
@@ -394,12 +412,16 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   index (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`).
   The agent seat text binds each plain word of the word list
   (`skill_tests/template.rs::the_agent_seat_text_binds_each_plain_word_to_ariadne`).
-  `code-review` and `architecture-review` name no Ariadne, no MCP tool and
-  no Ariadne word, by the one helper `assert_names_no_ariadne_word`
-  (`skill_tests/template.rs::the_two_review_skills_name_no_ariadne_word`).
+  `code-review`, `architecture-review` and `pr-reviewer` name no Ariadne,
+  no MCP tool and no Ariadne word, by the one helper `assert_names_no_ariadne_word`
+  (`skill_tests/template.rs::the_review_skills_name_no_ariadne_word`).
   `coding`, `documentation`, `research` and `spec-writing` name no Ariadne
   word and have no supplement
   (`skill_tests/produce.rs::the_four_produce_skills_name_no_ariadne_word_and_have_no_supplement`).
+  The reviewer seat's `pr-reviewer` supplement holds the request, diff,
+  thread and submit calls
+  (`skill_tests/review.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
+  `defaults.rs::a_supplement_is_picked_by_its_skill_and_its_seat`).
   The agent seat's `code-review` supplement holds its `get_diff`,
   `fail_step` and `complete_step` rules, and the reviewer seat's names no
   step call

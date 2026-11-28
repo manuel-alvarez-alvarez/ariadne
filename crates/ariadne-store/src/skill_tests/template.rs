@@ -475,13 +475,13 @@ pub(super) fn assert_names_no_ariadne_word(name: &str, document: &str) {
     );
 }
 
-/// `code-review` and `architecture-review` read the same in any harness:
+/// `code-review`, `architecture-review` and `pr-reviewer` read the same in any harness:
 /// they name no Ariadne, no MCP tool and no Ariadne word, and the agent seat
 /// text and the supplements say what their plain words stand for (006
 /// rule 21). The helper finds each kind of word it is there to catch.
 #[test]
-fn the_two_review_skills_name_no_ariadne_word() {
-    for name in ["code-review", "architecture-review"] {
+fn the_review_skills_name_no_ariadne_word() {
+    for name in ["code-review", "architecture-review", PR_REVIEWER_SKILL] {
         assert_names_no_ariadne_word(name, default_skill_document(name).unwrap());
     }
     for (sample, word) in [

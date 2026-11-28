@@ -333,10 +333,13 @@ reads behind them ([026](026-pull-requests.md)).
   `pr.rs::tests::pr_babysit_again_conflicts_with_every_start_or_stop_flag`.
 - The panel sends the Babysit New turn on a task-kept request and shows a refusal:
   `pull-request-panel.test.tsx::asks for a keeper turn on a task kept request and shows the daemon refusal`.
-- The skill names its two seats once, and a keeper fixes only what the
-  request's own change breaks:
-  `skill_tests/operate.rs::the_pr_babysit_skill_names_its_two_seats_once`,
-  `::the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks`.
+- The skill names no seat, and a keeper fixes only what the request's own
+  change breaks. The keeper seat's `pr-babysit` supplement names the user as
+  the requester, the push command of the briefing, and the end of turn on a
+  merge or a close, and names no task tool:
+  `skill_tests/operate.rs::the_pr_babysit_skill_names_no_seat_and_its_supplements_own_the_difference`,
+  `::the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks`,
+  `defaults.rs::a_supplement_is_picked_by_its_skill_and_its_seat`.
 
 ## Sources
 
