@@ -36,15 +36,37 @@ const TURN_ENDS: &[&str] = &[
     "session_end",
 ];
 
+/// The kinds that tell whether a call waits for a permission.
+const PERMISSION_KINDS: &[&str] = &["permission_request", "permission.replied"];
+
 /// The kinds whose heads [`call_events`] walks.
 pub(crate) fn detail_kinds() -> Vec<&'static str> {
-    CALL_KINDS.iter().chain(TURN_ENDS).copied().collect()
+    CALL_KINDS
+        .iter()
+        .chain(TURN_ENDS)
+        .chain(PERMISSION_KINDS)
+        .copied()
+        .collect()
 }
 
 /// The most output of a command one detail carries: the end of it, where
 /// the result and the errors are. A megabyte is the most the ACP runtime
 /// stores of one content block.
 const OUTPUT_BYTES: usize = 1024 * 1024;
+
+/// Whether the turn of the call that opens at `heads[at]` still runs there:
+/// `heads` start at the turn's prompt, and no end of a turn comes before the
+/// call (rule 12).
+pub(crate) fn turn_runs_at(heads: &[EventHead], at: usize) -> bool {
+    heads
+        .first()
+        .is_some_and(|head| head.kind == "user_prompt_submit")
+        && heads.get(1..at).is_some_and(|between| {
+            between
+                .iter()
+                .all(|head| !TURN_ENDS.contains(&head.kind.as_str()))
+        })
+}
 
 /// The events of one call, by their heads.
 #[derive(Debug, PartialEq)]
@@ -57,6 +79,10 @@ pub(crate) struct CallEvents {
     pub(crate) updates: u64,
     /// The state the end of its turn left an open call in.
     pub(crate) ended: Option<ToolCallStatus>,
+    /// Whether the call is open in a turn that still runs and waits for no
+    /// permission: a `pending` call then reads `running`, as the row does
+    /// (rule 21).
+    pub(crate) executing: bool,
 }
 
 /// The events of the call the step `item_id` opened, from the heads of the
@@ -64,7 +90,12 @@ pub(crate) struct CallEvents {
 /// and its tool call id, up to the event that closes it, the next opener of
 /// that id, or the end of its turn — as the fold joins them (rule 21). None
 /// where `item_id` opens no call.
-pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> Option<CallEvents> {
+pub(crate) fn call_events(
+    heads: &[EventHead],
+    item_id: &str,
+    budget: usize,
+    turn_runs: bool,
+) -> Option<CallEvents> {
     let (opener, rest) = heads.split_first()?;
     if opener.id != item_id || !CALL_KINDS.contains(&opener.kind.as_str()) {
         return None;
@@ -75,9 +106,23 @@ pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> 
     let mut status = first.status.as_deref().and_then(status_of);
     let mut ids = vec![opener.id.clone()];
     let mut ended = None;
+    let mut asked: Vec<Option<String>> = Vec::new();
+    let mut open = true;
     for head in rest {
         if status.is_some_and(is_terminal) {
+            open = false;
             break;
+        }
+        match head.kind.as_str() {
+            "permission_request" => {
+                asked.push(facts(head).call);
+                continue;
+            }
+            "permission.replied" => {
+                asked.pop();
+                continue;
+            }
+            _ => {}
         }
         if TURN_ENDS.contains(&head.kind.as_str()) {
             let head_facts = facts(head);
@@ -87,6 +132,7 @@ pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> 
                     _ => ToolCallStatus::Interrupted,
                 },
             );
+            open = false;
             break;
         }
         let head_facts = facts(head);
@@ -94,6 +140,7 @@ pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> 
             continue;
         }
         if head.kind == "pre_tool_use" {
+            open = false;
             break;
         }
         if let Some(next) = head_facts.status.as_deref().and_then(status_of) {
@@ -110,10 +157,16 @@ pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> 
     } else {
         ids
     };
+    let executing = open
+        && turn_runs
+        && !status.is_some_and(is_terminal)
+        && first.call.is_some()
+        && !asked.contains(&first.call);
     Some(CallEvents {
         load,
         updates,
         ended,
+        executing,
     })
 }
 
@@ -180,6 +233,9 @@ pub(crate) fn detail_of(
     // The end of the turn closes an open call, and that change counts in
     // its `detail_rev` as the fold counts it (rule 12).
     let mut detail_rev = call.updates;
+    if step.status == ToolCallStatus::Pending && call.executing {
+        step.status = ToolCallStatus::Running;
+    }
     if !is_terminal(step.status)
         && let Some(ended) = call.ended
     {
@@ -221,6 +277,10 @@ pub(crate) fn detail_of(
         detail_rev,
         detail,
         raw: raw.then(|| RawToolDto {
+            title: events.iter().rev().find_map(|event| {
+                string_at(&event.payload, "/tool_name")
+                    .or_else(|| string_at(&acp_of(event), "/title"))
+            }),
             input: present(acp.get("rawInput")),
             output: present(acp.get("rawOutput")),
         }),
@@ -247,7 +307,7 @@ fn command_detail(acp: &Value, input: &Value, title: &str) -> ToolDetailDto {
             acp.pointer("/_meta/terminal_exit/exit_code")
                 .and_then(Value::as_i64)
         });
-    let (output, truncated) = match output_of(acp) {
+    let (output, truncated) = match output_of(acp).map(|text| super::steps::clean_output(&text)) {
         Some(text) => {
             let (text, truncated) = tail(text, OUTPUT_BYTES);
             (Some(text), truncated)
@@ -641,7 +701,7 @@ mod tests {
     };
     use ariadne_store::EventHead;
 
-    use super::{CallEvents, call_events, detail_of, opens_a_step};
+    use super::{CallEvents, call_events, detail_of, opens_a_step, turn_runs_at};
     use crate::trajectory::Fold;
 
     fn event(id: &str, kind: &str, payload: Value) -> AgentEventDto {
@@ -678,8 +738,45 @@ mod tests {
             load: vec!["0001".into()],
             updates: 0,
             ended: None,
+            executing: false,
         };
         detail_of("session", &events, &call, false).unwrap().detail
+    }
+
+    #[test]
+    fn command_output_has_no_outer_fence_or_replaced_progress() {
+        let ToolDetailDto::Command(command) = detail(
+            "execute",
+            json!({"command": "ls"}),
+            json!({"rawOutput": "```console\nold\rnew\nfirst\rsecond\rfinal\n```"}),
+        ) else {
+            panic!("missing command")
+        };
+        assert_eq!(command.output.as_deref(), Some("new\nfinal"));
+    }
+
+    #[test]
+    fn empty_command_fences_give_empty_output() {
+        for output in ["```\n```", "```text\n```"] {
+            let ToolDetailDto::Command(command) =
+                detail("execute", json!({}), json!({"rawOutput": output}))
+            else {
+                panic!("missing command")
+            };
+            assert_eq!(command.output.as_deref(), Some(""));
+        }
+    }
+
+    #[test]
+    fn command_crlf_preserves_lines_and_replaces_progress() {
+        let ToolDetailDto::Command(command) = detail(
+            "execute",
+            json!({}),
+            json!({"rawOutput": "first\r\nold\rnew\r\n"}),
+        ) else {
+            panic!("missing command")
+        };
+        assert_eq!(command.output.as_deref(), Some("first\nnew\n"));
     }
 
     /// An edit gives each file its old and new text, a unified diff and its
@@ -801,7 +898,7 @@ mod tests {
             ),
         ];
 
-        let call = call_events(&heads, "0001", 500).unwrap();
+        let call = call_events(&heads, "0001", 500, true).unwrap();
 
         assert_eq!(
             call,
@@ -809,13 +906,46 @@ mod tests {
                 load: vec!["0001".into(), "0003".into()],
                 updates: 1,
                 ended: Some(ToolCallStatus::Interrupted),
+                executing: false,
             }
         );
         assert_eq!(
-            call_events(&heads, "0004", 500),
+            call_events(&heads, "0004", 500, true),
             None,
             "a prompt is no call"
         );
+    }
+
+    /// A call opened `pending` runs while its turn runs, unless a permission
+    /// it asked for is unanswered: the detail says what the row says (rules
+    /// 21 and 49).
+    #[test]
+    fn a_pending_call_executes_unless_it_waits_for_a_permission() {
+        let opener = head(
+            "0001",
+            "pre_tool_use",
+            json!({"call": "c-1", "status": "pending"}),
+        );
+        let ask = head("0002", "permission_request", json!({"call": "c-1"}));
+        let reply = head("0003", "permission.replied", json!({}));
+        let stop = head("0004", "stop", json!({}));
+        let run = |heads: Vec<EventHead>| call_events(&heads, "0001", 500, true).unwrap().executing;
+
+        assert!(run(vec![opener.clone()]));
+        assert!(!run(vec![opener.clone(), ask.clone()]));
+        assert!(run(vec![opener.clone(), ask.clone(), reply]));
+        assert!(!run(vec![opener.clone(), stop]));
+        assert!(
+            !call_events(std::slice::from_ref(&opener), "0001", 500, false)
+                .unwrap()
+                .executing,
+            "a call that opens after its turn ended runs no more"
+        );
+        let prompt = head("0000", "user_prompt_submit", json!({}));
+        let ended = head("0000b", "stop", json!({}));
+        assert!(turn_runs_at(&[prompt.clone(), opener.clone()], 1));
+        assert!(!turn_runs_at(&[prompt, ended, opener.clone()], 2));
+        assert!(!turn_runs_at(&[opener], 0));
     }
 
     /// A call of more updates than the budget loads its opener and its
@@ -831,7 +961,7 @@ mod tests {
             ));
         }
 
-        let call = call_events(&heads, "0000", 3).unwrap();
+        let call = call_events(&heads, "0000", 3, true).unwrap();
 
         assert_eq!(call.load, ["0000", "0008", "0009"]);
         assert_eq!(call.updates, 9);

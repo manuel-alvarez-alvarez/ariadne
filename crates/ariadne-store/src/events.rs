@@ -313,16 +313,6 @@ impl Store {
         .await?)
     }
 
-    /// The oldest event id of a session, payload unread.
-    pub async fn oldest_session_event_id(&self, session_id: &str) -> Result<Option<String>> {
-        Ok(
-            sqlx::query_scalar("SELECT MIN(id) FROM agent_events WHERE session_id = ?")
-                .bind(session_id)
-                .fetch_one(self.r())
-                .await?,
-        )
-    }
-
     /// The heads of a session's events from `from` on and up to `upto`, in
     /// order, payloads unread. With `kinds`, of those kinds alone. An unset
     /// bound is open.
@@ -353,6 +343,38 @@ impl Store {
             q = q.bind(*kind);
         }
         Ok(q.fetch_all(self.r()).await?)
+    }
+
+    /// The first event of a session of one of `kinds`, or of a subagent's
+    /// lane (the first event of a lane opens its turn), below `before` when
+    /// it is set and up to `upto`, payload unread.
+    pub async fn first_session_event_head(
+        &self,
+        session_id: &str,
+        before: Option<&str>,
+        upto: &str,
+        kinds: &[&str],
+    ) -> Result<Option<EventHead>> {
+        let mut sql = String::from(
+            "SELECT id, kind, lane, COALESCE(facts, '{}') AS facts, created_at FROM agent_events
+               WHERE session_id = ? AND (? IS NULL OR id < ?) AND id <= ?
+                 AND (lane IS NOT NULL AND kind <> 'available_commands_update'",
+        );
+        if !kinds.is_empty() {
+            sql.push_str(" OR kind IN (");
+            sql.push_str(&vec!["?"; kinds.len()].join(", "));
+            sql.push(')');
+        }
+        sql.push_str(") ORDER BY id LIMIT 1");
+        let mut q = sqlx::query_as::<_, EventHead>(sqlx::AssertSqlSafe(sql))
+            .bind(session_id)
+            .bind(before)
+            .bind(before)
+            .bind(upto);
+        for kind in kinds {
+            q = q.bind(*kind);
+        }
+        Ok(q.fetch_optional(self.r()).await?)
     }
 
     /// The first event of each subagent of a session up to `upto`, as the
