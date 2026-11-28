@@ -137,6 +137,8 @@ struct Client {
     parser: vt100::Parser,
     /// Every status the daemon said, in order.
     statuses: Vec<SessionStatus>,
+    /// Every byte the daemon drew, as it came.
+    raw: Vec<u8>,
 }
 
 /// A terminal size the emulator takes: never zero.
@@ -152,6 +154,7 @@ impl Client {
             socket: connect(address, id).await.unwrap(),
             parser: vt100::Parser::new(nonzero(rows), nonzero(cols), 200),
             statuses: Vec::new(),
+            raw: Vec::new(),
         };
         client.resize(cols, rows).await;
         client
@@ -238,7 +241,7 @@ impl Client {
                 );
             };
             match frame {
-                Some(Ok(Message::Binary(bytes))) => self.parser.process(&bytes),
+                Some(Ok(Message::Binary(bytes))) => self.draw(&bytes),
                 Some(Ok(Message::Text(text))) => self.status(&text),
                 Some(Ok(Message::Close(_))) | None => {
                     panic!(
@@ -250,6 +253,11 @@ impl Client {
                 Some(Err(error)) => panic!("the socket failed waiting for {what}: {error}"),
             }
         }
+    }
+
+    fn draw(&mut self, bytes: &[u8]) {
+        self.raw.extend_from_slice(bytes);
+        self.parser.process(bytes);
     }
 
     fn status(&mut self, text: &str) {
@@ -269,7 +277,7 @@ impl Client {
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             match tokio::time::timeout(left, self.socket.next()).await {
-                Ok(Some(Ok(Message::Binary(bytes)))) => self.parser.process(&bytes),
+                Ok(Some(Ok(Message::Binary(bytes)))) => self.draw(&bytes),
                 Ok(Some(Ok(Message::Text(text)))) => self.status(&text),
                 Ok(Some(Ok(Message::Close(_))) | None) => return true,
                 Ok(Some(Ok(_))) => {}
@@ -316,6 +324,44 @@ async fn the_terminal_draws_the_full_screen_console_at_the_client_size() {
         "the turns are drawn from the top, each with its answer:\n{screen}"
     );
     assert_eq!(client.statuses, [SessionStatus::Idle]);
+}
+
+/// The bottom row names the session as `ariadne session ls` does, and the
+/// terminal window is titled with it while the console is open and given its
+/// title back when the console closes.
+#[tokio::test]
+async fn the_terminal_names_the_session_in_the_bottom_row_and_the_window_title() {
+    let (_dir, _stub, h, session, address) = idle_daemon().await;
+    let task = h
+        .store
+        .get_task(session.task_id.as_ref().unwrap())
+        .await
+        .unwrap();
+    let name = format!("{} · agent · develop", task.title);
+
+    let mut client = Client::open(address, &session.id, 160, 40).await;
+    client
+        .read_until("the console", |screen| screen.contains(READY))
+        .await;
+    let screen = client.screen();
+    let bottom = screen.lines().last().unwrap();
+    assert!(
+        bottom.starts_with(&format!(" ◐ · {name}")) || bottom.starts_with(&format!(" ● · {name}")),
+        "the name follows the state mark:\n{bottom}"
+    );
+    let set = format!("\x1b]0;{name}\x07");
+    assert!(
+        String::from_utf8_lossy(&client.raw).contains(&set),
+        "the window is titled"
+    );
+    assert!(!String::from_utf8_lossy(&client.raw).contains("\x1b[23;0t"));
+
+    client.ctrl('d').await;
+    assert!(client.closed_by_the_daemon().await);
+    assert!(
+        String::from_utf8_lossy(&client.raw).contains("\x1b[23;0t"),
+        "the title is put back"
+    );
 }
 
 /// Keys typed into the socket and Enter become a prompt the agent receives.

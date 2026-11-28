@@ -121,7 +121,7 @@ scrollback stay as they were. The screen has these parts, from the top:
 ──────────────────────────────────────────────────────────────
 ❯ Tell the agent what to do
 ──────────────────────────────────────────────────────────────
- ◐ · Opus 5.5 · Code · context 45% · $0.42                          ? keys
+ ◐ · Add the frobnicator · agent · develop · Opus 5.5   ? keys
 ```
 
 ### Turns
@@ -229,11 +229,14 @@ entry is skipped.
 ### The bottom row
 
 One row sits under the input box. On the left it shows the mark of the
-session state (`◐` running, `●` idle, `✗` failed, `■` ended), the model, the
-mode, how much of the context window it uses, and the cost. An item that the
+session state (`◐` running, `●` idle, `✗` failed, `■` ended), the name of
+the session, the model, the mode, how much of the context window it uses, and the cost. An item that the
 agent does not report is not shown. On a narrow terminal the row drops whole
-items, the least important first: the cost, the context, the mode, the model
-and the mark. While the link is down the left side reads `reconnecting`, and
+items, the least important first: the name, the cost, the context, the mode,
+the model and the mark. The name is the title and the seat that `ariadne
+session ls` shows, with the step where the session has one; a name that is too
+long is cut with an ellipsis. While the console is open it sets the title of
+the terminal window to the name, and it sets the title back when you leave. While the link is down the left side reads `reconnecting`, and
 after one Ctrl-C it reads `ctrl-c again to leave`.
 
 On the right the row shows `? keys`, which drops last. Press `?` with an empty

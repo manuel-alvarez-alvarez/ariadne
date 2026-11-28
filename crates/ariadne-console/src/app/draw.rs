@@ -753,6 +753,7 @@ impl App {
         status::bottom_row(
             self.view.as_ref().map(|view| view.session()),
             self.model.as_deref(),
+            self.name.as_deref(),
             said.as_deref(),
             width,
         )

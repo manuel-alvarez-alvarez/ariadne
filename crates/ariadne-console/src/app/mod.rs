@@ -65,6 +65,7 @@ use form::FormState;
 pub use history::{PAGE as HISTORY_PAGE, reach_back};
 use history::{from_console, prompt_text, typed};
 use input::Input;
+pub use status::session_name;
 use tabs::Place;
 
 /// How often the spinner of a running turn turns.
@@ -341,6 +342,8 @@ pub struct App {
     /// The model the session was launched with, as the host read it: what
     /// the bottom row names where the agent reports no model option.
     model: Option<String>,
+    /// What the bottom row calls the session: its title and its seat.
+    name: Option<String>,
     /// The first line of the transcript on the screen. `None` follows the
     /// end of the transcript.
     scroll: Cell<Option<usize>>,
@@ -414,6 +417,7 @@ impl App {
             plan_scroll: Cell::new(0),
             plan_shown: Cell::new(WHEEL),
             model: None,
+            name: None,
             scroll: Cell::new(None),
             reveal: Cell::new(false),
             layout: RefCell::new(Layout::default()),
@@ -445,6 +449,11 @@ impl App {
     pub fn stored_model(&mut self, model: &str) {
         let model = model.split_once(':').map_or(model, |(_, model)| model);
         self.model = (!model.is_empty()).then(|| model.to_string());
+    }
+
+    /// What the bottom row calls the session; see [`session_name`].
+    pub fn named(&mut self, name: &str) {
+        self.name = (!name.is_empty()).then(|| name.to_string());
     }
 
     /// The zone that has the keys.

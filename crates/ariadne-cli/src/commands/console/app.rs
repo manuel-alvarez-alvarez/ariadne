@@ -25,13 +25,17 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::time::{Instant, sleep_until};
 
+use ariadne_api::goals::GoalDto;
+use ariadne_api::pull_requests::PullRequestDto;
 use ariadne_api::sessions::{AnswerQuestionRequest, ConsoleInputRequest, QuestionDto, SessionDto};
+use ariadne_api::tasks::TaskDto;
 use ariadne_api::trajectory::{
     StepDto, ToolCallDetailDto, TrajectoryItemQuery, TrajectoryQuery, TrajectorySnapshotDto,
     TrajectoryStreamQuery,
 };
 use ariadne_client::{Client, SseStream};
-use ariadne_console::app::{App, Frame, HISTORY_PAGE, Host, drive, reach_back};
+use ariadne_console::ansi::{TITLE_RESTORE, title};
+use ariadne_console::app::{App, Frame, HISTORY_PAGE, Host, drive, reach_back, session_name};
 use ariadne_console::trajectory::Printer;
 
 use super::terminal::{Held, Terminals};
@@ -41,12 +45,18 @@ use crate::output::note;
 /// Open the full-screen console on the process terminal.
 pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     let mut app = App::new(id);
-    if let Some(model) = stored_model(client, id).await {
-        app.stored_model(&model);
+    let row = session_row(client, id).await;
+    if let Some(model) = row.as_ref().map(|row| row.model.as_str()) {
+        app.stored_model(model);
     }
+    let name = match &row {
+        Some(row) => session_name_of(client, row).await,
+        None => String::new(),
+    };
+    app.named(&name);
     // The terminal is held before the screen is drawn, so a terminal that
     // cannot be drawn on at all is still given back.
-    let held = Held::take(Screen::default())?;
+    let held = Held::take(Screen::default().titled(&name))?;
     let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
     let outcome = drive(
         &mut terminal,
@@ -67,15 +77,59 @@ pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     outcome
 }
 
-/// The model the session was launched with, which the bottom row names where
-/// the agent reports no model option. A session the daemon will not describe
-/// costs the bottom row its model and nothing else.
-async fn stored_model(client: &Client, id: &str) -> Option<String> {
+/// The session row. Its model is what the bottom row names where the agent
+/// reports no model option. A session the daemon will not describe costs the
+/// bottom row its model and its name, and nothing else.
+async fn session_row(client: &Client, id: &str) -> Option<SessionDto> {
     client
         .get_json::<SessionDto>(&format!("/v1/sessions/{id}"))
         .await
         .ok()
-        .map(|session| session.model)
+}
+
+/// The name of the session, as `ariadne session ls` shows it: the title of
+/// the task, the goal or the pull request behind it, then its seat and step.
+async fn session_name_of(client: &Client, row: &SessionDto) -> String {
+    let title = session_title(client, row).await;
+    session_name(title.as_deref(), row.seat, row.step.as_deref())
+}
+
+/// The title `ariadne session ls` shows, found as the daemon finds it: the
+/// pull request's title with its URL where the session has a pull request
+/// the daemon can read, else the task's title, else the goal's.
+async fn session_title(client: &Client, row: &SessionDto) -> Option<String> {
+    if let Some(id) = &row.pull_request_id
+        && let Some(pull) = pull_of(client, id).await
+    {
+        return Some(format!("{} ({})", pull.title, pull.url));
+    }
+    if let Some(id) = &row.task_id
+        && let Some(title) = titled::<TaskDto>(client, "tasks", id, |task| task.title).await
+    {
+        return Some(title);
+    }
+    let id = row.goal_id.as_ref()?;
+    titled::<GoalDto>(client, "goals", id, |goal| goal.title).await
+}
+
+async fn pull_of(client: &Client, id: &str) -> Option<PullRequestDto> {
+    client
+        .get_json(&format!("/v1/pull-requests/{id}"))
+        .await
+        .ok()
+}
+
+async fn titled<T: serde::de::DeserializeOwned>(
+    client: &Client,
+    route: &str,
+    id: &str,
+    title: fn(T) -> String,
+) -> Option<String> {
+    client
+        .get_json::<T>(&format!("/v1/{route}/{id}"))
+        .await
+        .ok()
+        .map(title)
 }
 
 /// What is said as the console closes: that the session is still running,
@@ -290,6 +344,9 @@ fn osc52(text: &str) -> String {
 pub(super) struct Screen<W: Write = std::io::Stdout> {
     out: W,
     enhanced: bool,
+    /// The window title the console set, which it puts back on leaving.
+    titled: bool,
+    name: String,
 }
 
 impl Default for Screen {
@@ -303,7 +360,15 @@ impl<W: Write> Screen<W> {
         Self {
             out,
             enhanced: false,
+            titled: false,
+            name: String::new(),
         }
+    }
+
+    /// The console names the terminal window `name` while it is open.
+    fn titled(mut self, name: &str) -> Self {
+        self.name = name.to_string();
+        self
     }
 
     /// Write the modes the console needs, raw mode aside.
@@ -313,7 +378,12 @@ impl<W: Write> Screen<W> {
             EnterAlternateScreen,
             EnableMouseCapture,
             EnableBracketedPaste
-        )
+        )?;
+        if !self.name.is_empty() {
+            self.out.write_all(&title(&self.name))?;
+            self.titled = true;
+        }
+        Ok(())
     }
 }
 
@@ -331,6 +401,9 @@ impl<W: Write> Terminals for Screen<W> {
     }
 
     fn leave(&mut self) {
+        if self.titled {
+            let _ = self.out.write_all(TITLE_RESTORE);
+        }
         if self.enhanced {
             let _ = crossterm::execute!(self.out, PopKeyboardEnhancementFlags);
         }
@@ -689,12 +762,99 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let client = Client::tcp(format!("http://{address}"));
 
-        let known = stored_model(&client, "s1").await;
-        let unknown = stored_model(&client, "s2").await;
+        let known = session_row(&client, "s1").await;
+        let unknown = session_row(&client, "s2").await;
         server.abort();
 
-        assert_eq!(known.as_deref(), Some("claude-acp:opus"));
-        assert_eq!(unknown, None);
+        assert_eq!(
+            known.map(|row| row.model).as_deref(),
+            Some("claude-acp:opus")
+        );
+        assert!(unknown.is_none());
+    }
+
+    /// The name is what `ariadne session ls` shows: the title of the task
+    /// behind the session, then its seat and its column.
+    #[tokio::test]
+    async fn the_session_is_named_by_its_task_title_seat_and_step() {
+        let router = Router::new().route(
+            "/v1/tasks/t1",
+            get(|| async { axum::Json(crate::commands::fixtures::task("t1", "g1")) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+        let row = crate::commands::fixtures::session("s1", "g1", Some("t1"));
+
+        let name = session_name_of(&client, &row).await;
+        server.abort();
+
+        assert_eq!(name, "task t1 · agent · develop");
+    }
+
+    /// A pull request session reads as `ariadne session ls` titles it: the
+    /// request's title with its URL, ahead of the task's. A task the daemon
+    /// cannot read falls back to the goal, as the daemon's own lookup does.
+    #[tokio::test]
+    async fn a_pull_request_session_is_named_with_its_url_and_a_lost_task_falls_back_to_its_goal() {
+        let pull = json!({
+            "id": "p1", "repository_id": "r1", "number": 7,
+            "url": "https://forge.test/r/pull/7", "title": "Fix the lint",
+            "author_login": "me", "state": "open", "draft": false,
+            "head_branch": "fix", "head_sha": "abc", "head_repo": null,
+            "base_branch": "main", "checks": "passing", "review_decision": "",
+            "opened_at": "2026-11-27T10:00:00Z", "updated_at": "2026-11-27T10:00:00Z",
+            "role": "author", "dependency_updates": [], "reviews": [], "comments": []
+        });
+        let goal = crate::commands::fixtures::goal("g1", "Ship the UI");
+        let router = Router::new()
+            .route(
+                "/v1/pull-requests/p1",
+                get(move || async move { axum::Json(pull) }),
+            )
+            .route("/v1/goals/g1", get(move || async move { axum::Json(goal) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+        let mut pulled = crate::commands::fixtures::session("s1", "g1", Some("t1"));
+        pulled.pull_request_id = Some("p1".into());
+        pulled.seat = Some(ariadne_core::Seat::Keeper);
+        pulled.step = None;
+        let lost = crate::commands::fixtures::session("s2", "g1", Some("gone"));
+
+        let pulled = session_name_of(&client, &pulled).await;
+        let lost = session_name_of(&client, &lost).await;
+        server.abort();
+
+        assert_eq!(
+            pulled,
+            "Fix the lint (https://forge.test/r/pull/7) · keeper"
+        );
+        assert_eq!(lost, "Ship the UI · agent · develop");
+    }
+
+    #[test]
+    fn the_window_is_titled_with_the_session_name_and_the_title_is_put_back() {
+        let mut screen = Screen::on(Vec::new()).titled("task t1 · agent · develop");
+        screen.modes().unwrap();
+        assert!(
+            holds(
+                &screen.out,
+                "\x1b]0;task t1 · agent · develop\x07".as_bytes()
+            ),
+            "{:?}",
+            String::from_utf8_lossy(&screen.out)
+        );
+        let set = screen.out.len();
+        screen.leave();
+        assert!(holds(&screen.out[set..], b"\x1b[23;0t"));
+
+        let mut unnamed = Screen::on(Vec::new());
+        unnamed.modes().unwrap();
+        unnamed.leave();
+        assert!(!holds(&unnamed.out, b"\x1b]0;") && !holds(&unnamed.out, b"\x1b[23;0t"));
     }
 
     #[test]
