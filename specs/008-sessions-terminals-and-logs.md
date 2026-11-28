@@ -1,10 +1,11 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-11-27
-areas: [daemon, cli, ui]
+updated: 2026-11-28
+areas: [daemon, cli, console, ui]
 commits: [e4816cf6, 39937143, a69b953f, 7880c022, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
+  - crates/ariadne-console/src/markdown.rs
   - crates/ariadne-store/tests/session_place.rs
   - crates/ariadne-daemon/tests/it/acp_console.rs
   - crates/ariadne-daemon/tests/it/acp_runtime.rs
@@ -230,6 +231,13 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
     While the overlay is open the screen shows no text cursor. The cursor returns to the input box when it closes.
     `?` or Esc closes it. The transcript position and the input text stay as they were.
 
+62. Displayed prose hides `<<<untrusted>>>` and `<<<end untrusted>>>` and gives enclosed text a dark gray background.
+    Markdown formatting stays visible. Inline and fenced code keep literal markers.
+    An opening marker applies through the current text end until its closing marker arrives.
+    Wrapping, shortened prompts and streamed redraws keep the highlight.
+    The keys overlay includes a styled trust legend that identifies highlighted text as untrusted data.
+    This changes presentation only; stored text, agent input, raw views, copying and exports keep their existing contracts.
+
 ## Acceptance criteria
 
 1. Launch ids are unique (`crates/ariadne-daemon/tests/it/resume.rs::every_launch_of_a_session_reports_under_a_new_id`), and stale reports cannot change later work (`events.rs::an_event_from_a_launch_the_session_has_moved_past_changes_nothing`).
@@ -278,6 +286,17 @@ Number selection and question navigation use
 45. Rule 59: `ariadne-console::app::tests::a_tool_row_starts_with_its_state_mark_and_the_icon_of_its_kind_and_prints_no_kind_word`, `::a_kind_with_no_icon_shows_the_fallback_icon`, `::consecutive_read_and_search_steps_show_as_one_group_row_of_their_subjects`, `::a_group_row_cuts_its_subjects_to_the_width`, `::a_group_is_running_while_a_step_runs_failed_if_one_failed_and_completed_otherwise`, `::enter_on_a_group_row_opens_its_steps_as_rows_that_open_their_detail`, `::an_edit_row_shows_its_subject_and_the_lines_it_added_and_removed`, `::a_group_of_one_kind_has_the_icon_of_that_kind`, `::a_folded_running_turn_shows_its_last_three_steps_even_when_they_group`. Rule 41, no state word on a completed turn: `::a_turn_shows_its_prompt_one_activity_line_and_its_answer`.
 46. Rule 60: `ariadne-console::app::tests::a_narrow_bottom_row_drops_whole_items_in_rank_order_and_the_keys_hint_last`, `::reconnecting_and_the_leave_hint_replace_the_left_side_of_the_row_while_they_apply`, `::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`.
 47. Rule 61: `ariadne-console::app::tests::a_question_mark_opens_an_overlay_of_every_key_in_groups_by_zone`, `::a_question_mark_in_a_non_empty_input_types_the_character`, `::a_question_mark_or_escape_closes_the_overlay_and_the_screen_stays_as_it_was`, `::the_question_mark_opens_the_overlay_from_the_transcript_zone_too`, `::every_key_of_the_overlay_is_reached_by_scrolling_in_a_60_by_24_terminal`, `::a_wide_overlay_shows_its_groups_whole_in_columns_with_no_scroll`, `::an_overlay_fills_every_column_the_width_holds`, `::a_narrow_overlay_shows_one_column`, `::the_overlay_hides_the_text_cursor_and_closing_it_brings_the_cursor_back`.
+
+48. Rule 62: `ariadne-console::markdown::tests::untrusted_prose_keeps_formatting_and_code_examples`,
+    `::untrusted_regions_survive_wrapping_streaming_and_fenced_examples`,
+    `::untrusted_markers_preserve_headings_lists_and_table_cells`,
+    `::untrusted_tables_keep_trust_when_narrow_and_preserve_literal_unicode`.
+    TUI presentation and the legend use
+    `ariadne-console::app::tests::untrusted_prompts_and_answers_show_highlights_and_a_help_legend`.
+    Streaming uses `::streamed_untrusted_answers_keep_the_highlight_until_the_close_arrives`.
+    Text details use `::an_open_text_detail_hides_markers_and_keeps_markdown_highlighted`.
+    Original copying uses `::copying_untrusted_prose_keeps_its_original_delimiters`.
+    Existing raw-view and overlay tests continue to pass.
 
 ## Sources
 

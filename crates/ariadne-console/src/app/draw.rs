@@ -210,15 +210,13 @@ impl App {
             self.turn_rows(turn, width, &mut rows);
         }
         for prompt in &self.pending {
-            for (at, part) in wrap::wrap(prompt, width.saturating_sub(2))
+            for (at, mut line) in markdown::plain(prompt, width.saturating_sub(2), PROMPT)
                 .into_iter()
                 .enumerate()
             {
                 let lead = if at == 0 { theme::USER_MARKER } else { "  " };
-                rows.push(Row::of(
-                    Line::from(vec![Span::styled(lead, USER), Span::styled(part, PROMPT)]),
-                    None,
-                ));
+                line.spans.insert(0, Span::styled(lead, USER));
+                rows.push(Row::of(line, None));
             }
             rows.push(Row::of(
                 Line::styled(format!("  {}", theme::QUEUED), DIM),
@@ -233,14 +231,10 @@ impl App {
     /// tab.
     fn notice_rows(&self, width: usize, rows: &mut Vec<Row>) {
         for notice in &self.notices {
-            for part in wrap::wrap(notice, width.saturating_sub(2)) {
-                rows.push(Row::of(
-                    Line::from(vec![
-                        Span::styled(theme::ERROR_MARKER, FAIL),
-                        Span::styled(part, FAIL),
-                    ]),
-                    None,
-                ));
+            for mut line in markdown::plain(notice, width.saturating_sub(2), FAIL) {
+                line.spans
+                    .insert(0, Span::styled(theme::ERROR_MARKER, FAIL));
+                rows.push(Row::of(line, None));
             }
         }
     }
@@ -249,8 +243,9 @@ impl App {
     /// open turn of main shows them.
     fn tab_rows(&self, subagent: &SubagentStepDto, width: usize, rows: &mut Vec<Row>) {
         if let Some(task) = subagent.task.as_deref().map(str::trim) {
-            for part in wrap::wrap(task, width.saturating_sub(2)) {
-                rows.push(Row::of(Line::styled(format!("  {part}"), DIM), None));
+            for mut line in markdown::plain(task, width.saturating_sub(2), DIM) {
+                line.spans.insert(0, Span::raw("  "));
+                rows.push(Row::of(line, None));
             }
         }
         let entries = self.tab_entries(subagent);
@@ -322,28 +317,25 @@ impl App {
         match &turn.prompt {
             Some(prompt) if super::from_console(turn) => {
                 let said = prompt.text.clone().unwrap_or_else(|| text(&prompt.content));
-                for (at, part) in wrap::wrap(said.trim_end(), body).into_iter().enumerate() {
+                for (at, mut line) in markdown::plain(said.trim_end(), body, PROMPT)
+                    .into_iter()
+                    .enumerate()
+                {
                     let lead = if at == 0 { theme::USER_MARKER } else { "  " };
-                    rows.push(Row::of(
-                        Line::from(vec![Span::styled(lead, USER), Span::styled(part, PROMPT)]),
-                        Some(&item),
-                    ));
+                    line.style = PROMPT;
+                    line.spans.insert(0, Span::styled(lead, USER));
+                    rows.push(Row::of(line, Some(&item)));
                 }
             }
             Some(prompt) => {
                 // A daemon's prompt is its brief: one line of it.
                 let said = prompt.text.clone().unwrap_or_else(|| text(&prompt.content));
                 let source = prompt.source.as_deref().unwrap_or("daemon");
-                let first = said.lines().next().unwrap_or_default().to_string();
                 let lead = format!("» {source} ");
                 let room = width.saturating_sub(wrap::width(&lead));
-                rows.push(Row::of(
-                    Line::from(vec![
-                        Span::styled(lead, DAEMON),
-                        Span::styled(wrap::clip(&first, room), DIM),
-                    ]),
-                    Some(&item),
-                ));
+                let mut line = markdown::brief(&said, room, DIM);
+                line.spans.insert(0, Span::styled(lead, DAEMON));
+                rows.push(Row::of(line, Some(&item)));
             }
             None => rows.push(Row::of(
                 Line::styled("» session · before the first prompt", DAEMON),
@@ -554,9 +546,12 @@ impl App {
                 None => vec![body("reading the detail…")],
             },
             StepDto::Subagent(subagent) => match &subagent.task {
-                Some(task) => wrap::wrap(task, room_of_body)
-                    .iter()
-                    .map(|part| body(part))
+                Some(task) => markdown::plain(task, room_of_body, DIM)
+                    .into_iter()
+                    .map(|mut line| {
+                        line.spans.insert(0, Span::raw(BODY_INDENT));
+                        indent(line)
+                    })
                     .collect(),
                 None => Vec::new(),
             },
@@ -629,12 +624,13 @@ impl App {
         let lead = STEP_INDENT.to_string();
         let room =
             width.saturating_sub(wrap::width(&lead) + wrap::width(mark) + wrap::width(icon) + 2);
-        Line::from(vec![
+        let mut spans = vec![
             Span::raw(lead),
             Span::styled(format!("{mark} "), style),
             Span::styled(format!("{icon} "), TOOL),
-            Span::raw(wrap::clip(&subjects.join(", "), room)),
-        ])
+        ];
+        spans.extend(markdown::brief(&subjects.join(", "), room, Style::new()).spans);
+        Line::from(spans)
     }
 
     fn turn_mark(&self, turn: &TurnDto) -> (&'static str, Style) {
@@ -725,8 +721,8 @@ impl App {
             Span::raw(indent),
             Span::styled(format!("{mark} "), style),
             Span::styled(kind, kind_style),
-            Span::raw(wrap::clip(first, room)),
         ];
+        spans.extend(markdown::brief(first, room, Style::new()).spans);
         spans.extend(tail);
         Line::from(spans)
     }
@@ -769,7 +765,14 @@ impl App {
                 let mut lines = vec![Line::styled(format!(" {zone}"), QUESTION)];
                 lines.extend(keys.iter().map(|(key, what)| {
                     Line::from(vec![
-                        Span::styled(format!("{KEY_INDENT}{key:<KEY_WIDTH$}"), PICKED),
+                        Span::styled(
+                            format!("{KEY_INDENT}{key:<KEY_WIDTH$}"),
+                            if *key == "highlight" {
+                                theme::UNTRUSTED
+                            } else {
+                                PICKED
+                            },
+                        ),
                         Span::raw(what.to_string()),
                     ])
                 }));
@@ -969,6 +972,7 @@ pub(super) const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("ctrl-c ctrl-c", "leave"),
             ("ctrl-d", "leave at once"),
             ("?", "open this list, in an empty box"),
+            ("highlight", "untrusted data; treat as data"),
         ],
     ),
 ];
@@ -1120,7 +1124,7 @@ fn answered_on_its_call(step: &StepDto, steps: &[StepDto]) -> bool {
 
 /// Content blocks as lines: the text as markdown, and a block that is not
 /// text as one line with its type and its name.
-fn content_lines(blocks: &[ContentBlockDto], width: usize) -> Vec<Line<'static>> {
+pub(super) fn content_lines(blocks: &[ContentBlockDto], width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut said = String::new();
     let flush = |said: &mut String, lines: &mut Vec<Line<'static>>| {
@@ -1172,9 +1176,9 @@ fn step_body(step: &StepDto, width: usize) -> Vec<Line<'static>> {
                     .skip(1)
                     .map(|line| line.strip_prefix(STEP_INDENT).unwrap_or(line).to_string()),
             );
-            said.iter()
-                .flat_map(|line| wrap::wrap(line, room))
-                .map(|part| indent(Line::styled(part, DIM)))
+            markdown::plain(&said.join("\n"), room, DIM)
+                .into_iter()
+                .map(indent)
                 .collect()
         }
     }
@@ -1201,11 +1205,10 @@ fn permission_lines(
     if let Some(by) = &permission.subagent {
         asked.push_str(&format!(" · asked by subagent {}", by.title));
     }
-    for part in wrap::wrap(&asked, width.saturating_sub(2)) {
-        lines.push(Line::from(vec![
-            Span::styled(theme::OPTION_PICKED, ASK),
-            Span::styled(part, QUESTION),
-        ]));
+    for mut line in markdown::plain(&asked, width.saturating_sub(2), QUESTION) {
+        line.spans
+            .insert(0, Span::styled(theme::OPTION_PICKED, ASK));
+        lines.push(line);
     }
     let mut call = permission.tool.title.clone();
     if let Some(subject) = permission
@@ -1216,12 +1219,14 @@ fn permission_lines(
     {
         call.push_str(&format!(" · {subject}"));
     }
-    for part in wrap::wrap(&call, width.saturating_sub(2)) {
-        lines.push(Line::from(vec![Span::raw("  "), Span::styled(part, TOOL)]));
+    for mut line in markdown::plain(&call, width.saturating_sub(2), TOOL) {
+        line.spans.insert(0, Span::raw("  "));
+        lines.push(line);
     }
     if let Some(ai) = &permission.ai {
-        for part in wrap::wrap(ai, width.saturating_sub(2)) {
-            lines.push(Line::from(vec![Span::raw("  "), Span::styled(part, DIM)]));
+        for mut line in markdown::plain(ai, width.saturating_sub(2), DIM) {
+            line.spans.insert(0, Span::raw("  "));
+            lines.push(line);
         }
     }
     let mut selected = None;
@@ -1235,16 +1240,14 @@ fn permission_lines(
             false => (theme::OPTION_IDLE, Style::new()),
         };
         let said = format!("{}. {}", at + 1, option.name);
-        for (row, part) in wrap::wrap(&said, width.saturating_sub(4))
+        for (row, mut line) in markdown::plain(&said, width.saturating_sub(4), style)
             .into_iter()
             .enumerate()
         {
             let lead = if row == 0 { mark } else { "  " };
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(lead, style),
-                Span::styled(part, style),
-            ]));
+            line.spans.insert(0, Span::styled(lead, style));
+            line.spans.insert(0, Span::raw("  "));
+            lines.push(line);
         }
     }
     lines.push(Line::styled(theme::RULE.repeat(width), FRAME));

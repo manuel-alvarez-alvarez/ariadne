@@ -8,7 +8,7 @@ use ariadne_api::trajectory::{PlanDto, SessionStateDto};
 use ariadne_core::Seat;
 
 use crate::theme::{self, AGENT, ASK, DIM, FAIL, PLAN, TOOL};
-use crate::wrap::{self, wrap};
+use crate::wrap;
 
 use super::draw::{FOLDED, UNFOLDED};
 
@@ -50,10 +50,9 @@ pub(super) fn plan_lines(
         theme::SEPARATOR
     );
     let room = width.saturating_sub(wrap::width(&lead));
-    let mut lines = vec![Line::from(vec![
-        Span::styled(lead, PLAN),
-        Span::raw(wrap::clip(current.lines().next().unwrap_or_default(), room)),
-    ])];
+    let mut head = crate::markdown::brief(&current, room, Style::new());
+    head.spans.insert(0, Span::styled(lead, PLAN));
+    let mut lines = vec![head];
     if !open {
         return (lines, 0, 0);
     }
@@ -65,16 +64,17 @@ pub(super) fn plan_lines(
             _ => (theme::PLAN_TODO, Style::new()),
         };
         let room = width.saturating_sub(wrap::width(mark));
-        for (at, part) in wrap(&entry.content, room).into_iter().enumerate() {
+        for (at, mut line) in crate::markdown::plain(&entry.content, room, style)
+            .into_iter()
+            .enumerate()
+        {
             let lead = if at == 0 {
                 mark.to_string()
             } else {
                 " ".repeat(wrap::width(mark))
             };
-            entries.push(Line::from(vec![
-                Span::styled(lead, style),
-                Span::styled(part, style),
-            ]));
+            line.spans.insert(0, Span::styled(lead, style));
+            entries.push(line);
         }
     }
     if entries.len() < most {

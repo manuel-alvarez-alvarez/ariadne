@@ -24,12 +24,139 @@ use crate::wrap::{cut, wrap_exact, wrap_words};
 
 /// Render `text` as markdown, wrapped to `width` columns.
 pub fn render(text: &str, width: usize) -> Vec<Line<'static>> {
-    Writer::new(width.max(1)).run(text)
+    let (prepared, regions) = trust_regions(text);
+    Writer::new(width.max(1)).run_prose(&prepared, &regions)
+}
+
+/// Wrap prose without interpreting its Markdown. Delimiters affect only style.
+pub(crate) fn plain(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+    let (text, regions) = trust_regions(text);
+    if regions.is_empty() {
+        return crate::wrap::wrap(&text, width)
+            .into_iter()
+            .map(|line| Line::styled(line, style))
+            .collect();
+    }
+    let mut writer = Writer::new(width.max(1));
+    let mut offset = 0;
+    for line in text.split('\n') {
+        let end = offset + line.len();
+        let mut cuts = vec![offset, end];
+        for region in &regions {
+            cuts.extend(
+                [region.start, region.end]
+                    .into_iter()
+                    .filter(|at| offset < *at && *at < end),
+            );
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        for pair in cuts.windows(2) {
+            writer.untrusted = regions.iter().any(|region| region.contains(&pair[0]));
+            writer.push(&text[pair[0]..pair[1]], style);
+        }
+        let before = writer.lines.len();
+        writer.flush();
+        if writer.lines.len() == before {
+            writer.lines.push(Line::default());
+        }
+        offset = end + 1;
+    }
+    writer.lines
+}
+
+/// The first line of prose, clipped after removing presentation delimiters.
+pub(crate) fn brief(text: &str, width: usize, style: Style) -> Line<'static> {
+    if width == 0 {
+        return Line::default();
+    }
+    let first = text.lines().next().unwrap_or_default();
+    let (clean, regions) = trust_regions(first);
+    let clipped = crate::wrap::clip(&clean, width);
+    let shortened = clipped != clean;
+    let end = if shortened {
+        clipped.len() - '…'.len_utf8()
+    } else {
+        clipped.len()
+    };
+    let mut cuts = vec![0, end];
+    for region in &regions {
+        cuts.extend(
+            [region.start, region.end]
+                .into_iter()
+                .filter(|at| *at < end),
+        );
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+    let mut spans = Vec::new();
+    for pair in cuts.windows(2) {
+        let style = if regions.iter().any(|region| region.contains(&pair[0])) {
+            style.patch(crate::theme::UNTRUSTED)
+        } else {
+            style
+        };
+        spans.push(Span::styled(clean[pair[0]..pair[1]].to_string(), style));
+    }
+    if shortened {
+        let style = if regions.iter().any(|region| region.contains(&end)) {
+            style.patch(crate::theme::UNTRUSTED)
+        } else {
+            style
+        };
+        spans.push(Span::styled("…", style));
+    }
+    Line::from(spans)
+}
+
+// Parse code ranges first so examples retain literal delimiters. Trust ranges
+// refer to the cleaned source, which the Markdown parser sees without markers.
+fn trust_regions(text: &str) -> (String, Vec<std::ops::Range<usize>>) {
+    let mut protected = Vec::new();
+    let mut start = None;
+    for (event, range) in Parser::new(text).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(_)) => start = Some(range.start),
+            Event::End(TagEnd::CodeBlock) => {
+                if let Some(start) = start.take() {
+                    protected.push(start..range.end);
+                }
+            }
+            Event::Code(_) => protected.push(range),
+            _ => {}
+        }
+    }
+    let mut out = String::new();
+    let mut regions = Vec::new();
+    let mut opening = None;
+    let mut at = 0;
+    while at < text.len() {
+        let rest = &text[at..];
+        let literal = protected.iter().any(|range| range.contains(&at));
+        if !literal && rest.starts_with("<<<untrusted>>>") {
+            opening.get_or_insert(out.len());
+            at += "<<<untrusted>>>".len();
+        } else if !literal && rest.starts_with("<<<end untrusted>>>") {
+            if let Some(start) = opening.take() {
+                regions.push(start..out.len());
+            }
+            at += "<<<end untrusted>>>".len();
+        } else {
+            let ch = rest.chars().next().unwrap();
+            out.push(ch);
+            at += ch.len_utf8();
+        }
+    }
+    if let Some(start) = opening {
+        regions.push(start..out.len());
+    }
+    (out, regions)
 }
 
 #[derive(Default)]
 struct Writer {
     width: usize,
+    untrusted: bool,
     lines: Vec<Line<'static>>,
     pending: Vec<Span<'static>>,
     style: Style,
@@ -54,11 +181,64 @@ struct Link {
 
 struct Table {
     alignments: Vec<Alignment>,
-    header: Vec<String>,
-    rows: Vec<Vec<String>>,
-    row: Vec<String>,
-    cell: Option<String>,
+    header: Vec<Cell>,
+    rows: Vec<Vec<Cell>>,
+    row: Vec<Cell>,
+    cell: Option<Cell>,
     header_open: bool,
+}
+
+#[derive(Default)]
+struct Cell {
+    text: String,
+    regions: Vec<std::ops::Range<usize>>,
+}
+
+impl Cell {
+    fn append(&mut self, text: &str, untrusted: bool) {
+        let start = self.text.len();
+        self.text.push_str(text);
+        if untrusted {
+            self.regions.push(start..self.text.len());
+        }
+    }
+
+    fn wrapped(&self, width: usize, base: Style) -> Vec<Line<'static>> {
+        let mut offset = 0;
+        wrap_words(&self.text, width)
+            .into_iter()
+            .map(|part| {
+                let mut spans: Vec<Span<'static>> = Vec::new();
+                for ch in part.chars() {
+                    if ch != ' ' {
+                        offset += self.text[offset..].find(ch).unwrap_or(0);
+                    }
+                    let style = if self.regions.iter().any(|range| range.contains(&offset)) {
+                        base.patch(crate::theme::UNTRUSTED)
+                    } else {
+                        base
+                    };
+                    if spans.last().is_some_and(|span| span.style == style) {
+                        spans.last_mut().unwrap().content.to_mut().push(ch);
+                    } else {
+                        spans.push(Span::styled(ch.to_string(), style));
+                    }
+                    if ch == ' ' {
+                        while let Some(ch) = self.text[offset..]
+                            .chars()
+                            .next()
+                            .filter(|ch| ch.is_whitespace())
+                        {
+                            offset += ch.len_utf8();
+                        }
+                    } else {
+                        offset += ch.len_utf8();
+                    }
+                }
+                Line::from(spans)
+            })
+            .collect()
+    }
 }
 
 impl Writer {
@@ -69,10 +249,33 @@ impl Writer {
         }
     }
 
-    fn run(mut self, text: &str) -> Vec<Line<'static>> {
+    fn run_prose(mut self, text: &str, regions: &[std::ops::Range<usize>]) -> Vec<Line<'static>> {
         let options =
             Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
-        for event in Parser::new_ext(text, options) {
+        for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+            self.untrusted = regions.iter().any(|region| region.contains(&range.start));
+            if let Event::Text(value) | Event::Html(value) | Event::InlineHtml(value) = &event
+                && value.as_ref() == &text[range.clone()]
+            {
+                let mut cuts = vec![range.start, range.end];
+                for region in regions {
+                    cuts.extend(
+                        [region.start, region.end]
+                            .into_iter()
+                            .filter(|at| range.start < *at && *at < range.end),
+                    );
+                }
+                cuts.sort_unstable();
+                cuts.dedup();
+                for pair in cuts.windows(2) {
+                    self.untrusted = regions.iter().any(|region| region.contains(&pair[0]));
+                    self.event(Event::Text(text[pair[0]..pair[1]].into()));
+                }
+                continue;
+            }
+            self.untrusted = regions
+                .iter()
+                .any(|region| region.start < range.end && range.start < region.end);
             self.event(event);
         }
         self.flush();
@@ -152,7 +355,7 @@ impl Writer {
                 .row
                 .clear(),
             Tag::TableCell => {
-                self.table.as_mut().expect("a table cell has a table").cell = Some(String::new())
+                self.table.as_mut().expect("a table cell has a table").cell = Some(Cell::default())
             }
             Tag::Heading { level, .. } => {
                 self.blank();
@@ -275,13 +478,20 @@ impl Writer {
         let Some(cell) = &mut table.cell else {
             return false;
         };
-        cell.push_str(text);
+        cell.append(text, self.untrusted);
         true
     }
 
     fn push(&mut self, text: &str, style: Style) {
         if !text.is_empty() {
-            self.pending.push(Span::styled(text.to_string(), style));
+            self.pending.push(Span::styled(
+                text.to_string(),
+                if self.untrusted {
+                    style.patch(crate::theme::UNTRUSTED)
+                } else {
+                    style
+                },
+            ));
         }
     }
 
@@ -316,7 +526,17 @@ impl Writer {
             let start = text.len() - rest.len();
             let (part, next) = cut(rest, self.width.saturating_sub(prefix.width()).max(1));
             let mut spans = vec![Span::styled(prefix.clone(), MARK)];
-            spans.extend(styled(text, start..start + part.len(), &runs));
+            spans.extend(
+                styled(text, start..start + part.len(), &runs)
+                    .into_iter()
+                    .map(|span| {
+                        if self.untrusted {
+                            span.patch_style(crate::theme::UNTRUSTED)
+                        } else {
+                            span
+                        }
+                    }),
+            );
             self.lines.push(Line::from(spans));
             let Some(next) = next else {
                 break;
@@ -348,7 +568,7 @@ impl Writer {
                 loop {
                     let prefix = if first_line { &first } else { &rest };
                     let room = self.room(prefix, used);
-                    if used > 0 && word.width() > room {
+                    if used > 0 && (word.width() > room || used + prefix.width() >= self.width) {
                         trim_space(&mut spans);
                         self.emit(&mut spans, prefix);
                         used = 0;
@@ -458,7 +678,7 @@ impl Writer {
                 std::iter::once(table.header.get(column))
                     .chain(table.rows.iter().map(|row| row.get(column)))
                     .flatten()
-                    .map(|cell| cell.width())
+                    .map(|cell| cell.text.width())
                     .max()
                     .unwrap_or(0)
             })
@@ -491,45 +711,67 @@ impl Writer {
     fn draw_row(
         &mut self,
         prefix: &str,
-        row: &[String],
+        row: &[Cell],
         widths: &[usize],
         aligns: &[Alignment],
         header: bool,
     ) {
+        let base = if header { TABLE_HEADER } else { Style::new() };
         let cells: Vec<_> = widths
             .iter()
             .enumerate()
-            .map(|(i, width)| wrap_words(row.get(i).map(String::as_str).unwrap_or(""), *width))
+            .map(|(i, width)| {
+                row.get(i)
+                    .map(|cell| cell.wrapped(*width, base))
+                    .unwrap_or_else(|| vec![Line::default()])
+            })
             .collect();
         let height = cells.iter().map(Vec::len).max().unwrap_or(1);
         for at in 0..height {
-            let mut line = String::new();
+            let mut spans = vec![Span::styled(prefix.to_string(), MARK)];
             for i in 0..widths.len() {
                 if i > 0 {
-                    line.push_str(" | ");
+                    spans.push(Span::styled(" | ", base));
                 }
-                let cell = cells[i].get(at).map(String::as_str).unwrap_or("");
-                line.push_str(&pad(
-                    cell,
+                let cell = cells[i].get(at).cloned().unwrap_or_default();
+                let text = cell.to_string();
+                let padded = pad(
+                    &text,
                     widths[i],
                     aligns.get(i).copied().unwrap_or(Alignment::None),
-                ));
+                );
+                let left = if text.is_empty() {
+                    0
+                } else {
+                    padded.find(&text).unwrap_or(0)
+                };
+                spans.push(Span::styled(padded[..left].to_string(), base));
+                spans.extend(cell.spans);
+                spans.push(Span::styled(padded[left + text.len()..].to_string(), base));
             }
-            self.line(
-                prefix,
-                &line,
-                if header { TABLE_HEADER } else { Style::new() },
-            );
+            self.lines.push(Line::from(spans));
         }
     }
 
     fn draw_pairs(&mut self, prefix: &str, width: usize, table: &Table, columns: usize) {
         for row in &table.rows {
             for i in 0..columns {
-                let header = table.header.get(i).map(String::as_str).unwrap_or("");
-                let value = row.get(i).map(String::as_str).unwrap_or("");
-                for part in wrap_words(&format!("{header}: {value}"), width) {
-                    self.line(prefix, &part, Style::new());
+                let mut cell = Cell::default();
+                for (part, separator) in [(table.header.get(i), ": "), (row.get(i), "")] {
+                    if let Some(part) = part {
+                        let offset = cell.text.len();
+                        cell.text.push_str(&part.text);
+                        cell.regions.extend(
+                            part.regions
+                                .iter()
+                                .map(|range| range.start + offset..range.end + offset),
+                        );
+                    }
+                    cell.text.push_str(separator);
+                }
+                for mut line in cell.wrapped(width, Style::new()) {
+                    line.spans.insert(0, Span::styled(prefix.to_string(), MARK));
+                    self.lines.push(line);
                 }
             }
         }
@@ -1162,6 +1404,114 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn untrusted_markers_preserve_headings_lists_and_table_cells() {
+        let lines = render(
+            "<<<untrusted>>># Heading\n\n- **item**\n<<<end untrusted>>>\n\n| name | value |\n| --- | --- |\n| trusted | <<<untrusted>>>risk<<<end untrusted>>> |",
+            60,
+        );
+        let shown = text(&lines).join("\n");
+        assert!(shown.contains("# Heading"), "{shown}");
+        assert!(shown.contains("item"));
+        assert!(!shown.contains("<<<"));
+        let heading = lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .find(|span| span.content.contains("Heading"))
+            .unwrap();
+        assert!(heading.style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(heading.style.bg, Some(Color::DarkGray));
+        let risk = lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .find(|span| span.content.contains("risk"))
+            .unwrap();
+        assert_eq!(risk.style.bg, Some(Color::DarkGray));
+        let trusted = lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .find(|span| span.content.contains("trusted"))
+            .unwrap();
+        assert_eq!(trusted.style.bg, None);
+    }
+
+    #[test]
+    fn untrusted_tables_keep_trust_when_narrow_and_preserve_literal_unicode() {
+        let source = "| name | value |\n| --- | --- |\n| trusted | <<<untrusted>>>risk data<<<end untrusted>>> |";
+        for width in 1..60 {
+            let lines = render(source, width);
+            assert!(
+                lines.iter().all(|line| line.width() <= width),
+                "{width}: {lines:?}"
+            );
+            for span in lines.iter().flat_map(|line| &line.spans) {
+                if span.content.contains("risk") {
+                    assert_eq!(span.style.bg, Some(Color::DarkGray));
+                }
+                assert!(!span.content.contains("<<<"));
+            }
+        }
+        let literal = "keep \u{2060} and \u{2063} in `code`";
+        assert_eq!(text(&render(literal, 100)), [literal]);
+    }
+
+    #[test]
+    fn untrusted_regions_survive_wrapping_streaming_and_fenced_examples() {
+        let source = "<<<untrusted>>>alpha **beta** gamma<<<end untrusted>>> safe";
+        for end in source
+            .char_indices()
+            .map(|(at, _)| at)
+            .chain([source.len()])
+        {
+            let lines = render(&source[..end], 8);
+            assert!(
+                lines.iter().all(|line| line.width() <= 8),
+                "{end}: {lines:?}"
+            );
+        }
+        let lines = render(source, 8);
+        assert!(!text(&lines).join(" ").contains("<<<"));
+        for span in lines.iter().flat_map(|line| &line.spans) {
+            if span.content.contains("alpha")
+                || span.content.contains("beta")
+                || span.content.contains("gamma")
+            {
+                assert_eq!(span.style.bg, Some(Color::DarkGray));
+            }
+            if span.content.contains("safe") {
+                assert_eq!(span.style.bg, None);
+            }
+        }
+        let example = render(
+            "```text\n<<<untrusted>>>example<<<end untrusted>>>\n```",
+            100,
+        );
+        assert!(
+            text(&example)
+                .join("\n")
+                .contains("<<<untrusted>>>example<<<end untrusted>>>")
+        );
+    }
+
+    #[test]
+    fn untrusted_prose_keeps_formatting_and_code_examples() {
+        let lines = render(
+            "safe <<<untrusted>>>**risk**<<<end untrusted>>> safe `<<<untrusted>>>`",
+            100,
+        );
+        assert_eq!(text(&lines), ["safe risk safe `<<<untrusted>>>`"]);
+        let risk = lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .find(|span| span.content == "risk")
+            .unwrap();
+        assert!(risk.style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(risk.style.bg, Some(Color::DarkGray));
+        let open = render("<<<untrusted>>>risk", 10);
+        assert_eq!(text(&open), ["risk"]);
+        assert_eq!(open[0].spans[0].style.bg, Some(Color::DarkGray));
     }
 
     #[test]
