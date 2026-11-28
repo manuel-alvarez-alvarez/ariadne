@@ -793,3 +793,21 @@ it("returns focus to the step row when Escape closes a drawer whose opener disap
   expect(screen.queryByRole("dialog")).toBeNull()
   expect(requests.filter((one) => one.path.endsWith("/console/cancel"))).toEqual([])
 })
+
+it("opens a subagent's steps in the scroll of the transcript, with no box of its own", async () => {
+  const user = userEvent.setup()
+  let subagent = aSubagentStep("none")
+  renderTurn((turnId) => {
+    subagent = aSubagentStep(turnId)
+    return [subagent]
+  })
+  subagentSteps[subagent.subagent_id] = [
+    aToolStep(subagent.turn_id, { lane: subagent.subagent_id }),
+  ]
+
+  await user.click(row(subagent))
+
+  const detail = detailOf(subagent) as HTMLElement
+  expect(detail.className).not.toContain("max-h-")
+  expect(detail.className).not.toContain("overflow")
+})

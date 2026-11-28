@@ -346,7 +346,7 @@ Out: the daemon endpoints themselves (012).
     `kbd` and inline code styled, a single newline in a prompt still a line
     break, and a fenced block a `CodeBlock`
     (`ui/src/features/sessions/console/blocks.test.tsx::renders a prompt as Markdown: headings, task lists, a fenced block, and a single newline still breaks`,
-    `::renders developer prompts as full Markdown without a fold`,
+    `::renders a developer prompt as Markdown, folded to 4 lines with Show more where it is longer`,
     `::draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text`,
     `::shows the time of a prompt and marks a queued one`).
 22. An input box posts a prompt as `{"text"}` to
@@ -1626,10 +1626,21 @@ the ops of each update by id.
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the turn console in the session view, with no parameter`).
 90. A turn shows its prompt, one activity line and its answer. A closed turn
     with nothing in its `attention` is these three rows. The activity line
-    gives the time of the turn, its steps, the files it changed and its
-    failed calls, as `1m 04s · 5 steps · 2 files changed · 1 failed`, after
-    the icon of the turn's state (rule 112)
-    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws a closed turn as its prompt, one activity line and its answer`).
+    gives the duration of the turn, then the count of its steps, then each of
+    the files changed, the failed, the cancelled and the subagents only where
+    it is above zero, as `1m 04s · 5 steps · 2 files changed · 1 failed`,
+    after the icon of the turn's state (rule 112). A turn with no steps shows
+    the duration alone
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws a closed turn as its prompt, one activity line and its answer`,
+    `::shows the duration, then the steps, then each count above zero`).
+90a. A daemon prompt shows its `text`, the prompt without the seat brief, and
+    without its `untrusted` marks. Where it is more than 4 lines, it shows its
+    first 4 lines and a `Show more` control, which opens the whole prompt as
+    Markdown; `Show less` folds it again. A typed prompt shows whole. The
+    console keeps the fold of each prompt with its other folds
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows a daemon prompt without its seat brief and its untrusted marks`,
+    `::folds a daemon prompt of more than 4 lines, and keeps its fold off the screen`,
+    `::shows a typed prompt whole, and a daemon prompt of 4 lines whole`).
 91. The activity line is a button with `aria-expanded`. It opens to the step
     rows of the turn, which it reads from
     `GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps`. A row shows the
@@ -1647,6 +1658,11 @@ the ops of each update by id.
     `ui/src/features/sessions/trajectory/store.test.ts::keeps a row seen live in an open fold after its turn ends`,
     `::shows the live status of a step over a page read before it`,
     `::shows the steps of an open fold in the turn's order, each counted once`).
+    A row shows the first line of the title, and the subject after it only
+    where the title does not contain the subject. An open turn does not show
+    the message step that is its `answer_step_id` as a row
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the first line of a title, and a subject only when the title lacks it`,
+    `::does not show the message step that is the answer of an open turn`).
 92. The running turn shows its last 3 steps under its activity line, and
     each new step pushes the oldest one out. Its newest message is its
     answer, and a `text_append` op extends it as it streams. The rows and
@@ -1814,8 +1830,12 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     call's `permission` id or by its tool call id, and not a row of its own
     where the call's row shows. The mark gives `✓` or `✗` by the kind of the
     option chosen, the option's label, and who decided: `you`, `AI`, a
-    learned rule or `auto`
-    (`ui/src/features/sessions/trajectory/console-state.test.tsx::marks an answered permission on the row of its call, with who decided`).
+    learned rule or `auto`. An allow that `auto` or a learned permission gave
+    has no mark. An allow by the AI or by a person is a mark in the muted
+    colour, and a rejection is one in the danger colour. The open detail of
+    the call shows the answer and who decided, for each decider
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::marks an answered permission on the row of its call, with who decided`,
+    `::marks only what a person or the AI allowed, or anything rejected, and says who in the detail`).
 99e. The title that the agent gives the session shows as the subtitle of the
     console, under its stream line, and a `session_patch` changes it
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the title that the agent gives as the subtitle of the console`).
@@ -1938,8 +1958,10 @@ view.
      `before=<step id>`, in place and in the full view. Where `can_cancel` is true, the
      row has a Cancel control that posts `{"subagent_id"}` to
      `POST /v1/sessions/{id}/console/cancel`. Where it is false, the row has
-     none
-     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::draws a subagent step with its title, task, state, time and step count, opens it to its steps, and cancels it`,
+     none. The open detail of a subagent has no set height and no scroll of
+     its own: its steps scroll with the transcript
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::opens a subagent's steps in the scroll of the transcript, with no box of its own`,
+     `::draws a subagent step with its title, task, state, time and step count, opens it to its steps, and cancels it`,
      `::offers no cancel on a subagent the agent does not let cancel`,
      `::reads the earlier steps of a subagent with Show N earlier`).
 107. `Open` shows the whole content of a step, with no set height, in the
