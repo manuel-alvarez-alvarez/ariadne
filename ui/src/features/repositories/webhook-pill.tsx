@@ -58,8 +58,9 @@ export function WebhookPill({
 }) {
   // A disabled integration neither listens nor fetches.
   if (!forge.enabled) return <span className="text-muted-foreground">-</span>
-  // A repository whose webhook is off polls, so no tunnel answer is waited for.
-  const waiting = forge.webhook_enabled && !tunnel
+  // A repository whose webhook is off polls, and one the forge refused for
+  // rights polls too: neither waits for a tunnel answer.
+  const waiting = forge.webhook_enabled && forge.webhook.rights_refused !== true && !tunnel
   if (waiting && failed)
     return (
       <span className="text-muted-foreground" title="The tunnel could not be read">

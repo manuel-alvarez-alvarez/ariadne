@@ -291,6 +291,38 @@ describe("RepositoriesPage", () => {
     expect(await screen.findByText(/Turn off the webhook for this repository/)).toBeDefined()
   })
 
+  it("shows amber polling for a rights refusal while the tunnel cannot be read", async () => {
+    stubDaemon([
+      {
+        ...ARIADNE,
+        forge: aForge({
+          enabled: true,
+          webhook: {
+            state: "polling",
+            url: null,
+            error: "HTTP 404: Not Found",
+            last_delivery_at: null,
+            fetch_error: null,
+            rights_refused: true,
+          },
+        }),
+      },
+    ])
+    const answer = daemonFetch.getMockImplementation()
+    daemonFetch.mockImplementation(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      if (new URL(request.url).pathname === "/v1/forge/tunnel") {
+        return errorResponse(500, "internal", "no tunnel")
+      }
+      return (answer as NonNullable<typeof answer>)(input, init)
+    })
+    renderScreen(<RepositoriesPage />)
+
+    const pill = await screen.findByRole("img", { name: "polling: no webhook rights" })
+    expect(pill.className).toContain("bg-status-warn-soft")
+    expect(screen.queryByTitle("The tunnel could not be read")).toBeNull()
+  })
+
   it("shows the forge each remote is on over two lines, and whether it is enabled", async () => {
     stubDaemon([
       { ...ARIADNE, forge: aForge({ enabled: true, login: "octocat" }) },
