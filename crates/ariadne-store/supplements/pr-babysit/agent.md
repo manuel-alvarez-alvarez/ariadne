@@ -3,5 +3,5 @@ With `pr-babysit`:
 - `<head>` is the task branch.
 - Read the request with `get_pull_request` and its comments with `list_comments` with `unanswered_only`. Post a reply with `reply_comment`. Read a thread with `get_comment` and the head with `get_diff`.
 - To hand a thread to the user, call `escalate_comment`.
-- On a merge, update `<base>` in the primary checkout. Run `git -C <path> merge --ff-only <remote>/<base>` where `<base>` is checked out. Else run `git -C <path> fetch <remote> <base>:<base>`. Then call `complete_step`. A refused call needs nothing more: end your turn.
+- On a merge, update `<base>` in the primary checkout. Run `git -C <path> merge --ff-only <remote>/<base>` where `<base>` is checked out. Else run `git -C <path> fetch <remote> <base>:<base>`. Then call `complete_step`. A call refused because the task already ended needs nothing more: end your turn.
 - On a close, call `fail_task` with the reason.
