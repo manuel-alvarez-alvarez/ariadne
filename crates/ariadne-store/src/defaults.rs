@@ -953,12 +953,13 @@ pub(crate) mod tests {
     /// up here. The agent seat's `code-review` supplement is 300: the diff
     /// call and the two step calls the skill dropped. The reviewer seat's is
     /// 200: one line that hands the round to `pr-reviewer`, and one that
-    /// skips the step call. The agent seat's `pr-babysit` supplement is 950:
+    /// skips the step call. The agent seat's `pr-babysit` supplement is 1,100:
     /// it holds every Ariadne rule the skill gave up for the task seat, which
     /// is how to open the request (the push, the open call, the title and the
     /// body), the read and reply calls, the escalation call, the update of
-    /// the base in the primary checkout on a merge, and the two ends, the
-    /// step call and the failing call. The keeper seat's is 500: the same
+    /// the base in the primary checkout on a merge, the two ends, the
+    /// step call and the failing call, and the retry of a refused open call,
+    /// which holds the turn open until the call succeeds. The keeper seat's is 500: the same
     /// read, reply and escalation calls, the push command of the briefing,
     /// the user as the requester, and an end of turn, with no task tool. The
     /// total rose from 500 to 2,000, the four caps with a sentence of room.
@@ -970,7 +971,7 @@ pub(crate) mod tests {
         let cap = |skill: &str, seat: Seat| match (skill, seat) {
             ("code-review", Seat::Agent) => 300,
             ("code-review", Seat::Reviewer) => 200,
-            ("pr-babysit", Seat::Agent) => 950,
+            ("pr-babysit", Seat::Agent) => 1100,
             ("pr-babysit", Seat::Keeper) => 500,
             _ => panic!(
                 "the {skill} supplement of the {} seat has no cap",
