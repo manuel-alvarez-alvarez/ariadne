@@ -11,6 +11,7 @@
 
 import type { ForgeDto, ForgeTunnelDto } from "@/api"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/format"
 
@@ -40,13 +41,25 @@ export function pushesLive(forge: ForgeDto, tunnel: ForgeTunnelDto | undefined) 
 export function WebhookPill({
   forge,
   tunnel,
+  failed = false,
 }: {
   forge: ForgeDto
   /** The tunnel's switch and state; undefined while it is still loading. */
   tunnel: ForgeTunnelDto | undefined
+  /** The tunnel could not be read: its mode is unknown, not loading. */
+  failed?: boolean
 }) {
   // A disabled integration neither listens nor fetches.
   if (!forge.enabled) return <span className="text-muted-foreground">-</span>
+  // A repository whose webhook is off polls, so no tunnel answer is waited for.
+  const waiting = forge.webhook_enabled && !tunnel
+  if (waiting && failed)
+    return (
+      <span className="text-muted-foreground" title="The tunnel could not be read">
+        unknown
+      </span>
+    )
+  if (waiting) return <Skeleton aria-label="Loading webhook mode" className="h-5 w-16" />
   const { mode, working } = delivery(forge, tunnel)
   return (
     <Tooltip>

@@ -271,3 +271,12 @@ it("clears the search on a pick and shows the columns on that agent and model", 
   expect(heads("Agents")).toEqual(["codex-acp", "claude-agent-acp", "opencode-acp"])
   expect(screen.queryByText("gemini:gemini-3-pro")).toBeNull()
 })
+
+it("keeps the catalog skeleton, not the empty message, while a search waits for the catalog", async () => {
+  const user = userEvent.setup()
+  renderPicker({ catalog: false })
+  await openPicker(user)
+  await search(user, "sonnet")
+  expect(screen.getByLabelText("Loading catalog").getAttribute("data-slot")).toBe("skeleton")
+  expect(screen.queryByText("Nothing in the catalog matches.")).toBeNull()
+})

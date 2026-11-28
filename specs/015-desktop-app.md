@@ -2148,7 +2148,7 @@ view.
      Preserve Markdown formatting and literal markers in code. An open marker
      highlights through the current end of streamed text. Folded prompt previews
      retain the highlight. Stored text, input, copy, export and raw data stay unchanged.
-116. Multi-host lists follow rule 113 until the hosts list and every read host answer or fail.
+117. Multi-host lists follow rule 113 until the hosts list and every read host answer or fail.
      They retain arrived rows and append skeleton rows while other hosts load.
      Empty states and counts wait for all answers. The board keeps its task count unresolved.
      It withholds far task copies until daemon identities resolve.
@@ -2162,6 +2162,21 @@ view.
      Unknown-source messages appear only after resolution.
      Task breadcrumbs show a Skeleton while the goal loads.
 
+116. Forms and pull request controls follow rule 113.
+     The tunnel switch and webhook mode wait for the tunnel query.
+     Repository and workflow fields wait for their catalogs.
+     Task steps, repository and dependency options wait for goal detail and their own queries.
+     Learned-permission repository filters wait for repository names.
+     Dependency summaries and the pin catalog show Skeletons while their queries load.
+     A failed dependency query shows an unknown cause and marks the dependency as not loaded.
+     A recorded task status and reason stay visible while dependencies load.
+     A failed tunnel query ends the webhook Skeleton with an unknown mode.
+     A repository whose webhook is off shows polling without the tunnel.
+     The pin catalog Skeleton also shows while a search waits for the catalog.
+     Pull request Refresh and repository labels wait for repositories and tunnel state, as applicable.
+     Review targets wait for the other hosts' repositories.
+     Review and babysit controls show Skeletons until every host answers or fails.
+
 ## Acceptance criteria
 
 - Source loading follows rule 115
@@ -2171,7 +2186,23 @@ view.
   `ui/src/features/tasks/source-host.test.tsx::keeps source resolution pending while the hosts load`,
   `::resolves an unknown source only after all identities answer`).
 
-- Multi-host loading follows rules 113 and 116
+- Forms show Skeletons while remote values load (rule 116)
+  (`ui/src/features/tasks/form-loading.test.tsx`,
+  `ui/src/features/workflows/workflow-select.test.tsx::shows a skeleton until workflows answer`).
+- Dependency summaries distinguish pending queries from failed queries (rule 116)
+  (`ui/src/features/tasks/task-panel.test.tsx::shows a skeleton while dependency status loads without claiming a blocker`,
+  `::shows an unknown cause when dependency status fails to load`,
+  `::keeps the recorded reason of a failed task while its dependencies load`).
+- A failed tunnel read ends the webhook Skeleton (rule 116)
+  (`ui/src/features/repositories/repositories-page.test.tsx::ends the webhook skeleton when the tunnel cannot be read`,
+  `::shows polling at once for a repository whose webhook is off, whatever the tunnel does`).
+- A catalog search waits behind the Skeleton (rule 116)
+  (`ui/src/features/models/pin-picker.test.tsx::keeps the catalog skeleton, not the empty message, while a search waits for the catalog`).
+- Pull request controls wait for remote data (rule 116)
+  (`ui/src/features/pull-requests/pull-requests-page.test.tsx::shows skeletons for refresh and repository labels until remote data answers`,
+  `ui/src/features/pull-requests/hosts.test.tsx::starts no %s while box has not answered, and none once box holds the work`).
+
+- Multi-host loading follows rules 113 and 117
   (`ui/src/hooks/multi-host-loading.test.tsx`,
   `ui/src/features/goals/hosts.test.tsx::keeps skeleton rows below answered goals until every host answers`,
   `ui/src/features/goals/goal-board.test.tsx::withholds far copies and the task count until daemon identities arrive`).

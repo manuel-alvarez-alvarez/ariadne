@@ -20,6 +20,7 @@ import type { Control, FieldPath, FieldValues } from "react-hook-form"
 
 import type { Host } from "@/api"
 import { FormSelect } from "@/components/form-select"
+import { Skeleton } from "@/components/ui/skeleton"
 
 import { workflowsQueryOptions } from "./queries"
 
@@ -53,6 +54,7 @@ export function WorkflowSelect<V extends FieldValues>({
   onValueChange?: (value: string) => void
 }) {
   const workflows = useQuery({ ...workflowsQueryOptions(host), enabled })
+  if (workflows.isPending) return <Skeleton aria-label="Loading workflows" className="h-9 w-full" />
   const options = [
     ...(allowInherit ? [{ value: INHERIT, label: "Repository default" }] : []),
     ...(workflows.data ?? []).map((workflow) => ({ value: workflow.name, label: workflow.name })),
