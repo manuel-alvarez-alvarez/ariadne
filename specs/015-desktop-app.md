@@ -1213,11 +1213,11 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     host. A host change in the picker clears the repositories and the workflow
     and reloads them for the new host. The sync warning of a host that is not
     in sync shows below the picker. Tests in
-    `ui/src/features/goals/hosts.test.tsx`: “defaults the goal dialog to the
+    `ui/src/features/goals/create-goal-hosts.test.tsx`: “defaults the goal dialog to the
     picked host, and reloads its lists when the host changes”, “clears the
     repositories and the workflow when the picker's host changes, and keeps the
     picker last”, “clears the model and the effort when the goal dialog's host
-    changes”, “warns in the goal dialog of a host whose sync is failed, and
+    changes”, “sends no effort for a model picked again after the goal dialog's host changes”, “warns in the goal dialog of a host whose sync is failed, and
     still creates”, “opens the goal dialog on local under All”; and in
     `ui/src/features/unreachable-hosts.test.tsx`: “opens the goal dialog on
     local when the picked host cannot be reached”, “lists an unreachable host
