@@ -365,19 +365,25 @@ impl Fold {
     }
 
     /// The session as a client reads it. The state keeps the stored model
-    /// and effort; the model and the effort options the agent reports stand
-    /// in their place while it offers them.
+    /// and effort. An option of the category `model` or `thought_level` that
+    /// the agent offers gives its current value in their place, a missing
+    /// value included; the stored one stands only where no such option is.
     fn displayed_session(&self) -> SessionStateDto {
         let mut state = self.session.clone();
-        let current = |category: &str| {
-            state
-                .config_options
-                .iter()
-                .find(|option| option.category.as_deref() == Some(category))
-                .and_then(|option| option.current_value.clone())
+        let current = |category: &str, stored: Option<String>| match state
+            .config_options
+            .iter()
+            .find(|option| option.category.as_deref() == Some(category))
+        {
+            Some(option) => option.current_value.clone(),
+            None => stored,
         };
-        state.model = current("model").or_else(|| state.model.take());
-        state.effort = current("thought_level").or_else(|| state.effort.take());
+        let (model, effort) = (
+            current("model", state.model.take()),
+            current("thought_level", state.effort.take()),
+        );
+        state.model = model;
+        state.effort = effort;
         if state.status == ariadne_core::SessionStatus::Running && state.running_turn_id.is_none() {
             state.status = ariadne_core::SessionStatus::Idle;
         }
@@ -3682,6 +3688,19 @@ mod tests {
         };
         assert_eq!(session.model.as_deref(), Some("m"), "the stored model");
         assert_eq!(session.effort.as_deref(), Some("high"), "the stored effort");
+
+        let (_, ops) = s.event(
+            "display_state_update",
+            json!({"config_options": [
+                {"id": "model", "name": "Model", "category": "model", "options": []},
+                {"id": "effort", "name": "Effort", "category": "thought_level",
+                 "currentValue": null, "options": []}]}),
+        );
+        let [TrajectoryOpDto::SessionPatch { session }] = ops.as_slice() else {
+            panic!("one patch: {ops:?}");
+        };
+        assert_eq!(session.model, None, "an option with no current value");
+        assert_eq!(session.effort, None, "an option with no current value");
     }
 
     /// A prompt holds the seat brief that its content carries ahead of its

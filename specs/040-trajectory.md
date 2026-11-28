@@ -322,9 +322,10 @@ Out:
       agent id of the session: the registry agent its model pin names.
     - `model` is the current value of the config option of the category
       `model`, and `effort` is the current value of the option of the
-      category `thought_level`. Where the agent offers no such option, or it
-      has no current value, `model` is the model of the row's pin, without
-      its agent, and `effort` is the effort of the row.
+      category `thought_level`. An option that is offered gives its current
+      value, null where it has none. Only where the agent offers no such
+      option, `model` is the model of the row's pin, without its agent, and
+      `effort` is the effort of the row.
     - `host` is the name of the host that runs the task of the session, and
       `local` for a session with no task and for a task that names no host.
       It does not change while a hub follows the session.
@@ -818,8 +819,8 @@ Out:
     (rule 33):
     `fold.rs::the_session_state_names_its_seat_step_host_agent_model_and_effort_and_patches_each_change`
     and `trajectory.rs::the_session_state_names_where_it_runs_and_a_switch_patches_it`.
-    The model and the effort are the config options' values, else the
-    stored ones:
+    The model and the effort are the config options' values, null for an
+    option with no current value, and the stored ones where no option is:
     `fold.rs::the_model_and_the_effort_are_the_config_options_values_else_the_stored_ones`.
 90. A remote session gives the name of its host through the forwarder, in the
     snapshot and in a patch (rule 48):
