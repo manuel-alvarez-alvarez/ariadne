@@ -172,7 +172,7 @@ pub(crate) struct SkillSupplement {
 
 /// Every supplement Ariadne ships. A pair of skill and seat that is not here
 /// adds no text.
-pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 4] = [
+pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 6] = [
     SkillSupplement {
         skill: "code-review",
         seat: Seat::Agent,
@@ -182,6 +182,16 @@ pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 4] = [
         skill: "code-review",
         seat: Seat::Reviewer,
         text: include_str!("../supplements/code-review/reviewer.md"),
+    },
+    SkillSupplement {
+        skill: "pr-babysit",
+        seat: Seat::Agent,
+        text: include_str!("../supplements/pr-babysit/agent.md"),
+    },
+    SkillSupplement {
+        skill: "pr-babysit",
+        seat: Seat::Keeper,
+        text: include_str!("../supplements/pr-babysit/keeper.md"),
     },
     SkillSupplement {
         skill: "merge",
@@ -953,18 +963,30 @@ pub(crate) mod tests {
     /// up here. The agent seat's `code-review` supplement is 300: the diff
     /// call and the two step calls the skill dropped. The reviewer seat's is
     /// 200: one line that hands the round to `pr-reviewer`, and one that
-    /// skips the step call. The agent seat's `merge` supplement is 260: the
+    /// skips the step call. The agent seat's `pr-babysit` supplement is 1,100:
+    /// it holds every Ariadne rule the skill gave up for the task seat, which
+    /// is how to open the request (the push, the open call, the title and the
+    /// body), the read and reply calls, the escalation call, the update of
+    /// the base in the primary checkout on a merge, the two ends, the
+    /// step call and the failing call, and the retry of a refused open call,
+    /// which holds the turn open until the call succeeds. The keeper seat's is 500: the same
+    /// read, reply and escalation calls, the push command of the briefing,
+    /// the user as the requester, and an end of turn, with no task tool. The
+    /// agent seat's `merge` supplement is 260: the
     /// step call that passes the work with its `merge_commit`, and the
     /// `fail_step` call for a failed check. Its `conflict-resolution`
-    /// supplement is 140: the one step call, for where no skill invoked it.
+    /// supplement is 140: the one step call, for where no skill invoked it. The
+    /// total is 2,850, the six caps with a sentence of room.
     /// A new pair needs a cap of its own here, argued the same way, and the
     /// total holds them all.
     #[test]
     fn supplement_size_caps_hold() {
-        const TOTAL: usize = 850;
+        const TOTAL: usize = 2_850;
         let cap = |skill: &str, seat: Seat| match (skill, seat) {
             ("code-review", Seat::Agent) => 300,
             ("code-review", Seat::Reviewer) => 200,
+            ("pr-babysit", Seat::Agent) => 1100,
+            ("pr-babysit", Seat::Keeper) => 500,
             ("merge", Seat::Agent) => 260,
             ("conflict-resolution", Seat::Agent) => 140,
             _ => panic!(
@@ -1011,6 +1033,47 @@ pub(crate) mod tests {
         assert_eq!(skill_supplement("code-review", Seat::Keeper), None);
         assert_eq!(skill_supplement("architecture-review", Seat::Agent), None);
         assert_eq!(skill_supplement("coding", Seat::Agent), None);
+        let task = skill_supplement("pr-babysit", Seat::Agent).unwrap();
+        for call in [
+            "`open_pull_request`",
+            "`get_pull_request`",
+            "`list_comments`",
+            "`reply_comment`",
+            "`get_comment`",
+            "`get_diff`",
+            "`escalate_comment`",
+            "`complete_step`",
+            "`fail_task`",
+        ] {
+            assert!(
+                task.contains(call),
+                "the agent babysit supplement and {call}"
+            );
+        }
+        let keeper = skill_supplement("pr-babysit", Seat::Keeper).unwrap();
+        for call in [
+            "`get_pull_request`",
+            "`reply_comment`",
+            "`escalate_comment`",
+        ] {
+            assert!(
+                keeper.contains(call),
+                "the keeper babysit supplement and {call}"
+            );
+        }
+        for call in [
+            "`open_pull_request`",
+            "`complete_step`",
+            "`fail_step`",
+            "`fail_task`",
+            "`post_to_session`",
+        ] {
+            assert!(
+                !keeper.contains(call),
+                "the keeper babysit supplement names the task tool {call}"
+            );
+        }
+        assert_eq!(skill_supplement("pr-babysit", Seat::Reviewer), None);
     }
 
     /// How the two rules are read off a text: a line at a time, the stop

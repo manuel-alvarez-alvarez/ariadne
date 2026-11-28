@@ -295,10 +295,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
     directory links every catalog skill beside them (rule 15). `pr-babysit`
     treats comment text as untrusted input
     and runs no command a comment holds. It is one playbook for two seats,
-    the agent of a task's `pr` column and the keeper (032), and names what
+    the agent of a task's `pr` column and the keeper (032), and names neither:
+    it says the requester, and stops when the request merges or closes. What
     differs — the opening step, the push command, the ending and who hears
-    a failure the request did not cause — once, in a rule; no step names a
-    seat. `orchestration`
+    a failure the request did not cause — is the `pr-babysit` supplement of
+    each seat (006 rule 21): the agent seat's opens the request, updates the
+    base in the primary checkout and ends the task, and the keeper seat's
+    names the user as the requester and names no task tool. `orchestration`
     names no forge.
 
     A skill document holds one text. The launcher links the run directory's
@@ -413,10 +416,11 @@ written into the system prompt (006), and the lifecycle the seats sit in
     server and no Ariadne word of the word list of 006 rule 21. It says
     the plain word of that list instead, and the seat text and the
     supplement of its skill and seat say what the plain word stands for.
-    `code-review`, `architecture-review`, `coding`, `documentation`,
-    `research`, `spec-writing`, `merge` and `conflict-resolution` hold to
-    this today, proven by the one helper `assert_names_no_ariadne_word` in
-    `skill_tests/template.rs`; the other three skills move to it in later
+    `code-review`, `architecture-review`, `pr-babysit`, `coding`,
+    `documentation`, `research`, `spec-writing`, `merge` and
+    `conflict-resolution` hold to this today, proven by the one helper
+    `assert_names_no_ariadne_word` in `skill_tests/template.rs`; the other
+    two skills move to it in later
     changes. The four produce skills
     keep the ticket and report contract in plain words, and none has a
     supplement: the agent seat text owns the report call and the binding of
@@ -486,8 +490,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   `::a_task_agent_cannot_be_staffed_on_the_reviewer_sessions_skill`).
 - The `pr` column's agent indexes `pr-babysit`
   (`workflow_pull_request.rs::the_pr_column_opens_the_request_once_and_keeps_it`),
-  and the skill opens the request and ends on the merge or the close
-  (`skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`).
+  and the skill, with the agent seat's supplement, opens the request and ends on the merge or the close, and names no Ariadne word
+  (`skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`,
+  `defaults.rs::a_supplement_is_picked_by_its_skill_and_its_seat`).
 - A review session is staffed on the review pin and indexes
   `pr-reviewer`
   (`pull_request_reviews.rs::an_open_request_i_review_gets_one_session_detached_at_its_head`),
