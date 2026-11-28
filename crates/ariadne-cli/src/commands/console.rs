@@ -4,14 +4,14 @@
 //! the next `session/prompt`.
 //!
 //! There are two consoles behind one command. A terminal on both ends gets
-//! the inline TUI in [`tui`]: a scrolling transcript with a pinned status
-//! line and input box under it. Anything else — a pipe, a file, a test
-//! harness — gets the plain line protocol of [`run_with_io`], one
-//! `kind · summary` line for each finished item of the trajectory (040),
-//! which is what a script reads.
+//! the full-screen console in [`app`]: the trajectory (040) as turns on the
+//! whole screen, with the input box under it. Anything else — a pipe, a
+//! file, a test harness — gets the plain line protocol of [`run_with_io`],
+//! one `kind · summary` line for each finished item of the trajectory, which
+//! is what a script reads.
 
 mod app;
-mod tui;
+mod terminal;
 
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -35,16 +35,12 @@ use crate::output::{Format, note, pager};
 
 /// Open a session's ACP console.
 ///
-/// A terminal on both ends gets the inline TUI, or the full-screen console
-/// where `full_screen` asks for it. Anything else gets the plain line
-/// protocol, so `ariadne attach <id> < answers.txt` reads and writes lines a
-/// script can follow.
-pub(crate) async fn attach(client: &Client, id: &str, full_screen: bool) -> Result<()> {
-    if tui::on_a_terminal() {
-        return match full_screen {
-            true => app::attach(client, id).await,
-            false => tui::attach(client, id).await,
-        };
+/// A terminal on both ends gets the full-screen console. Anything else gets
+/// the plain line protocol, so `ariadne attach <id> < answers.txt` reads and
+/// writes lines a script can follow.
+pub(crate) async fn attach(client: &Client, id: &str) -> Result<()> {
+    if terminal::on_a_terminal() {
+        return app::attach(client, id).await;
     }
     run_with_io(
         client,
@@ -544,7 +540,7 @@ mod tests {
         assert_eq!(
             table(&printer, &folded),
             "10:00:00  USER  prompt t1\n\
-             \x20 completed · 2 steps · 2 tool calls\n\
+             \x20 completed · 2 steps\n\
              10:05:00  AGENT  answer t1\n\n"
         );
         assert_eq!(
@@ -552,7 +548,7 @@ mod tests {
             "10:00:00  USER  prompt t1\n\
              \x20 10:01:00  tool_call  call c1 · completed\n\
              \x20 10:01:00  tool_call  call c2 · failed\n\
-             \x20 completed · 2 steps · 2 tool calls\n\
+             \x20 completed · 2 steps\n\
              10:05:00  AGENT  answer t1\n\n"
         );
         let kinds = Filters {
@@ -718,7 +714,7 @@ mod tests {
              tool_call · call c1 · completed\n\
              tool_call · call c2 · completed\n\
              tool_call · call c3 · completed\n\
-             turn · completed · 2 steps · 2 tool calls\n"
+             turn · completed · 2 steps\n"
         );
         server.abort();
     }
@@ -765,7 +761,7 @@ mod tests {
         assert_eq!(
             output,
             "prompt · prompt t1\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              answer · answer t1\n\
              prompt · prompt t2\n\
              tool_call · call c1 · completed\n"
@@ -888,10 +884,10 @@ mod tests {
         assert_eq!(
             out,
             "prompt · prompt t2\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              answer · answer t2\n\
              prompt · prompt t3\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              answer · answer t3\n"
         );
     }
@@ -930,12 +926,12 @@ mod tests {
         assert_eq!(
             out,
             "prompt · prompt t1\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              prompt · prompt t2\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              answer · answer t2\n\
              prompt · prompt t3\n\
-             turn · completed · 2 steps · 2 tool calls\n\
+             turn · completed · 2 steps\n\
              answer · answer t3\n"
         );
         assert_eq!(
@@ -1104,14 +1100,14 @@ mod tests {
                 out,
                 "10:00:00  USER  prompt t1\n\
                  \x20 10:02:00  question  Which base?\n\
-                 \x20 completed · 2 steps · 2 tool calls\n\
+                 \x20 completed · 2 steps\n\
                  10:05:00  AGENT  answer t1\n\
                  \n\
                  10:00:00  USER  prompt t2\n\
                  \x20 in the turn of 10:00:00: prompt t1\n\
                  \x20 10:02:00  question  Which base?\n\
                  \x20   answer: base: next\n\
-                 \x20 completed · 2 steps · 2 tool calls\n\
+                 \x20 completed · 2 steps\n\
                  10:05:00  AGENT  answer t2\n\
                  \n",
                 "with --steps: {steps}"
@@ -1165,14 +1161,14 @@ mod tests {
                 out,
                 "10:00:00  USER  prompt t1\n\
                  \x20 10:02:00  question  Which base?\n\
-                 \x20 completed · 2 steps · 2 tool calls\n\
+                 \x20 completed · 2 steps\n\
                  10:05:00  AGENT  answer t1\n\
                  \n\
                  10:00:00  USER  prompt t2\n\
                  \x20 in the turn of 10:00:00: prompt t1\n\
                  \x20 10:02:00  question  Which base?\n\
                  \x20   answer: base: next\n\
-                 \x20 completed · 2 steps · 2 tool calls\n\
+                 \x20 completed · 2 steps\n\
                  10:05:00  AGENT  answer t2\n\
                  \n",
                 "with --steps: {steps}"

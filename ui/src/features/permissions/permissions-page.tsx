@@ -24,6 +24,7 @@ import { HostSync } from "@/components/host-sync"
 import { PageHeader } from "@/components/page-header"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { TAB_ICONS } from "@/lib/tab-icons"
 
 import { AiCard } from "./ai-card"
 import { LearnedPermissionsTab } from "./learned-tab"
@@ -56,8 +57,8 @@ export function PermissionsPage() {
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
         <TabsList>
-          <TabsTrigger value="learned">Learned</TabsTrigger>
-          <TabsTrigger value="ai">AI</TabsTrigger>
+          <TabsTrigger value="learned" icon={<TAB_ICONS.learned />} label="Learned" />
+          <TabsTrigger value="ai" icon={<TAB_ICONS.ai />} label="AI" />
         </TabsList>
         <TabsContent value="learned" className="pt-3">
           <LearnedPermissionsTab />

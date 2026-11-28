@@ -20,10 +20,11 @@
  */
 
 import { BotIcon, ChevronDownIcon, ChevronRightIcon, CircleHelpIcon } from "lucide-react"
-import { memo } from "react"
+import { Fragment, memo, type ReactNode, useState } from "react"
 
 import type { ContentBlockDto, Host, QuestionDto, StepDto, TurnDto } from "@/api"
 import { Markdown } from "@/components/markdown"
+import { NamedIcon } from "@/components/named-icon"
 import { Button } from "@/components/ui/button"
 import { cn, formatClock } from "@/lib/format"
 
@@ -42,7 +43,10 @@ import {
 } from "./notices"
 import { type Plan, PlanLine, planFoldId } from "./plan"
 import { StepDetail } from "./step-detail"
-import { contentText, foldSteps, type StepPage } from "./store"
+import { groupSteps, type ToolStep } from "./step-groups"
+import { StateIcon } from "./step-icons"
+import { GroupRow } from "./step-row"
+import { contentText, foldSteps, promptText, type StepPage } from "./store"
 
 /** How many of its last steps a running turn shows under its activity line. */
 const LIVE_STEPS = 3
@@ -108,7 +112,13 @@ export const TurnView = memo(function TurnView({
         call.type === "tool_call" && shown.has(call.id) && permissionOf(call, answered) === step,
     )
   const steps = open
-    ? fold.steps.filter((step) => !isPending(step) && !isNotice(step) && !marked(step, calls))
+    ? fold.steps.filter(
+        (step) =>
+          !isPending(step) &&
+          !isNotice(step) &&
+          !marked(step, calls) &&
+          step.id !== turn.answer_step_id,
+      )
     : []
   const blocks = running ? liveBlocks(turn) : turn.answer
   const answer = contentText(blocks)
@@ -147,9 +157,17 @@ export const TurnView = memo(function TurnView({
     >
       {turn.prompt ? (
         <PromptBox
-          text={contentText(turn.prompt.content)}
+          text={promptText(turn.prompt)}
           time={formatClock(turn.started_at)}
           role={turn.prompt.source === "daemon" ? "Developer" : "You"}
+          fold={
+            turn.prompt.source === "daemon"
+              ? {
+                  open: folds[promptFoldId(turn.prompt.id)] === true,
+                  onToggle: () => onToggle(promptFoldId(turn.prompt?.id ?? turn.id)),
+                }
+              : undefined
+          }
         />
       ) : null}
       <ActivityLine turn={turn} now={now} open={open} onToggle={() => onToggle(turn.id)} />
@@ -166,35 +184,27 @@ export const TurnView = memo(function TurnView({
               Show {earlier} earlier
             </Button>
           ) : null}
-          <ul aria-label="Steps of the turn" className="space-y-0.5">
-            {steps.map((step) => (
-              <li key={step.id}>
-                <StepDetail
-                  host={host}
-                  sessionId={sessionId}
-                  step={step}
-                  now={now}
-                  permission={markOf(step, answered)}
-                />
-              </li>
-            ))}
-          </ul>
+          <StepRows
+            label="Steps of the turn"
+            host={host}
+            sessionId={sessionId}
+            steps={steps}
+            now={now}
+            answered={answered}
+          />
           <LoadLine load={load} />
         </div>
       ) : lastRows.length > 0 ? (
-        <ul aria-label="Last steps of the turn" className="ml-4 space-y-0.5">
-          {lastRows.map((step) => (
-            <li key={step.id}>
-              <StepDetail
-                host={host}
-                sessionId={sessionId}
-                step={step}
-                now={now}
-                permission={markOf(step, answered)}
-              />
-            </li>
-          ))}
-        </ul>
+        <div className="ml-4">
+          <StepRows
+            label="Last steps of the turn"
+            host={host}
+            sessionId={sessionId}
+            steps={lastRows}
+            now={now}
+            answered={answered}
+          />
+        </div>
       ) : null}
       {!open && load.state === "error" ? <LoadLine load={load} /> : null}
       {errors.map((step) => (
@@ -246,10 +256,7 @@ export const TurnView = memo(function TurnView({
       ))}
       {answer || media ? (
         <div className="rounded-md bg-muted/30 px-2 py-1.5 ring-1 ring-inset ring-border/40">
-          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
-            <BotIcon aria-hidden className="size-3.5 shrink-0" />
-            Assistant
-          </div>
+          <NamedIcon icon={BotIcon} label="Assistant" focusable className="mb-1 text-foreground" />
           <Markdown>{answer}</Markdown>
           <MediaBlocks host={host} blocks={blocks} />
         </div>
@@ -257,6 +264,67 @@ export const TurnView = memo(function TurnView({
     </article>
   )
 })
+
+/**
+ * The rows of the steps shown, with each run of read and search calls folded
+ * into one group row (`step-groups.ts`).
+ */
+function StepRows({
+  label,
+  host,
+  sessionId,
+  steps,
+  now,
+  answered,
+}: {
+  label: string
+  host: Host
+  sessionId: string
+  steps: readonly StepDto[]
+  now: string
+  answered: ReadonlyMap<string, PermissionStep>
+}) {
+  const row = (step: StepDto) => (
+    <li key={step.id}>
+      <StepDetail
+        host={host}
+        sessionId={sessionId}
+        step={step}
+        now={now}
+        permission={markOf(step, answered)}
+      />
+    </li>
+  )
+  return (
+    <ul aria-label={label} className="space-y-0.5">
+      {groupSteps(steps).map((entry) =>
+        entry.type === "step" ? (
+          row(entry.step)
+        ) : (
+          // A group keeps its first call's id, so it stays open as calls join it.
+          <li key={entry.steps[0]?.id}>
+            <StepGroup steps={entry.steps}>{entry.steps.map(row)}</StepGroup>
+          </li>
+        ),
+      )}
+    </ul>
+  )
+}
+
+/** A group row, and the rows of its calls while it is open. */
+function StepGroup({ steps, children }: { steps: readonly ToolStep[]; children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <GroupRow steps={steps} open={open} onToggle={() => setOpen((was) => !was)} />
+      {open ? (
+        <ul aria-label="Steps of the group" className="mt-0.5 ml-4 space-y-0.5">
+          {children}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
 
 /** The answered permission of a call's row, for its mark. */
 function markOf(
@@ -276,6 +344,11 @@ function liveBlocks(turn: TurnDto): ContentBlockDto[] {
   return message?.type === "message" ? message.content : turn.answer
 }
 
+/** The fold id of a daemon prompt, beside the turns' and the plans' in the console's kept folds. */
+function promptFoldId(promptId: string): string {
+  return `prompt:${promptId}`
+}
+
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`
 }
@@ -292,8 +365,16 @@ function ActivityLine({
   onToggle: () => void
 }) {
   const time = elapsed(turn.started_at, turn.ended_at ?? now) ?? "0s"
-  const { steps, files_changed: files, failed } = turn.activity
+  const { steps, files_changed: files, failed, cancelled, subagents } = turn.activity
   const Chevron = open ? ChevronDownIcon : ChevronRightIcon
+  // The steps and each count above zero: a quiet turn is its duration alone.
+  const facts = [
+    steps > 0 ? { text: plural(steps, "step", "steps") } : null,
+    files > 0 ? { text: plural(files, "file changed", "files changed") } : null,
+    failed > 0 ? { text: `${failed} failed`, danger: true } : null,
+    cancelled > 0 ? { text: `${cancelled} cancelled` } : null,
+    subagents > 0 ? { text: plural(subagents, "subagent", "subagents") } : null,
+  ].filter((fact) => fact !== null)
   return (
     <button
       type="button"
@@ -302,16 +383,13 @@ function ActivityLine({
       className="ml-4 flex w-[calc(100%-1rem)] min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left font-mono text-xs text-muted-foreground outline-none hover:bg-muted/60 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
     >
       <Chevron aria-hidden className="size-3.5 shrink-0" />
-      <span>{time}</span>
-      <span aria-hidden>·</span>
-      <span>{plural(steps, "step", "steps")}</span>
-      <span aria-hidden>·</span>
-      <span>{plural(files, "file changed", "files changed")}</span>
-      <span aria-hidden>·</span>
-      <span className={cn(failed > 0 && "text-status-danger-fg")}>{failed} failed</span>
-      {turn.state === "running" ? null : turn.state === "completed" ? null : (
-        <span className="ml-auto">{turn.state}</span>
-      )}
+      <StateIcon state={turn.state} /> <span>{time}</span>
+      {facts.map((fact) => (
+        <Fragment key={fact.text}>
+          <span aria-hidden>·</span>
+          <span className={cn(fact.danger && "text-status-danger-fg")}>{fact.text}</span>
+        </Fragment>
+      ))}
     </button>
   )
 }

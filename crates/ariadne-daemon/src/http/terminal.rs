@@ -39,9 +39,11 @@ use ariadne_api::sessions::{
     AnswerQuestionRequest, QuestionDto, TerminalClientMessage, TerminalKey, TerminalModifier,
     TerminalMouse, TerminalServerMessage,
 };
-use ariadne_api::trajectory::{StepDto, TrajectoryStepsQuery};
-use ariadne_console::ansi::{FULL_SCREEN_OFF, FULL_SCREEN_ON};
-use ariadne_console::app::{App, Frame, Host, drive};
+use ariadne_api::trajectory::{
+    StepDto, TrajectoryQuery, TrajectorySnapshotDto, TrajectoryStepsQuery,
+};
+use ariadne_console::ansi::{FULL_SCREEN_OFF, FULL_SCREEN_ON, TITLE_RESTORE, title};
+use ariadne_console::app::{App, Frame, HISTORY_PAGE, Host, drive, reach_back, session_name};
 use ariadne_console::trajectory::Printer;
 use ariadne_console::{AnsiBackend, Window};
 use ariadne_core::SessionStatus;
@@ -50,6 +52,7 @@ use super::AppState;
 use super::console;
 use super::error::ApiResult;
 use super::trajectory::{self, Subscription};
+use crate::http::convert::session_dto_of;
 use crate::trajectory::step_id;
 
 /// How many turns the console's snapshot carries: the most a hub gives.
@@ -113,9 +116,14 @@ async fn run(state: AppState, id: String, socket: WebSocket) -> Result<()> {
     let forwarder = tokio::spawn(forward(drain, outbound));
     let _ = bytes.send(status_frame(&state, &id).await);
     let _ = bytes.send(Message::binary(FULL_SCREEN_ON.to_vec()));
+    let name = name_of(&state, &id).await;
+    if !name.is_empty() {
+        let _ = bytes.send(Message::binary(title(&name)));
+    }
 
     let mut terminal = AnsiBackend::full_screen(Pipe::new(bytes.clone()), window.clone())?;
     let mut app = App::new(&id);
+    app.named(&name);
     let mut posts = Posts {
         state: state.clone(),
         id: id.clone(),
@@ -134,6 +142,9 @@ async fn run(state: AppState, id: String, socket: WebSocket) -> Result<()> {
     // emulator's, and it keeps what it read.
     drop(terminal);
     let _ = bytes.send(Message::binary(FULL_SCREEN_OFF.to_vec()));
+    if !name.is_empty() {
+        let _ = bytes.send(Message::binary(TITLE_RESTORE.to_vec()));
+    }
     let farewell = app.farewell(&Printer::new(chrono::Local));
     let _ = bytes.send(Message::binary(farewell.replace('\n', "\r\n")));
     let _ = bytes.send(status_frame(&state, &id).await);
@@ -141,6 +152,20 @@ async fn run(state: AppState, id: String, socket: WebSocket) -> Result<()> {
     drop(bytes);
     let _ = forwarder.await;
     outcome
+}
+
+/// The name of the session, as `ariadne session ls` shows it and the
+/// console of `ariadne attach` names it: the title behind it, its seat and
+/// its step. A session the store does not know has none.
+async fn name_of(state: &AppState, id: &str) -> String {
+    let Ok(session) = state.store.get_session(id).await else {
+        return String::new();
+    };
+    let title = crate::acp_sessions::title_of(state, &session).await;
+    match session_dto_of(&state.store, session).await {
+        Ok(row) => session_name(title.as_deref(), row.seat, row.step.as_deref()),
+        Err(_) => String::new(),
+    }
 }
 
 /// The session's status, as the text frame that says it.
@@ -406,7 +431,7 @@ fn frames(state: AppState, id: String) -> impl Stream<Item = Result<Frame>> {
                             .expect("a subscription opens on a snapshot");
                         let rev = snapshot.rev;
                         let history = match snapshot.has_older {
-                            true => prompt_history(&state, &id).await,
+                            true => Some(prompt_history(&state, &id, &snapshot).await),
                             false => None,
                         };
                         Some((
@@ -435,19 +460,23 @@ fn frames(state: AppState, id: String) -> impl Stream<Item = Result<Frame>> {
     })
 }
 
-/// The prompts typed at a console, read from the console snapshot, for a
-/// trajectory that holds only the newest turns.
-async fn prompt_history(state: &AppState, id: &str) -> Option<Vec<String>> {
-    let events = console::snapshot(State(state.clone()), Path(id.to_string()))
-        .await
-        .ok()?
-        .0;
-    Some(
-        events
-            .into_iter()
-            .filter(|event| event.kind == "user_prompt_submit")
-            .filter(|event| event.payload["source"].as_str() == Some("console"))
-            .filter_map(|event| event.payload["text"].as_str().map(str::to_owned))
-            .collect(),
-    )
+/// The prompts typed at a console, read back through the pages of turns
+/// older than the snapshot's.
+async fn prompt_history(
+    state: &AppState,
+    id: &str,
+    snapshot: &TrajectorySnapshotDto,
+) -> Vec<String> {
+    reach_back(snapshot, |before| async move {
+        let query = TrajectoryQuery {
+            before: Some(before),
+            limit: Some(HISTORY_PAGE),
+            subagent: None,
+        };
+        trajectory::snapshot(State(state.clone()), Path(id.to_string()), Query(query))
+            .await
+            .ok()
+            .map(|page| page.0)
+    })
+    .await
 }

@@ -1,46 +1,28 @@
-//! Ariadne's own console for an agent session.
+//! What is typed into an agent session, and the merge of what it records.
 //!
-//! There is nothing to capture here that is not already an agent event: the
-//! ACP runtime (`crate::acp`) reports what its agent does on the one
-//! ingestion path, so the console is a session-scoped view of
-//! that record — every event kind the runtime reports flows through
-//! unchanged, so a thought, a message, a tool call, a plan, a permission
-//! request or a turn's status all show up exactly as the runtime names them,
-//! with no fixed list to fall behind it.
-//!
-//! The one thing the record does not hold is the turn in flight. The runtime
-//! streams that live — a chunk of message or thought text, a tool call's
-//! progress — to the console alone: never stored, never on the domain bus.
-//! The console stream carries both, and a snapshot taken mid-turn ends on
-//! the text so far.
-//!
-//! A console opens on the newest page of the record rather than on all of
-//! it, and follows the two channels from there without reading the store
-//! again ([`SNAPSHOT_EVENTS`], [`Merge`]).
+//! The ACP runtime (`crate::acp`) reports what its agent does on the one
+//! ingestion path, and the one thing that record does not hold is the turn
+//! in flight. The runtime streams that live — a chunk of message or thought
+//! text, a tool call's progress — to the console alone: never stored, never
+//! on the domain bus. [`Merge`] follows the two channels as one stream, and
+//! the trajectory (`super::trajectory`) folds it. The routes here type into
+//! a session and cancel its turn.
 
-use std::collections::{HashMap, VecDeque};
-use std::convert::Infallible;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::sse::{Event, Sse};
-use futures_util::stream::{once, unfold};
-use futures_util::{Stream, StreamExt};
-use serde_json::Value;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::{ConsoleCancelRequest, ConsoleInputRequest};
-use ariadne_api::stream::ResyncDto;
-use ariadne_store::{AgentEvent, EventFilter, EventOrder, Store, StoreError};
+use ariadne_store::StoreError;
 
 use super::AppState;
-use super::convert::event_dto;
 use super::error::{ApiError, ApiResult, Json};
-use super::sse;
 use crate::bus::{BusEvent, EventBus};
 
 /// A session's stored and live events as one stream, in the order the daemon
@@ -133,52 +115,30 @@ impl Merge {
         }
     }
 
-    /// Open a session's console: the snapshot it starts with, and the merge
-    /// that follows it.
+    /// Open a merge over any read of the stored events: `read` answers what
+    /// it read and the id of the newest stored event in it.
     ///
     /// Both channels are subscribed already, the live one with the text so
     /// far read under the runtime's turn lock (`subscribe_console`). The
     /// stored events are read after that, so a live event sent between the
     /// two reads is waiting on the live channel with an id below the last
     /// stored one — the last chunk of a turn that ended in between, or the
-    /// progress of a call that ended. Sent after the snapshot it would come
-    /// after that turn's stop, and a console would draw its text again below
-    /// it. So what is waiting on the live channel is read now: an event
-    /// below the snapshot's last stored id joins the snapshot in its place,
-    /// and one above it is the first the merge sends, once it has waited for
-    /// the pump as any live event does. Nothing joins late: a live event
-    /// takes its id and is sent under the store's event lock, so every live
-    /// event below the last stored id was on the channel before that event
-    /// was committed.
+    /// progress of a call that ended. Sent after the read it would come after
+    /// that turn's stop, and a console would draw its text again below it. So
+    /// what is waiting on the live channel is read now: an event below the
+    /// read's last stored id joins the text so far in its place, and one
+    /// above it is the first the merge sends, once it has waited for the pump
+    /// as any live event does. Nothing joins late: a live event takes its id
+    /// and is sent under the store's event lock, so every live event below
+    /// the last stored id was on the channel before that event was committed.
     ///
     /// A live channel that dropped events while the stored ones were read —
     /// a turn streaming more chunks than the channel holds, in that moment —
-    /// has lost text the snapshot cannot show. The snapshot goes out as it
-    /// is, and the merge's first word is a resync, as for any lag: the
-    /// client opens again, and reads the text so far afresh.
-    pub(super) async fn open(
-        store: &Store,
-        events: EventBus,
-        stored: broadcast::Receiver<BusEvent>,
-        live: broadcast::Receiver<AgentEventDto>,
-        session_id: String,
-        so_far: Vec<AgentEventDto>,
-    ) -> Result<(Vec<AgentEventDto>, Self), StoreError> {
-        let page_of = session_id.clone();
-        let (recorded, so_far, merge) =
-            Self::open_on(events, stored, live, session_id, so_far, || async move {
-                let page = newest_page(store, &page_of).await?;
-                let last_id = page.last().map(|event| event.id.clone());
-                Ok((page, last_id))
-            })
-            .await?;
-        Ok((snapshot_of(recorded, so_far), merge))
-    }
-
-    /// [`Self::open`] over any read of the stored events: `read` answers
-    /// what it read and the id of the newest stored event in it. Answers
-    /// that read, the text so far with the live events below the read
-    /// joined to it, and the merge.
+    /// has lost text the read cannot show. The read goes out as it is, and
+    /// the merge's first word is a resync, as for any lag: the client opens
+    /// again, and reads the text so far afresh. Answers that read, the text
+    /// so far with the live events below the read joined to it, and the
+    /// merge.
     pub(super) async fn open_on<T, F, Fut>(
         events: EventBus,
         stored: broadcast::Receiver<BusEvent>,
@@ -225,17 +185,12 @@ impl Merge {
         self.lagged.is_some()
     }
 
-    /// The next event of the session. `Err` is the cue to start over from a
-    /// fresh snapshot, because the session cannot be given whole from here:
-    /// a channel dropped events under a receiver that fell behind, or the
-    /// bus dropped an event it could not load. `None` is a channel closing,
-    /// which is the daemon going away.
-    pub(super) async fn next(&mut self) -> Option<Result<AgentEventDto, Resync>> {
-        Some(self.next_marked().await?.map(|(event, _)| event))
-    }
-
-    /// [`Self::next`], with whether the store holds the event: true for one
-    /// off the bus, false for one off the live channel.
+    /// The next event of the session, with whether the store holds it: true
+    /// for one off the bus, false for one off the live channel. `Err` is the
+    /// cue to start over from a fresh snapshot, because the session cannot be
+    /// given whole from here: a channel dropped events under a receiver that
+    /// fell behind, or the bus dropped an event it could not load. `None` is
+    /// a channel closing, which is the daemon going away.
     pub(super) async fn next_marked(&mut self) -> Option<Result<(AgentEventDto, bool), Resync>> {
         if let Some(missed) = self.lagged.take() {
             return Some(Err(Resync::missing(missed)));
@@ -411,243 +366,6 @@ impl Resync {
     }
 }
 
-/// Open a session's console from the daemon's state: the snapshot `GET
-/// /console` answers and the stream and the terminal open with, and the
-/// merge the two follow it with. Subscribed to both channels before the
-/// snapshot is read, so nothing committed in between is missed; the text so
-/// far is read first, the stored events after, and what the live channel
-/// holds by then joins the snapshot in its place (`Merge::open`).
-pub(super) async fn open_console(
-    state: &AppState,
-    id: String,
-) -> Result<(Vec<AgentEventDto>, Merge), StoreError> {
-    let stored = state.events.subscribe();
-    let (live, so_far) = state.launcher.acp.subscribe_console(&id).await;
-    Merge::open(&state.store, state.events.clone(), stored, live, id, so_far).await
-}
-
-/// How many of a session's stored events a console opens on: the newest
-/// page of them, and the most `Store::list_events` gives for one read.
-///
-/// A session that has run for hours holds thousands of events, and a tool
-/// end averages ten kilobytes, so its whole transcript is tens of megabytes
-/// to read out of the store and to send. A console opens on the recent past
-/// instead. A client that wants what is further back walks it with `GET
-/// /v1/events` (`session`, `order=desc` and `before`, 012).
-const SNAPSHOT_EVENTS: i64 = 200;
-
-/// The newest page of a session's stored events, oldest first.
-async fn newest_page(store: &Store, session_id: &str) -> Result<Vec<AgentEvent>, StoreError> {
-    let mut page = store
-        .list_events(EventFilter {
-            session_id: Some(session_id.to_string()),
-            order: EventOrder::Desc,
-            limit: SNAPSHOT_EVENTS,
-            ..EventFilter::default()
-        })
-        .await?;
-    page.reverse();
-    Ok(page)
-}
-
-/// How many times `GET /console` opens the console again while the live
-/// channel lags under the open.
-const SNAPSHOT_TRIES: usize = 3;
-
-/// The whole snapshot, for a reader with no stream to be told resync on.
-///
-/// A snapshot opened while the live channel lagged is short of the dropped
-/// events. The stream's cue for that — a resync, and a fresh open — is not
-/// there for `GET /console`, so it opens again, a few times over; `None` is
-/// a channel that lagged every time, and the caller refuses rather than
-/// answer short.
-async fn whole_snapshot<F, Fut>(mut open: F) -> Result<Option<Vec<AgentEventDto>>, StoreError>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<(Vec<AgentEventDto>, Merge), StoreError>>,
-{
-    for _ in 0..SNAPSHOT_TRIES {
-        let (snapshot, merge) = open().await?;
-        if !merge.lagged() {
-            return Ok(Some(snapshot));
-        }
-    }
-    Ok(None)
-}
-
-/// The session's newest events, in order: the transcript a console opens on.
-/// It is a page of at most two hundred, the recent past rather than every
-/// turn a session ever ran; `GET /v1/events` walks back from it. While a
-/// turn runs, one `agent_thought_chunk` or `agent_message_chunk` holding the
-/// text so far follows the stored events.
-#[utoipa::path(get, path = "/v1/sessions/{id}/console", tag = "sessions",
-    params(("id" = String, Path, description = "session id")),
-    responses((status = 200, body = [AgentEventDto]), (status = 404),
-        (status = 503, description = "the console streamed faster than a snapshot could be \
-                                      read, every time it was tried; ask again")))]
-pub(super) async fn snapshot(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<Json<Vec<AgentEventDto>>> {
-    state.store.get_session(&id).await?;
-    // The same snapshot the stream opens with; the merge it would follow
-    // with is dropped unread, once it says the channel did not lag.
-    let snapshot = whole_snapshot(|| open_console(&state, id.clone())).await?;
-    snapshot.map(Json).ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "console_busy",
-            "the console streamed faster than a snapshot could be read; ask again",
-        )
-    })
-}
-
-/// The snapshot a console opens on: the page of stored events and the
-/// running turn's text so far, in id order.
-///
-/// The two are read one after the other, the text so far first — under the
-/// runtime's turn lock — and the stored events after. The text so far takes
-/// fresh ids as it is read, so it falls after every event stored before the
-/// read and before every event stored after it: a run of text that ended
-/// between the two reads puts its stored whole after the text, which the
-/// console folds into it, and a prompt that began a turn between them comes
-/// after the text of the turn before. Read the other way round, a prompt stored
-/// between the reads would be missing from the snapshot and arrive later,
-/// behind the text of the turn it began. The live events sent between the
-/// two reads come with the text so far (`Merge::open`).
-fn snapshot_of(stored: Vec<AgentEvent>, so_far: Vec<AgentEventDto>) -> Vec<AgentEventDto> {
-    let mut snapshot = whole_calls(stored.into_iter().map(event_dto).collect());
-    snapshot.extend(so_far);
-    snapshot.sort_by(|a, b| a.id.cmp(&b.id));
-    snapshot
-}
-
-/// The page, less the end of any tool call whose start it cut off.
-///
-/// A call is two stored events: the `pre_tool_use` that opens it, carrying
-/// what the agent asked for, and the `post_tool_use` that ends it, carrying
-/// what came back. A console folds the two into one block, and the input is
-/// on the first of them alone. So an end whose start is below the page would
-/// draw as a call nobody made, with no input to show: the page keeps a call
-/// whole, or not at all.
-///
-/// The page is walked in order and each start is consumed by the first end
-/// that matches it, because a name is all that pairs the two where an event
-/// carries no call id: an end cut off from its start would otherwise take
-/// the start of a later call of the same tool, and survive on it.
-fn whole_calls(page: Vec<AgentEventDto>) -> Vec<AgentEventDto> {
-    let mut open: HashMap<(String, String), usize> = HashMap::new();
-    page.into_iter()
-        .filter(|event| match event.kind.as_str() {
-            "pre_tool_use" => {
-                *open.entry(call_of(event)).or_default() += 1;
-                true
-            }
-            // Stored progress opens a call whose `pre_tool_use` the store
-            // refused (021): it carries the call as merged, input included.
-            "tool_call_update" => {
-                let started = open.entry(call_of(event)).or_default();
-                if *started == 0 {
-                    *started = 1;
-                }
-                true
-            }
-            "post_tool_use" => match open.get_mut(&call_of(event)) {
-                Some(started) if *started > 0 => {
-                    *started -= 1;
-                    true
-                }
-                _ => false,
-            },
-            _ => true,
-        })
-        .collect()
-}
-
-/// What pairs a call's end with its start: the ACP call id, and the tool's
-/// name where an event carries no id, as the transcript pairs them. An event
-/// with neither is one call, and pairs with another of its kind.
-fn call_of(event: &AgentEventDto) -> (String, String) {
-    // A child session's call ids are its own: two children may reuse one.
-    let child = event
-        .payload
-        .pointer("/subagent/id")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let call = event
-        .payload
-        .pointer("/acp/toolCallId")
-        .and_then(Value::as_str)
-        .or_else(|| event.payload.get("tool_call_id").and_then(Value::as_str))
-        .or_else(|| event.payload.get("tool_name").and_then(Value::as_str))
-        .unwrap_or_default();
-    (child.to_string(), call.to_string())
-}
-
-/// Follow a session's console.
-///
-/// Opens with a `snapshot` event carrying what `GET /console` would return —
-/// the newest page of stored events, oldest first, then the running turn's
-/// text so far — then an `event` per later one, each an `AgentEventDto`.
-/// Subscribing happens before the snapshot is read and every later stored
-/// event is compared against the snapshot's last id, so nothing committed in
-/// between is ever missed or delivered twice; the live events are read under
-/// the runtime's own turn lock for the same guarantee.
-///
-/// There is no replay and no `Last-Event-ID`: reconnecting starts again from a
-/// fresh snapshot. A client that falls too far behind gets a final `resync`
-/// event and the connection closes, exactly as `/v1/events/stream` does.
-#[utoipa::path(get, path = "/v1/sessions/{id}/console/stream", tag = "sessions",
-    params(("id" = String, Path, description = "session id")),
-    responses((status = 200,
-        description = "SSE stream of console events (text/event-stream). A `snapshot` event \
-                       carrying the newest page of recorded events (`[AgentEventDto]`) and the \
-                       running turn's text so far, then an `event` per new one \
-                       (`AgentEventDto`) — message and thought chunks, tool call progress, \
-                       tool calls, plans, permission requests and turn status all arrive \
-                       this way, in the vocabulary the ACP runtime reports them in. Chunks \
-                       are live only: they are never stored and never reach `/v1/events`. \
-                       Tool call progress is stored at most once in each interval, and \
-                       `/v1/events` lists what is stored; the rest is live only. A client that falls behind gets a `resync` \
-                       event (ResyncDto) and the connection closes.",
-        content_type = "text/event-stream", body = AgentEventDto),
-        (status = 404)))]
-pub(super) async fn stream(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
-    state.store.get_session(&id).await?;
-    // Subscribed before the snapshot is queried: an event committed in
-    // between lands in both places, which the id watermark of the merge
-    // resolves in the snapshot's favour rather than sending it twice.
-    let (snapshot, merge) = open_console(&state, id).await?;
-    let opening = once(async move { Ok(sse::json_event("snapshot", snapshot)) });
-
-    // One stream over both channels, in id order (`Merge`). A receiver that
-    // fell behind on either, or a merge whose event the bus dropped, is told
-    // to resync, and the connection ends: a transcript with holes in it is
-    // not kept open.
-    let events = unfold((merge, false), |(mut merge, closing)| async move {
-        if closing {
-            return None;
-        }
-        match merge.next().await {
-            Some(Ok(dto)) => Some((Ok(sse::json_event("event", dto)), (merge, false))),
-            Some(Err(resync)) => Some((
-                Ok(sse::identified_event(
-                    "resync",
-                    ResyncDto {
-                        missed: resync.missed(),
-                    },
-                )),
-                (merge, true),
-            )),
-            None => None,
-        }
-    });
-    Ok(sse::respond(opening.chain(events)))
-}
-
 /// Type into a session.
 ///
 /// While a permission request is pending, the text selects that request's
@@ -787,8 +505,55 @@ mod tests {
     use ariadne_api::events::{AgentEventDto, AgentEventSummaryDto};
     use ariadne_api::stream::DomainEvent;
 
-    use super::{EventBus, Merge, SNAPSHOT_EVENTS, Store, whole_calls};
+    use ariadne_store::{EventFilter, EventOrder, Store, StoreError};
+
+    use super::{EventBus, Merge, Resync};
     use crate::bus::BusEvent;
+    use crate::http::convert::event_dto;
+
+    /// What a reader of the session opens on: the stored events, then the
+    /// merge that follows them. The merge's own opening, over a read of the
+    /// store's newest events, with the text so far in id order among them.
+    async fn open(
+        store: &Store,
+        events: EventBus,
+        stored: broadcast::Receiver<BusEvent>,
+        live: broadcast::Receiver<AgentEventDto>,
+        session_id: String,
+        so_far: Vec<AgentEventDto>,
+    ) -> Result<(Vec<AgentEventDto>, Merge), StoreError> {
+        let page_of = session_id.clone();
+        let (recorded, so_far, merge) =
+            Merge::open_on(events, stored, live, session_id, so_far, || async move {
+                let mut page = store
+                    .list_events(EventFilter {
+                        session_id: Some(page_of),
+                        order: EventOrder::Desc,
+                        limit: 200,
+                        ..EventFilter::default()
+                    })
+                    .await?;
+                page.reverse();
+                let last_id = page.last().map(|event| event.id.clone());
+                Ok((page, last_id))
+            })
+            .await?;
+        let mut snapshot: Vec<AgentEventDto> = recorded.into_iter().map(event_dto).collect();
+        snapshot.extend(so_far);
+        snapshot.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok((snapshot, merge))
+    }
+
+    /// The next event of the merge, without whether the store holds it.
+    trait Next {
+        async fn next(&mut self) -> Option<Result<AgentEventDto, Resync>>;
+    }
+
+    impl Next for Merge {
+        async fn next(&mut self) -> Option<Result<AgentEventDto, Resync>> {
+            Some(self.next_marked().await?.map(|(event, _)| event))
+        }
+    }
 
     fn dto(id: &str, kind: &str) -> AgentEventDto {
         AgentEventDto {
@@ -800,46 +565,6 @@ mod tests {
             summary: kind.into(),
             created_at: "2026-09-12T00:00:00.000Z".into(),
         }
-    }
-
-    fn call(id: &str, kind: &str, child: &str) -> AgentEventDto {
-        let mut event = dto(id, kind);
-        event.payload = json!({"acp": {"toolCallId": "call-1"}, "subagent": {"id": child}});
-        event
-    }
-
-    /// Two children reusing a call id are two calls: the first one's end
-    /// does not use up what the second one's stored progress opened, and the
-    /// second's end stays where its opener was refused.
-    #[test]
-    fn a_reused_call_id_opens_again_from_stored_progress() {
-        let page = vec![
-            call("1", "pre_tool_use", "a"),
-            call("2", "post_tool_use", "a"),
-            call("3", "tool_call_update", "b"),
-            call("4", "post_tool_use", "b"),
-            call("5", "post_tool_use", "c"),
-        ];
-        let kept: Vec<String> = whole_calls(page).into_iter().map(|e| e.id).collect();
-        assert_eq!(kept, ["1", "2", "3", "4"]);
-        let same = vec![
-            call("1", "pre_tool_use", "a"),
-            call("2", "post_tool_use", "a"),
-            call("3", "tool_call_update", "a"),
-            call("4", "post_tool_use", "a"),
-        ];
-        assert_eq!(whole_calls(same).len(), 4);
-        // Child and call ids are separate fields, whatever they contain.
-        let mut split = vec![
-            call("1", "pre_tool_use", "a"),
-            call("2", "post_tool_use", "a\0b"),
-            call("3", "post_tool_use", "a"),
-        ];
-        split[0].payload = json!({"acp": {"toolCallId": "b\0c"}, "subagent": {"id": "a"}});
-        split[1].payload = json!({"acp": {"toolCallId": "c"}, "subagent": {"id": "a\0b"}});
-        split[2].payload = json!({"acp": {"toolCallId": "b\0c"}, "subagent": {"id": "a"}});
-        let kept: Vec<String> = whole_calls(split).into_iter().map(|e| e.id).collect();
-        assert_eq!(kept, ["1", "3"]);
     }
 
     /// A store of its own for one test: the console reads its page of stored
@@ -916,113 +641,6 @@ mod tests {
         assert_eq!(event.id, "0004");
     }
 
-    /// One stored event, as the store keeps it.
-    fn row(id: &str, kind: &str, payload: serde_json::Value) -> ariadne_store::AgentEvent {
-        ariadne_store::AgentEvent {
-            id: id.into(),
-            session_id: Some("session".into()),
-            task_id: None,
-            kind: kind.into(),
-            payload: payload.to_string(),
-            created_at: "2026-09-12T00:00:00.000Z".into(),
-        }
-    }
-
-    /// The text so far is read before the stored events and takes fresh ids,
-    /// so a turn that ended between the two reads puts its stored whole and
-    /// stop after the text, and a prompt that began between them comes after
-    /// them all: the snapshot is the two in id order, not the stored events
-    /// and then the text.
-    #[test]
-    fn the_text_so_far_sits_by_id_among_the_stored_events() {
-        let snapshot = super::snapshot_of(
-            vec![
-                row("0001", "user_prompt_submit", json!({})),
-                row("0003", "agent_message", json!({})),
-                row("0004", "stop", json!({})),
-                row("0005", "user_prompt_submit", json!({})),
-            ],
-            vec![dto("0002", "agent_message_chunk")],
-        );
-
-        let ids: Vec<&str> = snapshot.iter().map(|event| event.id.as_str()).collect();
-        assert_eq!(ids, ["0001", "0002", "0003", "0004", "0005"]);
-    }
-
-    /// A tool call is two stored events, and the page can begin between
-    /// them. The end alone carries no input, and the console has no call to
-    /// fold it into, so the page drops it. The call the page holds whole
-    /// keeps both its events, and the input its start carries.
-    #[test]
-    fn a_page_that_cut_a_calls_start_off_drops_its_end_and_keeps_a_whole_call() {
-        let snapshot = super::snapshot_of(
-            vec![
-                row(
-                    "0001",
-                    "post_tool_use",
-                    json!({"tool_name": "Read", "acp": {"toolCallId": "call-1"}}),
-                ),
-                row(
-                    "0002",
-                    "pre_tool_use",
-                    json!({"tool_name": "Write", "tool_input": {"path": "a.rs"},
-                           "acp": {"toolCallId": "call-2"}}),
-                ),
-                row(
-                    "0003",
-                    "post_tool_use",
-                    json!({"tool_name": "Write", "acp": {"toolCallId": "call-2"}}),
-                ),
-            ],
-            Vec::new(),
-        );
-
-        let ids: Vec<&str> = snapshot.iter().map(|event| event.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            ["0002", "0003"],
-            "the end of the call the page cut in half is not in the snapshot"
-        );
-        assert_eq!(
-            snapshot[0].payload["tool_input"]["path"], "a.rs",
-            "the call the page holds whole still shows its input"
-        );
-    }
-
-    /// An event that carries no call id is paired by the tool's name, and an
-    /// agent calls one tool many times. The page consumes each start with
-    /// the first end that follows it, so an end the bound cut off cannot
-    /// live on the start of a later call of the same tool.
-    #[test]
-    fn an_end_cut_off_from_its_start_does_not_take_the_start_of_a_later_call() {
-        let snapshot = super::snapshot_of(
-            vec![
-                // The page begins inside a call: its start is below the bound.
-                row("0001", "post_tool_use", json!({"tool_name": "Bash"})),
-                row(
-                    "0002",
-                    "pre_tool_use",
-                    json!({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
-                ),
-                row("0003", "post_tool_use", json!({"tool_name": "Bash"})),
-                // A call of the same tool that is still running at the bound.
-                row(
-                    "0004",
-                    "pre_tool_use",
-                    json!({"tool_name": "Bash", "tool_input": {"command": "cat"}}),
-                ),
-            ],
-            Vec::new(),
-        );
-
-        let ids: Vec<&str> = snapshot.iter().map(|event| event.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            ["0002", "0003", "0004"],
-            "the orphan end is dropped, and the call that runs on keeps its start"
-        );
-    }
-
     /// A session of its own in the store, so its stored events take their
     /// ids from the generator the live events take theirs from.
     async fn session_in(store: &Store) -> String {
@@ -1094,49 +712,6 @@ mod tests {
         let id = dto.id.clone();
         events.publish(published(dto));
         id
-    }
-
-    /// A console opens on the newest page of a session's events, however
-    /// many it has: the page is the bound, and it ends on the last thing the
-    /// session did.
-    #[tokio::test]
-    async fn opening_a_console_on_a_long_session_reads_a_page_of_the_newest_events() {
-        let (store, _dir) = test_store().await;
-        let session = session_in(&store).await;
-        // Enough past one page to prove the truncation and the order; ten
-        // pages' worth proves nothing more and only multiplies the commits
-        // this test waits on.
-        let recorded = SNAPSHOT_EVENTS as usize + 50;
-        let mut committed = Vec::new();
-        for _ in 0..recorded {
-            committed.push(commit(&store, &session, "agent_message").await);
-        }
-        let (_stored_tx, stored_rx) = broadcast::channel(16);
-        let (_live_tx, live_rx) = broadcast::channel(16);
-
-        let (snapshot, _merge) = Merge::open(
-            &store,
-            EventBus::new(),
-            stored_rx,
-            live_rx,
-            session,
-            Vec::new(),
-        )
-        .await
-        .unwrap();
-
-        let ids: Vec<&str> = snapshot.iter().map(|event| event.id.as_str()).collect();
-        let newest: Vec<&str> = committed
-            .iter()
-            .skip(recorded - SNAPSHOT_EVENTS as usize)
-            .map(String::as_str)
-            .collect();
-        assert_eq!(
-            ids.len(),
-            SNAPSHOT_EVENTS as usize,
-            "the snapshot is a page"
-        );
-        assert_eq!(ids, newest, "and the page is the newest events, in order");
     }
 
     /// A stored event reaches the bus only after the pump has loaded what it
@@ -1235,7 +810,7 @@ mod tests {
         let events = EventBus::new();
         let stored_rx = events.subscribe();
         let (live_tx, live_rx) = broadcast::channel(16);
-        let (snapshot, mut merge) = Merge::open(
+        let (snapshot, mut merge) = open(
             &store,
             events.clone(),
             stored_rx,
@@ -1286,7 +861,7 @@ mod tests {
         let events = EventBus::new();
         let stored_rx = events.subscribe();
         let (live_tx, live_rx) = broadcast::channel(16);
-        let (_snapshot, mut merge) = Merge::open(
+        let (_snapshot, mut merge) = open(
             &store,
             events.clone(),
             stored_rx,
@@ -1323,7 +898,7 @@ mod tests {
         let (events, mut requests) = EventBus::drained_by_hand();
         let stored_rx = events.subscribe();
         let (live_tx, live_rx) = broadcast::channel(16);
-        let (_snapshot, mut merge) = Merge::open(
+        let (_snapshot, mut merge) = open(
             &store,
             events.clone(),
             stored_rx,
@@ -1369,7 +944,7 @@ mod tests {
         let events = EventBus::new();
         let stored_rx = events.subscribe();
         let (live_tx, live_rx) = broadcast::channel(16);
-        let (_snapshot, mut merge) = Merge::open(
+        let (_snapshot, mut merge) = open(
             &store,
             events.clone(),
             stored_rx,
@@ -1424,7 +999,7 @@ mod tests {
         let whole = commit(&store, &session, "agent_message").await;
         let stop = commit(&store, &session, "stop").await;
 
-        let (snapshot, mut merge) = Merge::open(
+        let (snapshot, mut merge) = open(
             &store,
             EventBus::new(),
             stored_rx,
@@ -1474,7 +1049,7 @@ mod tests {
         let after = live(&session, "agent_message_chunk");
         live_tx.send(after.clone()).unwrap();
 
-        let (snapshot, mut merge) = Merge::open(
+        let (snapshot, mut merge) = open(
             &store,
             EventBus::new(),
             stored_rx,
@@ -1529,7 +1104,7 @@ mod tests {
         live_tx.send(dto("0002", "agent_message_chunk")).unwrap();
         live_tx.send(dto("0003", "agent_message_chunk")).unwrap();
 
-        let (snapshot, mut merge) = Merge::open(
+        let (snapshot, mut merge) = open(
             &store,
             EventBus::new(),
             stored_rx,
@@ -1553,45 +1128,5 @@ mod tests {
             2,
             "the two dropped chunks are a resync before the chunk that is left"
         );
-    }
-
-    /// `GET /console` has no stream to be told resync on. A snapshot opened
-    /// while the live channel lagged is opened again, and one whose channel
-    /// lags every time is refused rather than answered short.
-    #[tokio::test]
-    async fn the_snapshot_get_answers_is_opened_again_under_a_lag_and_refused_when_it_keeps_lagging()
-     {
-        let opens = std::cell::Cell::new(0usize);
-        // An open whose live channel lagged the first `until` times.
-        let lagging_until = |until: usize| {
-            let opens = &opens;
-            move || {
-                opens.set(opens.get() + 1);
-                let lagged = opens.get() <= until;
-                async move {
-                    let (_stored_tx, stored_rx) = broadcast::channel(16);
-                    let (_live_tx, live_rx) = broadcast::channel(16);
-                    let mut merge =
-                        Merge::new(EventBus::new(), stored_rx, live_rx, "session".into(), None);
-                    merge.lagged = lagged.then_some(1);
-                    Ok((vec![dto("0001", "stop")], merge))
-                }
-            }
-        };
-
-        let whole = super::whole_snapshot(lagging_until(2)).await.unwrap();
-        assert_eq!(
-            whole.map(|snapshot| snapshot.len()),
-            Some(1),
-            "the third open, with no lag, is the snapshot"
-        );
-        assert_eq!(opens.get(), 3, "opened again after each lag");
-
-        opens.set(0);
-        let none = super::whole_snapshot(lagging_until(usize::MAX))
-            .await
-            .unwrap();
-        assert!(none.is_none(), "a channel that lags every time is refused");
-        assert_eq!(opens.get(), super::SNAPSHOT_TRIES, "tried that many times");
     }
 }

@@ -88,7 +88,9 @@ session](resuming-sessions.md) for finding and continuing one of these.
 `ariadne attach` is an interactive console, not a shell inside the agent. It
 shows the session's recorded events and sends each line you type as the next
 prompt. The agent keeps working after you leave. It takes a session id, a
-task id or a goal id from the table above.
+task id or a goal id from the table above. A session that has ended is
+revived first, and then its console opens. Leave the console with Ctrl-C
+twice or Ctrl-D.
 
 ```sh
 ariadne attach <goal-id>                 # the orchestrator
@@ -97,102 +99,226 @@ ariadne task attach <task-id> --step review   # one column's agent instead
 ariadne attach <session-id>              # one specific session, live or ended
 ```
 
-In a terminal the console is an inline pane as tall as the terminal. Its last
-rows are pinned: a status row, the input box, and a footer. So the input box
-is always on the bottom rows of the screen, however long or short the
-transcript is. The transcript fills the screen above the status row, as in a
-chat app: its last line is right over the status row, and the lines before
-it go up the screen. Between turns you see the end of the conversation, the
-last answer over the status row. During a turn you see the block the agent
-is writing over the status row, with your prompt and the blocks before it
-above it; when that block is taller than the screen you see its last lines.
-Blank rows are on the screen only while the transcript is shorter than the
-screen, and they are at the top. A line moves into the terminal's own
-scrollback only when it scrolls off the top of the screen, so scroll up to
-read the conversation so far. A line of the block the agent is still writing
-waits until the block is finished. When you leave, the rest of the
-transcript is put on the top rows of the screen, the pane is erased, and
-your shell prompt comes back right under the last block, so the transcript
-stays in your scrollback, each line once.
+In a terminal the console is full screen. It takes the alternate screen of
+the terminal, and it gives the screen back when you leave. Your shell and its
+scrollback stay as they were. The screen has these parts, from the top:
+
+- The transcript: each turn of the session, oldest at the top.
+- The plan line, while the agent has a plan with an open entry.
+- A permission or a question that waits for you.
+- The input box.
+- The bottom row, with the state of the session and `? keys`.
 
 ```
- agent · develop · claude:opus · running   ⠹ thinking 12s
-────────────────────────────────────────────────────────
-❯ the input box
-────────────────────────────────────────────────────────
- enter send · shift+enter newline · esc cancel · ctrl-c quit    ↑ 12.4k ↓ 3.1k
+❯ Run the tests
+  ▸ ✓ 12s · 4 steps · 1 file changed
+  All 345 tests pass.
+
+❯ Fix the lint
+  ▸ ⠹ 4s · 2 steps
+    ◐ $ cargo clippy                                       2s
+▸ plan 1/3 · Fix the lint
+──────────────────────────────────────────────────────────────
+❯ Tell the agent what to do
+──────────────────────────────────────────────────────────────
+ ◐ · Add the frobnicator · agent · develop · Opus 5.5   ? keys
 ```
 
-The status row names the seat, the model and the session's status — `running`
-while the agent works, `idle` between turns, `exited` once it has gone, moving
-as the session does. A column agent's seat is followed by the workflow
-column it works, `agent · develop`; every other seat names only itself. A
-spinner says "thinking" or "running &lt;tool&gt;"
-while a turn runs, with how long the turn has been running next to it: `12s`,
-or `1m 04s` past a minute. A prompt you type while a turn runs does not change
-what the row says. The count starts again with each turn and is not
-shown between turns; attaching in the middle of a turn counts from its prompt.
+### Turns
 
-The footer shows the keys you can press now on the left — to send, to answer
-a permission question (`up/down or 1-9 choose · enter answer`), to answer an
-agent's question field by field (`up/down or 1-9 choose · space check · enter
-next · esc decline`), or to confirm that
-you want to leave after one Ctrl-C — and on the right the tokens the session
-has spent, read (`↑`) and written (`↓`), such as `↑ 12.4k ↓ 3.1k`. The counts
-are the whole session's, every launch of it included, and they move each time
-a turn ends. Nothing is shown there before the session has spent a token.
+A turn shows your prompt after `❯`, one activity line, and the answer of the
+agent. The activity line has a fold mark (`▸` closed, `▾` open), the state mark
+of the turn, how long it took, then its counts: steps first, then changed files,
+failed, cancelled and subagents, each only above zero. A prompt the daemon sent
+shows its first line with text after `» daemon`, without its Markdown mark.
+Move the cursor to that line and press Enter to read the whole prompt as
+Markdown, and Left to close it. The answer is markdown, and it streams while the
+turn runs. A turn that runs and is closed shows its last three steps, live.
 
-Every fold below is one press of Ctrl-O away. It switches the pane between
-folded, which is where each attach starts, and whole, which draws every line
-of a tool's output, a diff and a daemon prompt; press it again to fold them
-back. A thought is always whole. A reconnect keeps whichever the attach had. A block that
-leaves for the scrollback while the pane is whole keeps every line there too,
-since a block already in the scrollback cannot be drawn again. A block that
-is part-way into the scrollback keeps the fold its first lines had, and
-Ctrl-O changes the blocks after it. The footer's
-last hint says which way the pane is set, `ctrl-o unfold` or `ctrl-o fold`,
-and is the first hint dropped on a narrow terminal. A pending permission
-question keeps its own fold, sized to the room its options leave, whichever
-way the pane is set.
+A warning note and a compaction always show under the activity line of
+their turn, also while the turn is closed. Each one is a row the cursor can
+reach: open it to read its whole text. Where a turn has more of them than it
+carries, one row gives the count: `2 more notices in the steps of the turn`.
+Open the turn to read them as its steps. Errors show under a closed turn
+too. An info note shows only when you open the turn.
 
-Neither row is ever cut off. In a narrow terminal each row leaves out whole
-items, the least important first: the status row drops the model, then the
-seat, the clock, and what the turn is doing, and keeps the session's status to
-the last; the footer drops its later key hints, then the tokens, and keeps the
-first hint to the last. Resizing the terminal erases the pane and draws it
-again at the new size, with the input box on the new bottom rows and the end
-of the transcript over it at the new width. On a shorter terminal the lines
-that no longer fit move into the scrollback. A taller terminal has blank rows
-at the top, since a line in the scrollback does not come back onto the
-screen.
+An image, an audio block, a resource and a resource link show as one line
+with their type and their name, such as `[image] shot.png` or
+`[resource link] The spec`.
 
-A resize has limits in the scrollback, because the terminal moves its rows
-before the console hears of the resize, and the console does not ask the
-terminal where they went:
+### Steps
 
-- In tmux, a taller window pulls rows of the history down onto the screen.
-  The pane erases them when it is drawn again, so they are gone from the
-  scrollback. Attach again to see the whole transcript.
-- A terminal that moves the top rows of its screen into the scrollback when
-  it is made shorter keeps them there, and the pane draws them again, so
-  those lines are in the scrollback twice.
-- On a narrower window, the terminal rewraps the pane before it is drawn
-  again. Rows of the old pane that the rewrap pushed up can stay in the
-  scrollback.
+Open a turn to see a row for each of its steps. A row has the status mark
+(`○` pending, `◐` running, `✓` done, `✗` failed, `⊘` cancelled), the icon of
+its kind, and the first line of its title. The subject follows the title only
+where the title does not contain it. The tail of each row is in one column at
+the right edge: the permission mark, the `+N -N` of an edit, then how long the
+step took. A permission that was answered is a mark on the row of its call, and
+it has no row of its own. No mark shows for an allow that `auto` or a learned
+permission gave. A dim `✓` is an allow by the AI or by you, and a red `✗` is a
+rejection. The message step that is the answer of the turn is no row: the
+answer shows under the turn.
 
-The input box has a dim rule above and below it, without side borders. Its
-prompt is `❯ `, and continued rows align under the text:
+Open a step to see its detail in place, under its row. The console reads it
+from the daemon. What it shows depends on the kind of the call:
+
+- A command shows `$ <command>` only where its row does not show the whole command, then its working
+  directory, its output and its exit code. The output keeps its last 12 lines.
+- An edit shows each file as a diff: the file name, then the hunks with the
+  added lines green and the removed lines red. Where a hunk replaces as many
+  lines as it removes, the words that changed are bold. The diff keeps its
+  first 24 lines.
+- A read shows the path and the line, then the file text, coloured by the
+  grammar of its language. The text keeps its first 24 lines.
+- A search and a fetch show what they looked for and what they found.
+
+A fold shows the count of the lines it left out, such as `… 18 more lines`.
+Press Enter again on the open step to see all of it. Press `r` on a tool call
+to see its raw input and its raw output, as JSON. Press `r` again to see the
+detail again. The detail of a call that had a permission ends with the answer
+and who decided: `permission: Allow · by ai`, then the reason of the AI and
+the learned rule where there are any.
 
 ```
-──────────────────────────────────────────────────────
-❯ typed text wraps at the pane width
-  and continues on the next row
-──────────────────────────────────────────────────────
+    ✓ $ cargo nextest run                                  ✓ 8s
+      … 41 more lines
+          Summary [   7.910s] 345 tests run: 345 passed, 0 skipped
+      exit 0
 ```
 
-An empty box says `Tell the agent what to do` in dim text. The hint is not
-part of the prompt. The box grows to four text rows, then scrolls with the
+### Subagents
+
+Some agents start subagents: child agents that do part of the turn, such as
+an explorer that reads the repository. Codex ACP and Claude ACP announce
+them; OpenCode does not.
+
+While the session has a subagent, the top row of the screen is a bar of
+tabs: `main`, then one tab for each subagent, in the order they started.
+Each subagent tab has the state mark of the subagent and its name. The
+active tab is in brackets and reversed:
+
+```
+[main] ✓ Explore  ◐ Review
+```
+
+In a narrow terminal, the bar cuts the names and keeps the marks. Where the
+tabs do not fit, `‹` and `›` show that more tabs are past the edge.
+
+In `main`, a subagent is one row in the turn that started it: its state
+mark, `↳`, its name, its step count and its time. The row does not open in
+place:
+
+```
+    ✓ ↳ Explore  12 steps · 1m 04s
+```
+
+Press Enter on the row to open the tab of the subagent. The tab shows the
+task of the subagent and a row for each of its steps, the same rows as an
+open turn shows. Press Ctrl-N for the next tab and Ctrl-P for the tab
+before. Press Escape in a subagent tab to go back to `main`. Each tab keeps
+its own scroll and its own cursor. The input box sends to the session from
+every tab.
+
+Open one of those steps to see its detail. A permission from a subagent
+shows above the input with the name of the subagent:
+`Bash · asked by subagent explorer`.
+
+### The plan
+
+While the agent has a plan with an entry that is not done, one line shows
+above the input: `▸ plan 2/5 · <the entry in progress>`. Press Ctrl-T, or
+click the line, to open the checklist: `☐` pending, `◐` in progress, `☑`
+done. Press Ctrl-T again to close it. A checklist that does not fit shows a
+part of its entries, and a last row such as `0 above · 23 below · the wheel
+scrolls the plan`. Turn the wheel over the checklist to see the other
+entries. One notch moves no more lines than the checklist shows, so no
+entry is skipped.
+
+### The bottom row
+
+One row sits under the input box. On the left it shows the mark of the
+session state (`◐` running, `●` idle, `✗` failed, `■` ended), the name of
+the session, the model, the mode, how much of the context window it uses, and the cost. An item that the
+agent does not report is not shown. On a narrow terminal the row drops whole
+items, the least important first: the name, the cost, the context, the mode,
+the model and the mark. The name is the title and the seat that `ariadne
+session ls` shows, with the step where the session has one; a name that is too
+long is cut with an ellipsis. While the console is open it sets the title of
+the terminal window to the name, and it sets the title back when you leave. While the link is down the left side reads `reconnecting`, and
+after one Ctrl-C it reads `ctrl-c again to leave`.
+
+On the right the row shows `? keys`, which drops last. Press `?` with an empty
+input box, or in the transcript zone, to open a list of every key, in a group
+for each zone. On a short terminal, scroll the list with the arrows, PgUp, PgDn, Home and End. `?` or Escape closes it, and the transcript and the input stay
+as they were. A `?` in a box that holds text is a typed character.
+
+### The two zones
+
+The keys go to one zone at a time. The input zone has them when the console
+opens. Tab gives them to the transcript, with the cursor on the newest turn.
+Tab, Escape, or a typed character gives them back to the input. The line of
+the item at the cursor is reversed. `?` lists the keys of each zone.
+
+| Key, in the transcript | What it does |
+| --- | --- |
+| ↑, ↓, `k`, `j` | Moves the cursor between the turns and the rows of the open ones |
+| Enter, → | Opens the item at the cursor; on an open step, shows its detail whole |
+| ← | Closes the open item, or moves the cursor from a step to its turn |
+| `r` | Shows the raw input and raw output of the tool call at the cursor |
+| `y` | Copies the item at the cursor as `ariadne session logs` prints it, to the clipboard of the terminal (OSC 52) |
+| Home, End | Moves the cursor to the first or the newest turn |
+| Enter, on a subagent row | Opens the tab of the subagent |
+
+The wheel scrolls the transcript three lines, in both zones. Over an open
+checklist of the plan, it scrolls the checklist instead. A click on a
+turn or a step opens or closes it, and moves the cursor there. A transcript
+scrolled to its end follows the new lines. A resize draws the whole screen
+again at the new size, and loses no line.
+
+The input box has a dim rule above and below it. Its prompt is `❯ `, and
+continued rows align under the text. An empty box says `Tell the agent what
+to do` in dim text. The box grows to four text rows, then scrolls with the
 cursor.
+
+| Key, in the input | What it does |
+| --- | --- |
+| Enter | Sends what you typed, or answers the permission question on screen |
+| Shift+Enter, Alt+Enter, Ctrl-J | Starts a new line without sending. Shift+Enter needs a terminal that reports it through the kitty keyboard protocol; Alt+Enter and Ctrl-J work in every terminal |
+| `\` then Enter | Removes the final backslash and starts a new line without sending |
+| ↑, ↓ | Moves by a wrapped row; at the first or last row, moves through prompt history |
+| Home, End, Ctrl-A, Ctrl-E | Moves to the start or the end of the line |
+| Delete | Deletes the character after the cursor |
+| Ctrl-U, Ctrl-K | Deletes to the start or the end of the line |
+| Ctrl-W | Deletes the word before the cursor |
+| Alt+←, Alt+→ | Moves back or forward one word (Alt-B and Alt-F do the same) |
+| ↑, ↓, or 1 to 9 during a permission | Chooses a permission option instead of moving through input or history |
+| PgUp, PgDn | Scrolls the transcript a screen, in both zones |
+| Ctrl-O | Opens or closes the newest turn |
+| Ctrl-T | Opens or closes the checklist of the plan |
+| Ctrl-N, Ctrl-P | Moves to the next tab or to the tab before, in both zones |
+| Tab | Gives the keys to the transcript; while the slash-command list is open, completes the pick; in a form, goes to the next question |
+| Escape | Cancels the running turn; in a form, declines the question; in a subagent tab, goes back to `main` |
+| Ctrl-C twice, Ctrl-D | Leaves the console; the session keeps running, and the console says how to attach again |
+
+Pasting puts the text into the input box where the cursor is, line breaks
+and all; nothing is sent until you press Enter. Wide characters and emoji
+take the two columns they draw on, in the transcript and in the box alike.
+Moving down past the newest history entry restores the draft you were typing.
+History includes prompts typed at a console, never prompts sent by the
+daemon.
+
+A typed prompt shows as `❯ text` straight away. Until a turn holds it, it
+carries a dim `queued` tag: a prompt typed while a turn runs waits for that
+turn to end. A prompt the daemon refuses leaves the queue, and the reason
+shows under the transcript after `✗`. If the daemon's stream drops, the
+footer says `reconnecting` until it is back, and nothing already on screen
+is shown twice.
+
+When you leave, the console gives the screen back and prints the turns it
+showed, folded, as `ariadne session logs` prints them: the newest 20 at
+most, and then the command that prints every turn with its steps. When the
+session ends, the console closes and says how to revive the session with
+`ariadne session resume`.
 
 ### Agent slash commands
 
@@ -214,155 +340,7 @@ Other editing keys work as they do in the input box. Press Enter after a
 command with its input to run it. If the text does not name a listed command,
 including a path such as `/tmp/x`, Enter sends it as an ordinary prompt.
 
-The transcript starts with a short welcome banner naming the seat — with its
-workflow column too, for a column agent, `agent · develop` — task (or
-orchestrator goal), model and effort, repository, and session, and one blank
-line under it. It scrolls into the scrollback like any other line.
-On a narrow terminal it uses the same lines without a box; long titles are
-shortened to fit.
-
-The pane opens where the cursor is, which the console asks the terminal for
-once, and then takes the whole screen: what was on the screen above it,
-your shell included, moves into the scrollback. A terminal that does not
-answer — a pseudo-terminal with nothing behind it, as `script` gives a
-process with no terminal of its own — keeps the console waiting a few
-seconds, and then the same pane opens from the bottom row of the screen.
-Nothing else changes: the transcript still scrolls into your scrollback, and
-the console never switches to the alternate screen. The terminal is not
-asked again after that, however many blocks scroll past and however often
-the terminal is resized.
-
-The agent's text streams in as it is written and renders as markdown:
-headings, bold, code spans, fenced code under its language, lists and task
-lists, quotes, tables, and links with their URL in plain text. Fenced code
-in a language the console knows, such as `rust`, `json` or `sh`, is coloured
-in your terminal's own palette: comments dim, strings green, keywords
-magenta, numbers cyan and types yellow. Other fenced code is drawn in one
-colour, and so is a language the console does not bundle, such as TOML. A
-thought is markdown too, dimmed and always drawn whole. A plan
-is a checklist that counts what is done (`plan 2/5`): `☐` pending, `◐` in
-progress, `☑` done and dimmed. A briefing or a nudge from the daemon shows
-under `» daemon`, folded to its first six lines, until Ctrl-O unfolds it. An
-error shows whole after `✗`. A note says what happened in words,
-such as `turn cancelled`; a turn that simply ends adds nothing. One blank line
-separates two blocks.
-
-A tool call is one block. Its head line says what the call did and on what:
-a status mark (`○` pending, `◐` running, `✓` done, `✗` failed), a glyph for
-the kind of call (`$` a command, `≡` a read, `✎` an edit, `⌫` a delete, `→` a
-move, `⌕` a search, `⇣` a fetch, `∴` a thought, `⇄` a mode switch, `◇` any
-other kind), then the command, the path and line, the pattern, or the URL.
-Once the call has ended, the head says how long it took. A call that a
-cancelled turn left running keeps its `◐`, and goes to the scrollback with
-the rest of the turn.
-Its output is folded to its last lines under the head, with a count of the
-lines left out, and hangs from the head by `⎿`, until Ctrl-O unfolds it. The
-output itself draws in the terminal's own foreground, not dimmed, so the
-text you most want to read — a file, a compiler error, a failing test — is
-never the hardest to see; the `⎿` gutter, the count of hidden lines, and a
-thought stay dim. A file change is a diff: the file's name, then the hunks
-with added and removed lines in colour, folded past a page with a count,
-until Ctrl-O unfolds it. Where a hunk replaces as many lines as it removes,
-the words that changed between a removed line and the one that replaces it
-draw bold, so the one word that moved stands out without reading the two
-side by side, word by word; a rewritten line that shares few words with its
-replacement draws plain instead.
-
-```
-✓ $ cargo nextest run  8.2s
-  ⎿ … 41 more lines
-    Summary [   7.910s] 345 tests run: 345 passed, 0 skipped
-
-✓ ✎ src/main.rs
-  ⎿ src/main.rs
-    @@ -1,3 +1,3 @@
-     fn main() {
-    -    println!("hello");
-    +    println!("hello, world");
-     }
-```
-
-| Key | What it does |
-| --- | --- |
-| Enter | Sends what you typed, or answers the permission question on screen |
-| Shift+Enter, Alt+Enter, Ctrl-J | Starts a new line without sending. Shift+Enter needs a terminal that reports it through the kitty keyboard protocol; Alt+Enter and Ctrl-J work in every terminal |
-| `\` then Enter | Removes the final backslash and starts a new line without sending |
-| ↑, ↓ | Moves by a wrapped row; at the first or last row, moves through prompt history |
-| Home | Moves to the start of the line |
-| End | Moves to the end of the line |
-| Delete | Deletes the character after the cursor |
-| Ctrl-A, Ctrl-E | Moves to the start or the end of the line |
-| Ctrl-U, Ctrl-K | Deletes to the start or the end of the line |
-| Ctrl-W | Deletes the word before the cursor |
-| Alt+←, Alt+→ | Moves back or forward one word (Alt-B and Alt-F do the same) |
-| ↑, ↓, or 1 to 9 during a question | Chooses a permission option instead of moving through input or history |
-| Ctrl-O | Toggles the pane between folded and whole; works during a question too |
-| Tab, Shift-Tab | While the session has subagents, shows the next or the previous view of the bar; while the slash-command list is open, Tab completes instead |
-| Escape | Cancels the running turn; in a subagent's view, cancels that subagent's turn where it can be, or goes back to the session's own view otherwise |
-| Ctrl-C twice, Ctrl-D | Leaves the console; the session keeps running, and the console says how to attach again |
-
-Pasting puts the text into the input box where the cursor is, line breaks
-and all; nothing is sent until you press Enter. Wide characters and emoji
-take the two columns they draw on, in the transcript and in the box alike.
-Moving down past the newest history entry restores the draft you were typing.
-History includes prompts typed in this console and its snapshot, never prompts
-sent by the daemon.
-
-A typed prompt shows as `❯ text` straight away, with a coloured bar down its
-left edge. Until the daemon takes it, it carries a dim `queued` tag: a prompt
-typed while a turn runs waits for that turn to end. A prompt the daemon
-refuses loses its tag, and the reason shows under it after `✗`. When the
-session ends, the console closes and says how to revive the session with
-`ariadne session resume`. If the daemon's stream
-drops, the status row says "reconnecting" until it is back, and nothing
-already on screen is printed twice.
-
-### Subagents
-
-Some agents start subagents: child agents that do part of the turn, such as
-an explorer that reads the repository. Codex ACP and Claude ACP announce
-them; OpenCode does not. While the session has at least one subagent, a bar
-sits above the status row:
-
-```
-  main   ● explorer ?   ✓ reviewer
- agent · develop · claude:opus · running   ⠹ thinking 12s   ⠹ running 1 subagent
-```
-
-The bar lists the session's own view, `main`, and then each subagent in the
-order the agent started it. The mark before a subagent's title is its state:
-`●` running, `✓` completed, `✗` failed, `⊘` cancelled, and `◇` where the
-agent has not said. A `?` after a title means that subagent asks a permission
-question. The view on the screen is drawn reversed. While any subagent runs,
-the status row says `running N subagents`. A session without a subagent has
-no bar, and Tab works as before.
-
-Tab shows the next view and Shift-Tab the previous one, in bar order. Each
-switch clears the terminal, its scrollback too where the terminal allows,
-and draws the chosen view from its start. In the CLI that also clears what
-your shell printed above the console.
-
-The `main` view is the session's own conversation. It shows one line when a
-subagent starts, with its title and its task, and one line when it ends,
-with how long it ran:
-
-```
-  ◇ subagent explorer · Find the config loader
-  ✓ subagent explorer completed · 1m 04s
-```
-
-What a subagent writes and runs is not in the `main` view. Press Tab to read
-it in the subagent's own view. That view shows the subagent's transcript
-alone, and is read-only: it has no input box, and the footer starts with
-`read-only`. Ctrl-O folds and unfolds as in the `main` view. A permission
-question from a subagent is asked in the `main` view, since the session
-answers it, and names the subagent: `Bash · asked by subagent explorer`.
-
-Escape's footer hint says what it does in that view: `esc cancel` where the
-agent said the subagent may be cancelled, and `esc back` otherwise. Not every
-agent says so — codex-acp and claude-agent-acp announce none today — so a
-subagent's own view usually goes back to `main` on Escape rather than
-cancelling.
+### Cancel a subagent over HTTP
 
 Over HTTP, `POST /v1/sessions/{id}/console/cancel` takes the same body either
 way: omitted, or `{}`, cancels the session's own running turn, and
@@ -370,7 +348,7 @@ way: omitted, or `{}`, cancels the session's own running turn, and
 session's own turn untouched. It answers `409` for a subagent that is
 unknown, has already ended, or was never said to be cancellable.
 
-With stdin or stdout redirected there is no pane to draw: `ariadne attach`
+With stdin or stdout redirected there is no screen to draw: `ariadne attach`
 then prints one `kind · summary` line for each finished item of the session:
 a prompt, a step when it is done, and a turn when it ends. A permission that
 waits prints its options with numbers. The console reads one prompt in each
@@ -380,8 +358,8 @@ wants.
 Use `ariadne session logs <session-id>` to read without sending input. It
 prints each turn of the session in three parts: its prompt, one activity line
 and its answer. The activity line gives the state of the turn and its counts:
-steps, tool calls, changed files, failed and cancelled calls, thoughts and
-subagents. Under the prompt, the turn shows each permission and question that
+steps, changed files, failed and cancelled calls and subagents. A count of
+zero is left out. Under the prompt, the turn shows each permission and question that
 waits, and its errors. When the turn has more of these than it shows, a line
 gives their count. `--steps` prints each step of the turn under it in place
 of those lines: messages, thoughts, tool calls with their output preview,
@@ -414,10 +392,10 @@ typed turn in each line when the turn ends, with all its steps when you give
 
 Use `ariadne session send <session-id> "Please explain the failure"`
 when a script or a one-line response is enough. When a session is waiting on a
-permission request, the console shows the call it asks about — its head line,
-the rest of the command or the diff under it — and then its choices; pick one
-with the arrow keys or its number key. The rest of the command draws in your
-terminal's own foreground, not dimmed. See [Permission modes](permissions.md).
+permission request, the console shows it above the input: the question, the
+call it asks about, why the AI permission model had a part where it did, and
+then its choices. Pick one with the arrow keys or its number key, and press
+Enter. See [Permission modes](permissions.md).
 When an agent asks you a question, it uses the question tool of its own
 client: the question, the options you can pick, the option it recommends
 first, and why. The console draws the question as a form above the input,
@@ -441,16 +419,16 @@ the permission and leaves the question open.
 
 ```
 ─ permission ───────────────────────────────────
-Bash
-○ $ cargo build
-    cargo nextest run
-❯ 1. Allow
-  2. Reject
+❯ Allow Bash?
+  Bash · cargo build
+  ❯ 1. Allow
+    2. Reject
 ────────────────────────────────────────────────
 ```
 
-Two rules frame the question. Once you answer, the console keeps only the
-question, the call's head line and `↳` with the option you chose.
+Two rules frame the question. Once you answer, the permission leaves the
+space above the input, and the option you chose is a mark on the row of its
+call.
 
 The desktop app shows a session's console in its detail view, drawn by the
 app as turns. A turn is your prompt, one activity line, and the agent's

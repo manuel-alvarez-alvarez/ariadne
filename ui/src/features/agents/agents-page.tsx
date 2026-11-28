@@ -261,9 +261,12 @@ function AgentTabs({
       <div className="flex items-center justify-between gap-2">
         <TabsList>
           {agents.map((agent) => (
-            <TabsTrigger key={agent} value={agent}>
-              <AgentIcon agentId={agent} icon={icons.get(agent)} />
-              {agent}
+            <TabsTrigger
+              key={agent}
+              value={agent}
+              icon={<AgentIcon agentId={agent} icon={icons.get(agent)} />}
+              label={agent}
+            >
               {/* How big that agent's catalog is — the rows behind the tab, which
                   is what this pill means everywhere else. Which of them are on
                   is the switch column's answer, not a number's. */}

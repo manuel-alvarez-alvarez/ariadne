@@ -575,8 +575,49 @@ async fn draw_until(
     }
 }
 
+/// The retired event routes are gone for a worker's session too: the source
+/// answers `404` itself and never asks the worker, which may be an older one
+/// that still serves them.
 #[tokio::test]
-async fn source_console_stream_and_terminal_connections_reach_the_worker_session() {
+async fn the_retired_console_routes_of_a_worker_session_are_not_forwarded() {
+    let (p, goal) = setup().await;
+    let source = draft(&p, &goal, "Console", &[]).await;
+    let worker_task = p.far.store.get_task(&source.id).await.unwrap();
+    let worker_goal = p.far.store.task_goal(&worker_task).await.unwrap();
+    let session = p
+        .far
+        .session(
+            &worker_goal,
+            Some(&worker_task),
+            ariadne_core::Seat::Agent,
+            &source.agents[0].id,
+        )
+        .await;
+    let alias = format!("far~{}~{}", source.id, session.id);
+    let source_address = Front::default().serve(&p.local).await;
+    let client = ariadne_client::Client::tcp(format!("http://{source_address}"));
+    for route in ["console", "console/stream"] {
+        let answer = client
+            .forward(
+                axum::http::Method::GET,
+                &format!("/v1/sessions/{alias}/{route}"),
+                None,
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(answer.status, 404, "{route}");
+    }
+
+    assert_eq!(
+        p.front.count("retired console route"),
+        0,
+        "the worker was never asked for either route"
+    );
+}
+
+#[tokio::test]
+async fn source_trajectory_stream_and_terminal_connections_reach_the_worker_session() {
     use futures_util::SinkExt;
     let (p, goal) = setup().await;
     let source = draft(&p, &goal, "Console", &[]).await;
@@ -605,7 +646,7 @@ async fn source_console_stream_and_terminal_connections_reach_the_worker_session
     let source_address = Front::default().serve(&p.local).await;
     let client = ariadne_client::Client::tcp(format!("http://{source_address}"));
     let mut stream = client
-        .stream(&format!("/v1/sessions/{alias}/console/stream"))
+        .stream(&format!("/v1/sessions/{alias}/trajectory/stream"))
         .await
         .unwrap();
     let snapshot = tokio::time::timeout(TIMEOUT, stream.next())
@@ -615,7 +656,6 @@ async fn source_console_stream_and_terminal_connections_reach_the_worker_session
         .unwrap();
     assert_eq!(snapshot.event, "snapshot");
     assert!(snapshot.data.contains("worker transcript"));
-    assert!(snapshot.data.contains(&alias));
     drop(stream);
     let (mut socket, _) = tokio_tungstenite::connect_async(format!(
         "ws://{source_address}/v1/sessions/{alias}/console/terminal"
@@ -641,8 +681,8 @@ async fn source_console_stream_and_terminal_connections_reach_the_worker_session
     .await;
     assert!(emulator.screen().alternate_screen());
     // A mouse message crosses the forwarder as the worker reads it: the
-    // click opens the first turn, which puts the keys in the transcript, and
-    // a resize after it draws the screen again.
+    // click opens the first turn, and a resize after it draws the screen
+    // again, with the bottom row on the new last row.
     for kind in ["wheel_up", "wheel_down", "click"] {
         socket
             .send(send(json!({"type":"mouse","kind":kind,"col":2,"row":1})))
@@ -660,11 +700,11 @@ async fn source_console_stream_and_terminal_connections_reach_the_worker_session
         "the clicked turn open, redrawn at 60 columns",
         |screen| {
             let contents = screen.contents();
-            contents.contains("✓ message")
+            contents.contains("▾")
                 && contents
                     .lines()
                     .nth(19)
-                    .is_some_and(|row| row.contains("↑↓ move"))
+                    .is_some_and(|row| row.ends_with("? keys"))
         },
     )
     .await;

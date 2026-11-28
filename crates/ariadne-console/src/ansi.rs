@@ -8,15 +8,9 @@
 //! reads, into whatever `Write` the host gives it, and answers both
 //! questions itself: the cursor from what it wrote, and the size from what
 //! the client last said it was, through the [`Window`] the host keeps a
-//! handle on. No query ever goes to a terminal, so [`Viewport::Inline`] and
-//! [`Terminal::insert_before`] work as they do on the CLI, and the
-//! scrollback lives in the emulator.
-//!
-//! [`Viewport::Inline`]: ratatui::Viewport::Inline
-//! [`Terminal::insert_before`]: ratatui::Terminal::insert_before
+//! handle on. No query ever goes to a terminal.
 
 use std::io::{self, Write};
-use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
 use ratatui::Terminal;
@@ -36,6 +30,18 @@ pub const FULL_SCREEN_ON: &[u8] = b"\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h
 /// [`FULL_SCREEN_ON`] given back, in the opposite order, and the cursor
 /// shown.
 pub const FULL_SCREEN_OFF: &[u8] = b"\x1b[?2004l\x1b[?1006l\x1b[?1000l\x1b[?1049l\x1b[?25h";
+
+/// What the console tells the terminal to put the window title back: it pops
+/// the title that [`title`] pushed.
+pub const TITLE_RESTORE: &[u8] = b"\x1b[23;0t";
+
+/// What the console tells the terminal to name its window: it pushes the
+/// title the window has, then sets `name`, which loses its control
+/// characters. [`TITLE_RESTORE`] gives the first one back.
+pub fn title(name: &str) -> Vec<u8> {
+    let name: String = name.chars().filter(|c| !c.is_control()).collect();
+    format!("\x1b[22;0t\x1b]0;{name}\x07").into_bytes()
+}
 
 /// The size of the terminal at the far end, as the client last reported it.
 ///
@@ -91,23 +97,6 @@ impl<W: Write> AnsiBackend<W> {
         self.cursor = at;
         Ok(())
     }
-
-    /// Scroll the rows of `region` by `lines` inside a `DECSTBM` region, with
-    /// `SU` or `SD` as `direction` says, and reset the region after. Both
-    /// `DECSTBM`s put the cursor on the screen's first cell.
-    fn scroll_region(&mut self, region: Range<u16>, lines: u16, direction: char) -> io::Result<()> {
-        if lines == 0 || region.is_empty() {
-            return Ok(());
-        }
-        write!(
-            self.out,
-            "\x1b[{};{}r\x1b[{lines}{direction}\x1b[r",
-            region.start + 1,
-            region.end
-        )?;
-        self.cursor = Position::ORIGIN;
-        self.out.flush()
-    }
 }
 
 impl<W: Write> Backend for AnsiBackend<W> {
@@ -155,22 +144,6 @@ impl<W: Write> Backend for AnsiBackend<W> {
         self.out.write_all(b"\x1b[0m")
     }
 
-    /// `n` line feeds: the cursor moves down, keeping its column, and the
-    /// terminal scrolls its contents into the scrollback where it has no
-    /// rows left. This is how ratatui makes room under an inline viewport.
-    fn append_lines(&mut self, n: u16) -> io::Result<()> {
-        for _ in 0..n {
-            self.out.write_all(b"\n")?;
-        }
-        let height = self.window.size().height;
-        self.cursor.y = self
-            .cursor
-            .y
-            .saturating_add(n)
-            .min(height.saturating_sub(1));
-        self.out.flush()
-    }
-
     fn hide_cursor(&mut self) -> io::Result<()> {
         self.out.write_all(b"\x1b[?25l")
     }
@@ -206,24 +179,6 @@ impl<W: Write> Backend for AnsiBackend<W> {
             ClearType::CurrentLine => b"\x1b[2K",
             ClearType::UntilNewLine => b"\x1b[K",
         })
-    }
-
-    /// Scroll the rows of `region` up by `lines`, as crossterm's backend does
-    /// for the CLI: `DECSTBM` sets the region, `SU` scrolls it, and the
-    /// region is reset to the whole screen after. The rows that leave a
-    /// region that starts on the top row go into the scrollback. A region of
-    /// one row is not one a terminal takes, and the pane's own backend,
-    /// `Anchored`, never asks for one.
-    fn scroll_region_up(&mut self, region: Range<u16>, lines: u16) -> io::Result<()> {
-        self.scroll_region(region, lines, 'S')
-    }
-
-    /// Scroll the rows of `region` down by `lines`, with `SD` where `SU`
-    /// scrolls up. Nothing reaches the scrollback: the rows that leave the
-    /// bottom of the region are gone, and the rows freed at its top are
-    /// blank.
-    fn scroll_region_down(&mut self, region: Range<u16>, lines: u16) -> io::Result<()> {
-        self.scroll_region(region, lines, 'T')
     }
 
     fn size(&self) -> io::Result<Size> {
@@ -342,39 +297,15 @@ fn color(out: &mut impl Write, color: Color, base: u8) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::layout::Rect;
     use ratatui::style::Style;
     use ratatui::text::Line;
-    use ratatui::widgets::{Block, Paragraph, Widget};
-    use ratatui::{Terminal, TerminalOptions, Viewport};
+    use ratatui::widgets::{Block, Paragraph};
 
-    use crate::tui::Anchored;
-    use crate::tui::testing::Tap;
+    use crate::testing::{self, Tap};
 
     use super::*;
-
-    /// An inline viewport of 3 rows on the backend, under the pane's own
-    /// backend as every host has it ([`crate::tui::open`]).
-    fn inline(window: &Window, tap: &Tap) -> Terminal<Anchored<AnsiBackend<Tap>>> {
-        Terminal::with_options(
-            Anchored::over(AnsiBackend::new(tap.clone(), window.clone())),
-            TerminalOptions {
-                viewport: Viewport::Inline(3),
-            },
-        )
-        .unwrap()
-    }
-
-    fn draw(terminal: &mut Terminal<impl Backend>, lines: &[&str]) {
-        let text: Vec<Line> = lines.iter().map(|line| Line::from(*line)).collect();
-        terminal
-            .draw(|frame| {
-                frame.render_widget(Paragraph::new(text), frame.area());
-                frame.set_cursor_position((1, 1));
-            })
-            .unwrap();
-    }
 
     /// A terminal reading the bytes shows what ratatui's own test backend
     /// shows of the same drawing: the styled cells, in place, and nothing
@@ -457,7 +388,7 @@ mod tests {
 
         // vt100 keeps one intensity per cell, the last one said, so the
         // cells set to both read as dim; the cells after them are the claim.
-        let mut parser = crate::tui::testing::emulator(2, 8, 0);
+        let mut parser = testing::emulator(2, 8, 0);
         parser.process(&tap.0.lock().unwrap());
         let screen = parser.screen();
         let attributes: Vec<(bool, bool)> = (1..5)
@@ -492,20 +423,6 @@ mod tests {
         );
         assert_eq!(tap.cursor(&window), Position { x: 3, y: 1 });
 
-        // Line feeds keep the column and stop at the bottom row.
-        backend.append_lines(2).unwrap();
-        assert_eq!(
-            backend.get_cursor_position().unwrap(),
-            Position { x: 3, y: 3 }
-        );
-        assert_eq!(tap.cursor(&window), Position { x: 3, y: 3 });
-        backend.append_lines(5).unwrap();
-        assert_eq!(
-            backend.get_cursor_position().unwrap(),
-            Position { x: 3, y: 4 }
-        );
-        assert_eq!(tap.cursor(&window), Position { x: 3, y: 4 });
-
         // Drawing leaves the cursor after the last symbol, a wide one
         // counted at its width.
         let mut cell = Cell::default();
@@ -522,138 +439,5 @@ mod tests {
         assert_eq!(backend.size().unwrap(), Size::new(10, 5));
         window.set(30, 8);
         assert_eq!(backend.size().unwrap(), Size::new(30, 8));
-    }
-
-    /// An inline viewport on this backend behaves as on a terminal: a block
-    /// inserted before it lands above, the viewport moves down, and what runs
-    /// off the top is in the emulator's scrollback.
-    #[test]
-    fn an_inline_viewport_pushes_inserted_lines_into_the_scrollback() {
-        let window = Window::new(12, 4);
-        let tap = Tap::default();
-        let mut terminal = inline(&window, &tap);
-
-        draw(&mut terminal, &["status", "[input]"]);
-        terminal
-            .insert_before(2, |buffer| {
-                Paragraph::new(vec![Line::from("first"), Line::from("second")])
-                    .render(buffer.area, buffer);
-            })
-            .unwrap();
-        draw(&mut terminal, &["status", "[input]"]);
-        terminal
-            .insert_before(1, |buffer| {
-                Paragraph::new("third").render(buffer.area, buffer);
-            })
-            .unwrap();
-        draw(&mut terminal, &["status", "[input]"]);
-
-        assert_eq!(tap.screen_at(&window, 0), ["third", "status", "[input]"]);
-        assert_eq!(
-            tap.screen_at(&window, 2),
-            ["first", "second", "third", "status"],
-            "the two rows that ran off the top are in the scrollback"
-        );
-    }
-
-    /// The rows `A` to `D` on a terminal of 4 rows, drawn on the backend and
-    /// on ratatui's test backend, which is what says how a scrolling region
-    /// scrolls: one call made on each, then what a terminal that read the
-    /// bytes shows, what the test backend holds, what the terminal's
-    /// scrollback holds and the bytes the call wrote.
-    fn scrolled(region: Range<u16>, up: bool) -> (Vec<String>, Vec<String>, Vec<String>, String) {
-        let window = Window::new(8, 4);
-        let tap = Tap::default();
-        let mut ansi = AnsiBackend::new(tap.clone(), window.clone());
-        let mut test = TestBackend::new(8, 4);
-        let cells: Vec<Cell> = ["A", "B", "C", "D"]
-            .iter()
-            .map(|symbol| {
-                let mut cell = Cell::default();
-                cell.set_symbol(symbol);
-                cell
-            })
-            .collect();
-        let rows = || (0u16..).zip(&cells).map(|(y, cell)| (0, y, cell));
-        ansi.draw(rows()).unwrap();
-        test.draw(rows()).unwrap();
-        let before = tap.0.lock().unwrap().len();
-
-        if up {
-            ansi.scroll_region_up(region.clone(), 1).unwrap();
-            test.scroll_region_up(region, 1).unwrap();
-        } else {
-            ansi.scroll_region_down(region.clone(), 1).unwrap();
-            test.scroll_region_down(region, 1).unwrap();
-        }
-
-        let mut parser = crate::tui::testing::emulator(4, 8, 10);
-        parser.process(&tap.0.lock().unwrap());
-        let screen: Vec<String> = parser
-            .screen()
-            .rows(0, 8)
-            .map(|row| row.trim_end().to_string())
-            .collect();
-        parser.screen_mut().set_scrollback(10);
-        let back = parser.screen().scrollback();
-        let scrollback: Vec<String> = parser
-            .screen()
-            .rows(0, 8)
-            .take(back)
-            .map(|row| row.trim_end().to_string())
-            .collect();
-        let expected: Vec<String> = (0..4)
-            .map(|y| test.buffer()[(0, y)].symbol().trim().to_string())
-            .collect();
-        let bytes = String::from_utf8_lossy(&tap.0.lock().unwrap()[before..]).to_string();
-        (screen, expected, scrollback, bytes)
-    }
-
-    #[test]
-    fn a_region_of_several_rows_scrolls_up_inside_a_decstbm_region() {
-        let (screen, expected, _, bytes) = scrolled(0..3, true);
-
-        assert_eq!(screen, ["B", "C", "", "D"], "{bytes:?}");
-        assert_eq!(screen, expected, "as the test backend has it");
-        assert_eq!(bytes, "\x1b[1;3r\x1b[1S\x1b[r");
-    }
-
-    #[test]
-    fn a_region_scrolls_down_inside_a_decstbm_region() {
-        let (screen, expected, scrollback, bytes) = scrolled(1..4, false);
-
-        assert_eq!(screen, ["A", "", "B", "C"], "{bytes:?}");
-        assert_eq!(screen, expected, "as the test backend has it");
-        assert!(scrollback.is_empty(), "nothing reaches the scrollback");
-        assert_eq!(bytes, "\x1b[2;4r\x1b[1T\x1b[r");
-    }
-
-    /// Told a new size, the terminal redraws its viewport at that size.
-    #[test]
-    fn a_resize_redraws_the_viewport_at_the_new_size() {
-        let window = Window::new(12, 6);
-        let tap = Tap::default();
-        let mut terminal = inline(&window, &tap);
-        let boxed = |frame: &mut ratatui::Frame| {
-            frame.render_widget(Block::bordered(), frame.area());
-        };
-        terminal.draw(boxed).unwrap();
-        assert!(
-            tap.screen_at(&window, 0)
-                .iter()
-                .any(|row| row == "┌──────────┐"),
-            "{:?}",
-            tap.screen_at(&window, 0)
-        );
-
-        window.set(6, 6);
-        terminal.resize(Rect::new(0, 0, 6, 6)).unwrap();
-        terminal.draw(boxed).unwrap();
-
-        assert!(
-            tap.screen_at(&window, 0).iter().any(|row| row == "┌────┐"),
-            "{:?}",
-            tap.screen_at(&window, 0)
-        );
     }
 }

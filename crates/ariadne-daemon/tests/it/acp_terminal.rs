@@ -128,7 +128,7 @@ fn home_with_stub(dir: &tempfile::TempDir, stub: &StubAcpAgent) -> std::path::Pa
 
 /// The footer the full-screen console draws under its input box, which says
 /// that it is drawn.
-const READY: &str = "enter send · tab transcript";
+const READY: &str = "? keys";
 
 /// The client's end: the emulator the bytes draw on, and the socket they
 /// come over.
@@ -137,6 +137,8 @@ struct Client {
     parser: vt100::Parser,
     /// Every status the daemon said, in order.
     statuses: Vec<SessionStatus>,
+    /// Every byte the daemon drew, as it came.
+    raw: Vec<u8>,
 }
 
 /// A terminal size the emulator takes: never zero.
@@ -152,6 +154,7 @@ impl Client {
             socket: connect(address, id).await.unwrap(),
             parser: vt100::Parser::new(nonzero(rows), nonzero(cols), 200),
             statuses: Vec::new(),
+            raw: Vec::new(),
         };
         client.resize(cols, rows).await;
         client
@@ -238,7 +241,7 @@ impl Client {
                 );
             };
             match frame {
-                Some(Ok(Message::Binary(bytes))) => self.parser.process(&bytes),
+                Some(Ok(Message::Binary(bytes))) => self.draw(&bytes),
                 Some(Ok(Message::Text(text))) => self.status(&text),
                 Some(Ok(Message::Close(_))) | None => {
                     panic!(
@@ -250,6 +253,11 @@ impl Client {
                 Some(Err(error)) => panic!("the socket failed waiting for {what}: {error}"),
             }
         }
+    }
+
+    fn draw(&mut self, bytes: &[u8]) {
+        self.raw.extend_from_slice(bytes);
+        self.parser.process(bytes);
     }
 
     fn status(&mut self, text: &str) {
@@ -269,7 +277,7 @@ impl Client {
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             match tokio::time::timeout(left, self.socket.next()).await {
-                Ok(Some(Ok(Message::Binary(bytes)))) => self.parser.process(&bytes),
+                Ok(Some(Ok(Message::Binary(bytes)))) => self.draw(&bytes),
                 Ok(Some(Ok(Message::Text(text)))) => self.status(&text),
                 Ok(Some(Ok(Message::Close(_))) | None) => return true,
                 Ok(Some(Ok(_))) => {}
@@ -308,14 +316,52 @@ async fn the_terminal_draws_the_full_screen_console_at_the_client_size() {
     let rows: Vec<&str> = screen.lines().collect();
     assert_eq!(rows.len(), 40, "the console fills the terminal:\n{screen}");
     assert!(
-        rows[39].starts_with(&format!(" {READY}")),
-        "the footer is the last row:\n{screen}"
+        rows[39].ends_with(READY),
+        "the bottom row is the last row:\n{screen}"
     );
     assert!(
-        rows[4].contains("▸") && rows[4].contains("1 tool call") && rows[5].contains("done"),
+        rows[1].contains("▸") && rows[1].contains("1 step") && rows[2].contains("done"),
         "the turns are drawn from the top, each with its answer:\n{screen}"
     );
     assert_eq!(client.statuses, [SessionStatus::Idle]);
+}
+
+/// The bottom row names the session as `ariadne session ls` does, and the
+/// terminal window is titled with it while the console is open and given its
+/// title back when the console closes.
+#[tokio::test]
+async fn the_terminal_names_the_session_in_the_bottom_row_and_the_window_title() {
+    let (_dir, _stub, h, session, address) = idle_daemon().await;
+    let task = h
+        .store
+        .get_task(session.task_id.as_ref().unwrap())
+        .await
+        .unwrap();
+    let name = format!("{} · agent · develop", task.title);
+
+    let mut client = Client::open(address, &session.id, 160, 40).await;
+    client
+        .read_until("the console", |screen| screen.contains(READY))
+        .await;
+    let screen = client.screen();
+    let bottom = screen.lines().last().unwrap();
+    assert!(
+        bottom.starts_with(&format!(" ◐ · {name}")) || bottom.starts_with(&format!(" ● · {name}")),
+        "the name follows the state mark:\n{bottom}"
+    );
+    let set = format!("\x1b]0;{name}\x07");
+    assert!(
+        String::from_utf8_lossy(&client.raw).contains(&set),
+        "the window is titled"
+    );
+    assert!(!String::from_utf8_lossy(&client.raw).contains("\x1b[23;0t"));
+
+    client.ctrl('d').await;
+    assert!(client.closed_by_the_daemon().await);
+    assert!(
+        String::from_utf8_lossy(&client.raw).contains("\x1b[23;0t"),
+        "the title is put back"
+    );
 }
 
 /// Keys typed into the socket and Enter become a prompt the agent receives.
@@ -575,7 +621,7 @@ async fn ctrl_c_twice_or_ctrl_d_closes_the_socket_and_the_session_stays_alive() 
 }
 
 /// A resize sent after the first draw draws the whole screen again at the new
-/// size: the footer moves to the new last row, and no row of the old screen
+/// size: the bottom row moves to the new last row, and no row of the old screen
 /// is left under or beside it.
 #[tokio::test]
 async fn a_resize_redraws_at_the_new_size() {
@@ -594,7 +640,7 @@ async fn a_resize_redraws_at_the_new_size() {
             screen
                 .lines()
                 .nth(19)
-                .is_some_and(|row| row.starts_with(&format!(" {READY}")))
+                .is_some_and(|row| row.ends_with(READY))
         })
         .await;
     let screen = client.screen();
@@ -619,15 +665,15 @@ async fn a_click_message_opens_and_closes_the_turn_under_it() {
         .await;
     assert!(!client.screen().contains("Read"), "{}", client.screen());
 
-    // The activity line of the second turn, which ran the tool.
-    client.mouse(TerminalMouse::Click, 4, 4).await;
+    // The activity line of the only turn, which ran the tool.
+    client.mouse(TerminalMouse::Click, 4, 1).await;
 
     client
         .read_until("the steps of the clicked turn", |screen| {
             screen.contains("▾") && screen.contains("Read")
         })
         .await;
-    client.mouse(TerminalMouse::Click, 4, 4).await;
+    client.mouse(TerminalMouse::Click, 4, 1).await;
     client
         .read_until("the clicked turn closed again", |screen| {
             !screen.contains("Read") && screen.contains("done")
@@ -640,14 +686,15 @@ async fn a_click_message_opens_and_closes_the_turn_under_it() {
 #[tokio::test]
 async fn a_wheel_message_scrolls_the_transcript() {
     let (_dir, _stub, _h, session, address) = idle_daemon().await;
-    // The transcript has six lines and four rows to show them in.
-    let mut client = Client::open(address, &session.id, 100, 8).await;
+    // The transcript has three lines and one row to show them in: the
+    // screen less the box and the bottom row.
+    let mut client = Client::open(address, &session.id, 100, 6).await;
     client
         .read_until("the end of the transcript", |screen| {
             screen.contains("done") && screen.contains(READY)
         })
         .await;
-    let first = "before the first prompt";
+    let first = "task: Develop";
     assert!(!client.screen().contains(first), "{}", client.screen());
 
     client.mouse(TerminalMouse::WheelUp, 4, 1).await;

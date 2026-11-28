@@ -157,6 +157,54 @@ pub fn default_skill_document(name: &str) -> Option<&'static str> {
         .map(|s| s.document)
 }
 
+/// What Ariadne adds for one shipped skill in one seat: the tools and the
+/// calls that skill's plain words stand for there (006 rule 21).
+///
+/// A shipped skill names no Ariadne word, so the one document reads the same
+/// in any harness. What it means in Ariadne is this text, compiled in from
+/// `supplements/<skill>/<seat>.md` beside this crate. No row, route or sync
+/// holds one, so no edit of the skill changes it.
+pub(crate) struct SkillSupplement {
+    pub(crate) skill: &'static str,
+    pub(crate) seat: Seat,
+    pub(crate) text: &'static str,
+}
+
+/// Every supplement Ariadne ships. A pair of skill and seat that is not here
+/// adds no text.
+pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 4] = [
+    SkillSupplement {
+        skill: "code-review",
+        seat: Seat::Agent,
+        text: include_str!("../supplements/code-review/agent.md"),
+    },
+    SkillSupplement {
+        skill: "code-review",
+        seat: Seat::Reviewer,
+        text: include_str!("../supplements/code-review/reviewer.md"),
+    },
+    SkillSupplement {
+        skill: "merge",
+        seat: Seat::Agent,
+        text: include_str!("../supplements/merge/agent.md"),
+    },
+    SkillSupplement {
+        skill: "conflict-resolution",
+        seat: Seat::Agent,
+        text: include_str!("../supplements/conflict-resolution/agent.md"),
+    },
+];
+
+/// The supplement of the shipped skill `skill` in `seat`, or `None` where
+/// that pair has none. The caller asks only for a shipped skill: a skill of
+/// the user's own gets no supplement, whatever its name.
+pub fn skill_supplement(skill: &str, seat: Seat) -> Option<&'static str> {
+    SKILL_SUPPLEMENTS
+        .iter()
+        .find(|s| s.skill == skill && s.seat == seat)
+        .map(|s| s.text)
+}
+
 /// A workflow Ariadne ships: a linear kanban of columns, parsed by
 /// [`ariadne_core::workflow::parse`]. Stored the same way a [`BuiltinSkill`]
 /// is: a `NULL` document while it runs on the text here, so a rewording
@@ -410,13 +458,16 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str =
 /// turn ends is the call's own description to say, and how to ask the user
 /// is the session rules'. The stop rule is here too, and nowhere else: a
 /// column's skill can tell an agent how to fix one thing, never how long to
-/// keep trying it.
+/// keep trying it. Its last line binds the plain words a shipped skill uses
+/// to the Ariadne words they stand for (006 rule 21), so no skill names the
+/// orchestrator, a column or a step call.
 const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its branch. Do only the work of your current column. Read its skills first.
 - Call `complete_step` when the column's work is done.
 - Call `fail_step` when the previous column must fix something.
 - Call `fail_task` when nobody can do the task as written.
 - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.
-- After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason."#;
+- After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason.
+- A skill uses plain words. The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. To return the work is to fail the step. An update is news. Your instructions are your briefing. The primary checkout of the repository is the `Repo:` path."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
 /// commands act on, and what the column before it said.
@@ -760,6 +811,19 @@ pub(crate) mod tests {
             .collect()
     }
 
+    /// Every supplement Ariadne ships, named the way a failure names it.
+    pub(crate) fn all_supplements() -> Vec<(String, &'static str)> {
+        SKILL_SUPPLEMENTS
+            .iter()
+            .map(|s| {
+                (
+                    format!("{} {} supplement", s.skill, s.seat.as_str()),
+                    s.text,
+                )
+            })
+            .collect()
+    }
+
     /// Every shipped workflow document, named the way a failure names it.
     pub(crate) fn all_workflows() -> Vec<(String, &'static str)> {
         BUILTIN_WORKFLOWS
@@ -802,16 +866,21 @@ pub(crate) mod tests {
     fn size_caps_hold() {
         // Three step texts, three orchestrator texts and the message.
         const KIND_TOTAL: usize = 1500;
-        // Every seat text, every kind and the three pull request texts.
-        const GRAND_TOTAL: usize = 3400;
+        // Every seat text, every kind and the three pull request texts. It
+        // rose from 3400 to 3600 with the agent seat text, for the line that
+        // binds the plain words of a shipped skill (006 rule 21).
+        const GRAND_TOTAL: usize = 3600;
 
         // A cap per seat. The orchestrator's carried its playbook up to
         // 1750; the playbook is the `orchestration` skill now, and 200 holds
         // what is left to the seat text it is. The agent's seven steps fit in
         // 750, and the pull request reviewer's and keeper's one paragraph
-        // each in 400.
+        // each in 400. The agent's rose to 950 for the line that binds the
+        // plain words of a shipped skill to Ariadne (006 rule 21): that line
+        // is what lets `code-review` and `architecture-review` drop every
+        // Ariadne word, so it is paid once per seat rather than per skill.
         let system_cap = |seat: Seat| match seat {
-            Seat::Agent => 750,
+            Seat::Agent => 950,
             Seat::Orchestrator => 200,
             Seat::Reviewer => 400,
             Seat::Keeper => 400,
@@ -875,6 +944,75 @@ pub(crate) mod tests {
         );
     }
 
+    /// A cap per supplement, and one over them all (006 rule 21).
+    ///
+    /// A supplement rides in the system prompt beside its seat text, so a
+    /// session pays for it on the first turn and after every model switch,
+    /// the same as the seat text. Each cap is what its text holds today with
+    /// a sentence of room, so a rule that creeps back from the skill shows
+    /// up here. The agent seat's `code-review` supplement is 300: the diff
+    /// call and the two step calls the skill dropped. The reviewer seat's is
+    /// 200: one line that hands the round to `pr-reviewer`, and one that
+    /// skips the step call. The agent seat's `merge` supplement is 260: the
+    /// step call that passes the work with its `merge_commit`, and the
+    /// `fail_step` call for a failed check. Its `conflict-resolution`
+    /// supplement is 140: the one step call, for where no skill invoked it.
+    /// A new pair needs a cap of its own here, argued the same way, and the
+    /// total holds them all.
+    #[test]
+    fn supplement_size_caps_hold() {
+        const TOTAL: usize = 850;
+        let cap = |skill: &str, seat: Seat| match (skill, seat) {
+            ("code-review", Seat::Agent) => 300,
+            ("code-review", Seat::Reviewer) => 200,
+            ("merge", Seat::Agent) => 260,
+            ("conflict-resolution", Seat::Agent) => 140,
+            _ => panic!(
+                "the {skill} supplement of the {} seat has no cap",
+                seat.as_str()
+            ),
+        };
+        let mut total = 0;
+        for supplement in &SKILL_SUPPLEMENTS {
+            let len = supplement.text.len();
+            println!("{len:5}  {} {}", supplement.skill, supplement.seat.as_str());
+            total += len;
+            assert!(
+                len <= cap(supplement.skill, supplement.seat),
+                "the {} supplement of the {} seat is {len} characters, over {}",
+                supplement.skill,
+                supplement.seat.as_str(),
+                cap(supplement.skill, supplement.seat)
+            );
+        }
+        assert!(
+            total <= TOTAL,
+            "the supplements total {total} characters, over {TOTAL}"
+        );
+    }
+
+    /// A supplement is looked up by the skill and the seat, and a pair with
+    /// none gives nothing (006 rule 21).
+    #[test]
+    fn a_supplement_is_picked_by_its_skill_and_its_seat() {
+        let agent = skill_supplement("code-review", Seat::Agent).unwrap();
+        for call in ["`get_diff`", "`fail_step`", "`complete_step`"] {
+            assert!(agent.contains(call), "the agent supplement and {call}");
+        }
+        let reviewer = skill_supplement("code-review", Seat::Reviewer).unwrap();
+        assert!(reviewer.contains("`pr-reviewer`"), "{reviewer}");
+        for call in ["`fail_step`", "`complete_step`", "`fail_task`"] {
+            assert!(
+                !reviewer.contains(call),
+                "the reviewer supplement and {call}"
+            );
+        }
+        assert_eq!(skill_supplement("code-review", Seat::Orchestrator), None);
+        assert_eq!(skill_supplement("code-review", Seat::Keeper), None);
+        assert_eq!(skill_supplement("architecture-review", Seat::Agent), None);
+        assert_eq!(skill_supplement("coding", Seat::Agent), None);
+    }
+
     /// How the two rules are read off a text: a line at a time, the stop
     /// after a digit left where it is, and a banned word caught only where
     /// it stands as a word of its own.
@@ -925,7 +1063,11 @@ pub(crate) mod tests {
     /// in, and what a rewrite of one is read against.
     #[test]
     fn every_default_text_is_simplified_technical_english() {
-        for (name, text) in all_defaults().into_iter().chain(all_workflows()) {
+        for (name, text) in all_defaults()
+            .into_iter()
+            .chain(all_workflows())
+            .chain(all_supplements())
+        {
             for sentence in ste::sentences(text) {
                 let words = sentence.split_whitespace().count();
                 assert!(
@@ -949,7 +1091,7 @@ pub(crate) mod tests {
     /// would be a second owner of it.
     #[test]
     fn no_default_repeats_what_every_session_is_told_by_the_mcp_server() {
-        for (name, text) in all_defaults() {
+        for (name, text) in all_defaults().into_iter().chain(all_supplements()) {
             for shared in [
                 "Reach Ariadne",
                 "backticked",
@@ -1043,7 +1185,8 @@ pub(crate) mod tests {
              - Call `fail_step` when the previous column must fix something.\n\
              - Call `fail_task` when nobody can do the task as written.\n\
              - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.\n\
-             - After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason."
+             - After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason.\n\
+             - A skill uses plain words. The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. To return the work is to fail the step. An update is news. Your instructions are your briefing. The primary checkout of the repository is the `Repo:` path."
         );
         assert_eq!(
             default_system_prompt(Seat::Reviewer),

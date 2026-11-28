@@ -1,7 +1,7 @@
 ---
 id: skills-and-staffed-agents
 status: current
-updated: 2026-11-26
+updated: 2026-11-28
 areas: [store, api, cli, ui, daemon, prompts]
 commits: [03f9c8b7, 29e6d84e]
 tests:
@@ -182,8 +182,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
     first, and changes in the same commit each document those rules bind to
     the code. It reads an area spec where the repository keeps one.
     It routes behavior, structure and prose to their proof before implementation.
-    It sends contradictions with both readings and its pick to `orchestrator`
-    through `post_to_session`, then continues with that pick.
+    It sends contradictions with both readings and its pick to the requester,
+    then continues with that pick.
     It uses independent expected values and public-interface assertions that
     detect a breach of every required part of the claim.
     It runs each touched test file whole after focused checks.
@@ -195,7 +195,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     Its exclusions name `coding`, `spec-writing` and `research`.
     `research` cites a source for every fact and lists what it did not check.
     Its research report names what would change the recommendation.
-    It posts the full research report to the orchestrator with `post_to_session`.
+    It sends the full research report to the requester.
     `spec-writing` writes the spec that later tasks build against,
     before its code exists: it reads the repository's spec format first,
     sends the orchestrator its open questions as one list with options and a
@@ -213,19 +213,22 @@ written into the system prompt (006), and the lifecycle the seats sit in
     and marked unverified, and every optional finding of one review is
     capped at five. Each pins its scope to the diff, reuses evidence only
     where it covers the reviewed revision — `architecture-review` the
-    column report's, `pr-reviewer` only checks passed in this round at the
+    report's, `pr-reviewer` only checks passed in this round at the
     reviewed sha, and `code-review`
     a reported result for a check outside the files the diff changes
     alone, since it runs those files' tests, lint and format check itself
     (006 rule 6) — reads outside the diff only to judge a risk it can
     name, and edits no file.
 
-    One column has one verdict. `code-review` ends the column: it fails the
-    step on a must-fix finding, completes it otherwise, and never fails it
-    on an optional one. It says those two step calls are the task seat's,
-    and that beside `pr-reviewer` it posts each finding as that skill says
-    and that skill ends the round: a review session (029) loads it beside
-    `pr-reviewer` — 18 of 48 review goals did — and has neither tool.
+    One column has one verdict. `code-review` ends the stage: it returns
+    the work on a must-fix finding, passes it otherwise, and never returns
+    it on an optional one. It names no step call and no diff call: the
+    `agent` seat's `code-review` supplement maps the whole change to
+    `get_diff`, the return to `fail_step` and the pass to `complete_step`,
+    and the `reviewer` seat's says that beside `pr-reviewer` each finding
+    is posted as that skill says and that skill ends the round (006 rule
+    21). A review session (029) loads it beside `pr-reviewer` — 18 of 48
+    review goals did — and has neither step tool.
     `pr-reviewer` states once that a step call another skill names is the
     task seat's, and that `submit_review` ends the round, so a picked
     skill such as `documentation` cannot send the seat to a tool it lacks.
@@ -233,7 +236,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     verdict of the skill loaded beside it, as one `Architecture` line
     under the repository conventions heading beside `code-review`, and as
     inline comments with no line and no clean-review text beside
-    `pr-reviewer`. It names no step call: of
+    `pr-reviewer`. It names no step call and has no supplement: of
     its 23 staffings over 158 goals, none stood alone. It lists the
     boundaries the diff changes before it maps any, and a diff that
     changes none gets the pass line with no map. `code-review` moves no ref and
@@ -242,16 +245,16 @@ written into the system prompt (006), and the lifecycle the seats sit in
     that agent's fix commit off the branch. It reviews the branch revision
     in place, pins the sha that `git rev-parse HEAD` prints as the reviewed
     revision, treats a missing branch as a must-fix finding, and ends with
-    HEAD on the task branch at that sha. It reads the column report as
+    HEAD on the task branch at that sha. It reads the report as
     unverified claims, reruns no check whose result it already holds,
     gives one pass or fail line per `## Criteria` number in one literal
     verdict shape, and judges the diff against `## Out of scope`. On a
     later round it reads the diff since its reviewed revision for new
     findings and judges every criterion on the whole change. The ticket
     is its contract: it judges the ticket as it reads now, passes a
-    criterion about an event outside the repository on the column
-    report's record of it, and treats a request no criterion holds as no
-    finding, sent to the orchestrator — the reviewer cannot read the
+    criterion about an event outside the repository on the report's
+    record of it, and treats a request no criterion holds as no
+    finding, sent to the requester — the reviewer cannot read the
     channel, so what the user told the author reaches it only through
     the ticket and that report. Each must-fix finding of its return
     report opens with `Trigger:`. It carries two lenses. A spec change is judged for
@@ -266,12 +269,16 @@ written into the system prompt (006), and the lifecycle the seats sit in
     reproduce each finding before it posts it, keeps the priority of a
     finding whose reproduction failed and marks its proof `Unverified:`
     rather than downgrade it to P2, and names no approval (029 rule 17).
-    `coding`, `merge` and `pr-babysit` name their own report only as "the
-    column report", never a field of it (006 rule 5) — `merge` alongside
-    the base branch's sha, `pr-babysit` on a merge; every other produce
-    skill that ends its own column — `conflict-resolution`,
-    `documentation`, `research`, `spec-writing` —
-    calls `complete_step` with the column report the same way, and
+    `pr-babysit` names its own report only as "the column report", never a
+    field of it (006 rule 5), on a merge; `coding`, `merge` and
+    `conflict-resolution` name it as "the report", and the
+    `agent` seat's supplement of `merge` and of `conflict-resolution` holds
+    its call: `merge` passes the
+    work with the base branch's sha as `merge_commit` and returns it with
+    `fail_step` for a failed check, and `conflict-resolution` passes the
+    work only where no skill invoked it. Every other produce skill that
+    ends its own column — `documentation`, `research`, `spec-writing` —
+    ends on the report the same way, and
     `conflict-resolution` returns to the skill that invoked it, and calls
     nothing, where one did.
     `conflict-resolution` alone states the conflict method: both sides read
@@ -402,9 +409,22 @@ written into the system prompt (006), and the lifecycle the seats sit in
     A skill is one file with no reference file beside it, read whole (rule
     11). A rule that several skills share is stated in each in the same
     words, and no skill moves a rule between the layers of 006 rule 5.
+    A shipped skill names no Ariadne word: no `Ariadne`, no tool of the MCP
+    server and no Ariadne word of the word list of 006 rule 21. It says
+    the plain word of that list instead, and the seat text and the
+    supplement of its skill and seat say what the plain word stands for.
+    `code-review`, `architecture-review`, `coding`, `documentation`,
+    `research`, `spec-writing`, `merge` and `conflict-resolution` hold to
+    this today, proven by the one helper `assert_names_no_ariadne_word` in
+    `skill_tests/template.rs`; the other three skills move to it in later
+    changes. The four produce skills
+    keep the ticket and report contract in plain words, and none has a
+    supplement: the agent seat text owns the report call and the binding of
+    the requester, the stage and the report (006 rule 21).
     The body stays under 500 lines and within the caps of 006 rule 13.
     The template is proven by structure and words
-    (`skill_tests/template.rs::every_skill_obeys_the_template`), not by an
+    (`skill_tests/template.rs::every_skill_obeys_the_template`,
+    `::the_two_review_skills_name_no_ariadne_word`), not by an
     evaluation with real agents.
 
 ## Acceptance criteria
@@ -506,9 +526,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - No skill repeats how a check runs: that is the session rules'
   (`skill_tests/template.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`,
   `mcp.rs::each_shared_rule_is_written_in_its_owner_alone`).
-- `coding` and the other produce skills that end their own column name the
-  column report there and restate no field of it
-  (`skill_tests/produce.rs::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
+- `coding` and the other produce skills that end their own stage name the
+  report there and restate no field of it
+  (`skill_tests/produce.rs::a_produce_skill_names_the_report_where_it_ends_a_stage`).
+- `coding`, `documentation`, `research` and `spec-writing` name no Ariadne
+  word and have no supplement
+  (`skill_tests/produce.rs::the_four_produce_skills_name_no_ariadne_word_and_have_no_supplement`).
 - No shipped skill divides a task, `coding` adds a new commit on a return
   and never amends, and its refactoring path names one commit
   (`skill_tests/produce.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).
@@ -559,6 +582,18 @@ written into the system prompt (006), and the lifecycle the seats sit in
   and `architecture-review` adds one line to the one verdict of its
   column and names no step call
   (`skill_tests/review.rs::architecture_review_adds_to_the_one_verdict_of_its_column`).
+- `merge` and `conflict-resolution` name no Ariadne, no MCP tool and no
+  Ariadne word of the word list
+  (`skill_tests/template.rs::merge_and_conflict_resolution_name_no_ariadne_word`),
+  and their calls are the `agent` seat's supplements
+  (`skill_tests/operate.rs::the_merge_supplement_holds_the_step_calls_the_skill_dropped`,
+  `skill_tests/operate.rs::the_conflict_resolution_supplement_holds_the_call_that_ends_the_stage`).
+- `code-review` and `architecture-review` name no Ariadne, no MCP tool and
+  no Ariadne word of the word list
+  (`skill_tests/template.rs::the_two_review_skills_name_no_ariadne_word`),
+  and `code-review`'s step calls and diff call are the agent seat's
+  supplement, while the reviewer seat's names no step call
+  (`skill_tests/review.rs::the_review_skill_reviews_in_place_and_ends_on_a_step_call`).
 - An agent is written on the pin it was given, whole
   (`store.rs::an_agent_is_written_on_the_pin_it_was_given_whole`), and no
   table names an agent by anything but the registry id at the head of its

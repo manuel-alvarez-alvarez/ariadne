@@ -27,7 +27,7 @@ import type { GoalDto, Host } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { DeleteDialog } from "@/components/delete-dialog"
 import { hostTitle } from "@/components/error-state"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/icon-button"
 import { useCancelGoal, useCompleteGoal, useDeleteGoal } from "./queries"
 import { isTerminalGoalStatus } from "./status"
 
@@ -63,24 +63,30 @@ export function GoalActions({
       {/* Only an active goal can be completed: one still being planned has no
           plan to have done anything. */}
       {goal.status === "active" ? (
-        <Button variant="ghost" size="sm" onClick={() => setCompleteOpen(true)}>
-          <CircleCheckIcon />
-          Complete goal
-        </Button>
+        <IconButton
+          variant="ghost"
+          icon={<CircleCheckIcon />}
+          label="Complete goal"
+          onClick={() => setCompleteOpen(true)}
+        />
       ) : null}
       {canCancel ? (
         // Only opens the confirm; the solid red is on the click inside it.
-        <Button variant="destructive-ghost" size="sm" onClick={() => setCancelOpen(true)}>
-          {/* The same icon the task's cancel wears: one verb, one glyph. */}
-          <BanIcon />
-          Cancel goal
-        </Button>
+        <IconButton
+          variant="destructive-ghost"
+          // The same icon the task's cancel wears: one verb, one glyph.
+          icon={<BanIcon />}
+          label="Cancel goal"
+          onClick={() => setCancelOpen(true)}
+        />
       ) : null}
       {canDelete ? (
-        <Button variant="destructive-ghost" size="sm" onClick={() => setDeleteOpen(true)}>
-          <Trash2Icon />
-          Delete goal
-        </Button>
+        <IconButton
+          variant="destructive-ghost"
+          icon={<Trash2Icon />}
+          label="Delete goal"
+          onClick={() => setDeleteOpen(true)}
+        />
       ) : null}
 
       <CompleteGoalDialog

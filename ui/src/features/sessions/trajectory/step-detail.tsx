@@ -25,23 +25,24 @@
  */
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query"
-import { CopyIcon } from "lucide-react"
+import { BracesIcon, CopyIcon, Maximize2Icon } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import { api, type Host, qk, type StepDto, unwrap } from "@/api"
 import { CodeBlock } from "@/components/code-block"
+import { IconButton } from "@/components/icon-button"
 import { Markdown } from "@/components/markdown"
 import { Button } from "@/components/ui/button"
 import { copyText } from "@/lib/clipboard"
-import { describeError } from "@/lib/format"
+import { cn, describeError } from "@/lib/format"
 import { languageLabel } from "@/lib/highlight"
 
 import { DiffEditor } from "../../tasks/diff-editor"
 import { parseUnifiedDiff } from "../../tasks/diff-parse"
 import { MediaBlocks } from "./content-blocks"
 import { useChildSteps, useFullView } from "./full-view-context"
-import type { PermissionStep } from "./notices"
+import { type PermissionStep, permissionAnswer } from "./notices"
 import { StepRow } from "./step-row"
 import { childSteps, contentText } from "./store"
 
@@ -68,6 +69,7 @@ export function StepDetail({
   permission?: PermissionStep
 }) {
   const [open, setOpen] = useState(false)
+  const answer = permission ? permissionAnswer(permission) : undefined
   return (
     <div>
       <div className="flex min-w-0 items-center gap-1">
@@ -85,8 +87,17 @@ export function StepDetail({
       {open ? (
         <div
           data-step-detail={step.id}
-          className="mt-0.5 mb-1 ml-4 max-h-80 overflow-y-auto rounded-md px-1 py-1"
+          className={cn(
+            "mt-0.5 mb-1 ml-4 rounded-md px-1 py-1",
+            // A subagent's steps scroll with the transcript, not in a box of their own.
+            step.type !== "subagent" && "max-h-80 overflow-y-auto",
+          )}
         >
+          {answer ? (
+            <p data-permission-answer className="mb-1 font-mono text-xs text-muted-foreground">
+              {answer}
+            </p>
+          ) : null}
           <StepBody host={host} sessionId={sessionId} step={step} now={now} />
         </div>
       ) : null}
@@ -138,23 +149,22 @@ function Controls({
   return (
     <div className="flex items-center gap-1">
       {open ? (
-        <Button
-          size="xs"
-          variant="outline"
+        <IconButton
+          size="icon-xs"
+          icon={<Maximize2Icon />}
+          label="Open"
           onClick={(event) => view.show(step, event.currentTarget)}
-        >
-          Open
-        </Button>
+        />
       ) : null}
       {onRaw ? (
-        <Button
-          size="xs"
+        <IconButton
+          size="icon-xs"
           variant={raw ? "secondary" : "outline"}
+          icon={<BracesIcon />}
+          label="Raw"
           aria-pressed={raw}
           onClick={onRaw}
-        >
-          Raw
-        </Button>
+        />
       ) : null}
     </div>
   )

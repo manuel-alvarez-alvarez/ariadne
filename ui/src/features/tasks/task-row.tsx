@@ -1,6 +1,6 @@
 /**
  * One task as one line of the goals board: the facts of the {@link TaskCard}
- * — title, attention badge, state badge, host, step track, tokens, pull
+ * — title, attention badge, state icon, host, step track, tokens, pull
  * request and last activity — in the columns of {@link BOARD_COLUMNS}.
  *
  * The board is one grid and every row a subgrid of it, so a column is as wide
@@ -18,19 +18,22 @@
  * the row's link, with no tab stop of its own.
  */
 
+import { TriangleAlertIcon } from "lucide-react"
 import { useId } from "react"
 import { Link } from "react-router-dom"
 
 import type { Host, TaskDto, WorkflowStepDto } from "@/api"
 import { HostLabel } from "@/components/host-label"
 import { PrLink } from "@/components/pr-link"
-import { StatusBadge } from "@/components/status-badge"
+import { StatusIcon } from "@/components/status-icon"
 import { stepUsageRows, TokenFigure } from "@/components/token-figure"
 import { When } from "@/components/when"
 import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { cn } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
 import { useSourceHost } from "./source-host"
+import { STALLED_META } from "./stalled"
+import { TASK_STATUS_META } from "./status"
 import { StepTrack, stepDotsWidth } from "./step-track"
 import { findStep, stepTitle } from "./steps"
 import { cardBorder, cardHints, cardState, repeatsCard } from "./task-card"
@@ -90,6 +93,7 @@ export function TaskRow({
   steps,
   attention,
   lastActivityAt,
+  showHost = false,
 }: {
   /** The host the task runs on, which its panel link carries. */
   host: Host
@@ -100,16 +104,27 @@ export function TaskRow({
   attention?: SessionAttention | null
   /** The latest session activity of the task, as on the card. */
   lastActivityAt?: string | null
+  /**
+   * Name the row's host also where it runs on that host itself, as a goal
+   * line names its goal's: a task with no goal has no goal line to do it.
+   */
+  showHost?: boolean
 }) {
   const executionHost = useSourceHost(task.execution_context?.execution_owner)
+  const runsHere = !task.host || task.host === "local"
   const displayedHost = task.execution_context
     ? (executionHost ?? "Unconfigured worker")
-    : task.host
+    : runsHere && showHost
+      ? host
+      : task.host
+  // A task that runs on its own host names none, unless the caller asks.
+  const labelled = task.execution_context || !runsHere || showHost
   const activity =
     lastActivityAt && Date.parse(lastActivityAt) > Date.parse(task.updated_at)
       ? lastActivityAt
       : task.updated_at
   const state = cardState(task)
+  const statusMeta = TASK_STATUS_META[task.status]
   const to = useTaskPanelTo(task.id, host)
   const flagged = attention && !repeatsCard(attention, state) ? attention : null
   const hintsId = useId()
@@ -162,20 +177,23 @@ export function TaskRow({
           {flagged && (
             <SessionAttentionBadge size="sm" attention={flagged} hintTabIndex={NOT_A_STOP} />
           )}
-          {state && (
-            <StatusBadge
-              size="sm"
-              label={state.label}
-              tone={state.tone}
-              hint={state.hint}
-              hintTabIndex={NOT_A_STOP}
-            />
-          )}
+          <StatusIcon
+            icon={task.stalled ? STALLED_META.icon : statusMeta.icon}
+            label={task.stalled ? STALLED_META.label : statusMeta.label}
+            hint={state?.hint ?? statusMeta.hint}
+            tone={task.stalled ? STALLED_META.text : statusMeta.text}
+            hintTabIndex={NOT_A_STOP}
+          />
         </span>
         <span data-column="host" className={cn(HOST_CELL, "min-w-0")}>
           {task.execution_context && !executionHost ? (
-            <span className="block truncate">Unconfigured worker</span>
-          ) : displayedHost && (displayedHost !== "local" || task.execution_context) ? (
+            <StatusIcon
+              icon={TriangleAlertIcon}
+              label="Unconfigured worker"
+              tone={STALLED_META.text}
+              hintTabIndex={NOT_A_STOP}
+            />
+          ) : displayedHost && labelled ? (
             <HostLabel
               host={displayedHost}
               className="block max-w-full truncate"

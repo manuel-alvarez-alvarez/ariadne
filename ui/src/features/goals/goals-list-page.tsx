@@ -26,7 +26,6 @@ import { HostListErrors } from "@/components/error-state"
 import { HostCoverage } from "@/components/host-coverage"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
-import { ButtonGroup } from "@/components/ui/button-group"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -36,11 +35,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CreateStandaloneTaskDialog } from "@/features/tasks/create-standalone-task-dialog"
 import { NEW_GOAL_SHORTCUT } from "@/hooks/use-global-shortcuts"
 import { useHostSelection } from "@/hooks/use-host-filter"
 import { useRowsShowHost } from "@/hooks/use-host-label"
 import { keySequenceLabel } from "@/lib/shortcuts"
+import { TAB_ICONS } from "@/lib/tab-icons"
 import { HOST_PARAM, taskPanelFrom } from "@/routes/paths"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import {
@@ -149,31 +150,25 @@ export function GoalsListPage() {
                 onChange={(event) => setQuery(event.target.value)}
               />
             </div>
-            <ButtonGroup aria-label="Goal status">
-              <Button
-                variant={active ? "secondary" : "outline"}
-                aria-pressed={active}
-                className="font-normal"
-                onClick={() => filterBy(ACTIVE_FILTER)}
+            <div className="flex items-center gap-1">
+              <Tabs
+                value={custom ? "custom" : active ? "active" : all ? "all" : "finished"}
+                onValueChange={(value) =>
+                  filterBy(
+                    value === "active"
+                      ? ACTIVE_FILTER
+                      : value === "all"
+                        ? NO_STATUS_FILTER
+                        : FINISHED_FILTER,
+                  )
+                }
               >
-                Active
-              </Button>
-              <Button
-                variant={all ? "secondary" : "outline"}
-                aria-pressed={all}
-                className="font-normal"
-                onClick={() => filterBy(NO_STATUS_FILTER)}
-              >
-                All
-              </Button>
-              <Button
-                variant={finished ? "secondary" : "outline"}
-                aria-pressed={finished}
-                className="font-normal"
-                onClick={() => filterBy(FINISHED_FILTER)}
-              >
-                Finished
-              </Button>
+                <TabsList aria-label="Goal status">
+                  <TabsTrigger value="active" icon={<TAB_ICONS.active />} label="Active" />
+                  <TabsTrigger value="all" icon={<TAB_ICONS.all />} label="All" />
+                  <TabsTrigger value="finished" icon={<TAB_ICONS.finished />} label="Finished" />
+                </TabsList>
+              </Tabs>
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
@@ -208,7 +203,7 @@ export function GoalsListPage() {
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-            </ButtonGroup>
+            </div>
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button />}>
                 <PlusIcon />

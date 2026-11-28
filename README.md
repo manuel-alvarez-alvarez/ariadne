@@ -97,8 +97,8 @@ Ariadne ships and the ones you write.
 <tr>
 <td width="50%" valign="top">
 <h4>🖥️ Connect whenever you want</h4>
-Every session has a console. <code>ariadne attach</code> is an inline pane in your terminal:
-markdown as it streams, a picker for permissions, Escape to cancel a turn.
+Every session has a console. <code>ariadne attach</code> takes your whole terminal:
+each turn and its steps, the detail of each call, a picker for permissions, Escape to cancel a turn.
 <code>ariadne attention</code> says who is waiting for you.
 </td>
 <td width="50%" valign="top">

@@ -50,6 +50,9 @@ pub struct SpawnCtx {
     /// The index of the skills it loads, alone: the MCP server puts it in
     /// its instructions after the seat text (006). Empty for no skill.
     pub skill_index: String,
+    /// The supplement of each skill it loads, for its seat: the MCP server
+    /// puts it between the seat text and the index (006). Empty for none.
+    pub skill_supplements: String,
     /// Where this agent's skill documents are, one `<name>/SKILL.md` under it.
     /// The launcher links it to the shared home copy ([`link_skills`]) before
     /// the adapter plans anything, so the path the system prompt's index

@@ -256,7 +256,7 @@ struct Inner {
     /// does — present once a scheduler is running.
     scheduler: OnceLock<mpsc::UnboundedSender<SchedEvent>>,
     /// The live-only events — message and thought chunks, tool call
-    /// progress — on their way to the console streams and nowhere else: none
+    /// progress — on their way to the trajectory and nowhere else: none
     /// of them is stored, and none reaches the domain bus. One channel per
     /// session, so a chatty session never lags another session's console,
     /// kept for as long as an agent runs for it or somebody listens.
@@ -2762,7 +2762,7 @@ enum AskedQuestion {
 
 /// Where the driver reports what its agent does: the one ingestion path
 /// every event takes into the store, and the live path the chunks take to
-/// the console streams alone.
+/// the trajectory alone.
 #[derive(Clone)]
 struct EventSink {
     effect: Option<crate::acp_recovery::Effect>,
@@ -2778,7 +2778,7 @@ struct EventSink {
     console: broadcast::Sender<AgentEventDto>,
 }
 
-/// A live-only event as the console streams frame it: an id and a timestamp
+/// A live-only event as the trajectory reads it: an id and a timestamp
 /// of its own, and the same summary a stored event gets, so a client reads
 /// both the same way.
 fn live_event(
@@ -2799,7 +2799,7 @@ fn live_event(
 }
 
 impl EventSink {
-    /// Publish a live-only event to the console streams. Nothing is stored,
+    /// Publish a live-only event to the trajectory. Nothing is stored,
     /// nothing wakes the scheduler, and nobody listening costs nothing.
     async fn emit_live(&self, kind: &str, payload: Value) {
         // The id is taken and the event sent under the store's event lock,
@@ -5944,6 +5944,7 @@ mod tests {
                 cli_bin: "/usr/local/bin/ariadne".into(),
                 system_prompt: "SYSTEM PROMPT".into(),
                 skill_index: "SKILL INDEX".into(),
+                skill_supplements: "SKILL SUPPLEMENTS".into(),
                 skills_dir: None,
                 initial_prompt: "DO THE TASK".into(),
                 model: "test-model".into(),

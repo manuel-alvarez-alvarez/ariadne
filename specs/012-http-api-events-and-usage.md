@@ -105,13 +105,12 @@ and the ACP runtime that reports the agent events (021).
    4): a payload reaches 1 MB, and every client reads every frame, so its
    frame is an `AgentEventSummaryDto` — the id, the session id, the task id,
    the kind, the `summary` (rule 13) and the time — and carries no payload.
-   The whole event, payload included, is what `GET /v1/events` answers and
-   what the session's console stream carries (021).
+   The whole event, payload included, is what `GET /v1/events` answers.
 8. A session is read and driven over HTTP through its row, its kill,
    resume and switch (`POST /v1/sessions/{id}/switch`, body
    `SwitchSessionRequest`, answer the new `SessionDto` with `switched_from`,
-   008), and its console (`/v1/sessions/{id}/console`, `/console/input`,
-   `/console/stream`, `/console/cancel`, 008, 021), and its trajectory
+   008), and its console input and cancel (`/v1/sessions/{id}/console/input`
+   and `/console/cancel`, 008, 021), and its trajectory
    (`GET /v1/sessions/{id}/trajectory`, `/trajectory/stream`,
    `/trajectory/turns/{turn_id}/steps`, `/trajectory/items/{item_id}` and
    `/trajectory/blobs/{event_id}/{index}`, 040). The one WebSocket,
@@ -152,7 +151,7 @@ and the ACP runtime that reports the agent events (021).
    (021, rule 7) — is recorded and moves nothing. The live-only
    console events (021) — `agent_message_chunk`, `agent_thought_chunk`, and
    a `tool_call_update` inside its interval — are never ingested: they reach the session's
-   console stream alone, and neither `GET /v1/events` nor
+   trajectory alone (040), and neither `GET /v1/events` nor
    `/v1/events/stream` carries one. What an event moves lands in one order,
    with the status last: the agent's id, the attention and the activity clock
    are on the row before it says what the agent is doing, so a row a
@@ -188,8 +187,8 @@ and the ACP runtime that reports the agent events (021).
     `title` and `rawInput` the same way. Where the payload
     carries the agent's own words instead — the prompt that began the turn,
     its `text` alone where the event carries it beside the whole `prompt`
-    (021), the message or thought a turn produced, whole or as one chunk on
-    the console stream, a `session.error`'s message — those are shown
+    (021), the message or thought a turn produced, whole or as one chunk, a
+    `session.error`'s message — those are shown
     verbatim.
     A `permission.replied` reads as who answered and, where the AI
     permission model had a part, why it did not decide (022, rule 31):
@@ -601,9 +600,8 @@ See [028](028-issues-and-goals.md) for the rule and the event tests.
   (`events.rs::an_events_summary_reaches_the_snapshot_and_the_stream_alike`).
 - A domain stream frame for an agent event carries no payload
   (`events.rs::a_domain_stream_frame_for_an_agent_event_carries_no_payload`),
-  while `GET /v1/events` and the console stream carry the whole of it
-  (`events.rs::the_events_listing_still_carries_the_whole_payload`,
-  `::the_console_stream_still_carries_the_whole_payload`). `ariadne events`
+  while `GET /v1/events` carries the whole of it
+  (`events.rs::the_events_listing_still_carries_the_whole_payload`). `ariadne events`
   prints an agent event the same read off the listing as off the stream
   (`commands/events.rs::an_agent_event_reads_the_same_recorded_as_it_does_live`),
   and the desktop app, which refetches on the frame, still shows a session's

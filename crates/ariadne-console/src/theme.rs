@@ -1,7 +1,7 @@
-//! How the pane looks: the colour of every kind of line, and the glyph and
+//! How the console looks: the colour of every kind of line, and the glyph and
 //! marker that says what a line is before a word of it is read.
 //!
-//! Every style and every glyph of the pane is named here, so that one place
+//! Every style and every glyph of the console is named here, so that one place
 //! holds the look and a change of it touches no drawing code.
 
 use ratatui::style::{Color, Modifier, Style};
@@ -55,30 +55,24 @@ pub const ADDED: Style = Style::new().fg(Color::Green);
 pub const REMOVED: Style = Style::new().fg(Color::Red);
 pub const HUNK: Style = Style::new().fg(Color::Cyan);
 pub const FILE: Style = Style::new().add_modifier(Modifier::BOLD);
-/// The welcome banner that identifies a console as it opens.
-pub const BANNER: Style = Style::new().fg(Color::Blue);
 
 /// The frames of the spinner, one per tick while a turn runs.
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// What stands between two parts of the status row or two hints of the
-/// footer, and between the session's status and what the turn is doing.
+/// What stands between two items of the bottom row.
 pub const SEPARATOR: &str = " · ";
 pub const GAP: &str = "   ";
-/// The tokens the session has read and written, on the right of the footer.
-pub const TOKENS_IN: &str = "↑ ";
-pub const TOKENS_OUT: &str = "↓ ";
+/// The hint on the right of the bottom row: `?` opens the list of keys.
+pub const KEYS_HINT: &str = "? keys";
+/// The mark of a session waiting for a prompt, and of one that has ended.
+pub const SESSION_IDLE: &str = "●";
+pub const SESSION_ENDED: &str = "■";
 
-/// Where a block starts: what was typed, what the agent said, what it
-/// thought, what the daemon sent, and what went wrong. A typed prompt has
-/// the input box's glyph, and a bar down the left edge of each of its rows.
+/// Where a block starts: what was typed, and what went wrong. A typed prompt
+/// has the input box's glyph.
 pub const USER_MARKER: &str = "❯ ";
-pub const USER_BAR: &str = "▌";
 /// The tag of a typed prompt the daemon has not taken yet.
 pub const QUEUED: &str = "queued";
-pub const AGENT_MARKER: &str = "● ";
-pub const THOUGHT_MARKER: &str = "· ";
-pub const DAEMON_MARKER: &str = "» daemon";
 pub const ERROR_MARKER: &str = "✗ ";
 
 /// The input box: its rule, first-row prompt, continued-row indent and hint.
@@ -108,39 +102,39 @@ pub const KINDS: &[(&str, &str)] = &[
     ("think", "∴"),
     ("switch_mode", "⇄"),
 ];
-pub const KIND_OTHER: &str = "◇";
-/// What ties a call's output to its head: the first row of the output
-/// starts with it, two columns in.
-pub const OUTPUT_MARKER: &str = "  ⎿ ";
+
+/// The glyph of a tool call whose kind is none of those of [`KINDS`].
+const KIND_FALLBACK: &str = "◆";
+
+/// The glyph of a subagent, on its summary row.
+pub const SUBAGENT: &str = "↳";
+
+/// The glyph of a group of calls of more than one kind.
+pub const GROUP: &str = "☰";
+
+/// The glyph of a kind of call: its own, or the fallback.
+pub fn kind_icon(kind: Option<&str>) -> &'static str {
+    kind.and_then(|kind| KINDS.iter().find(|(name, _)| *name == kind))
+        .map_or(KIND_FALLBACK, |(_, glyph)| glyph)
+}
 
 /// A plan entry: pending, in progress, and completed.
 pub const PLAN_TODO: &str = "  ☐ ";
 pub const PLAN_DOING: &str = "  ◐ ";
 pub const PLAN_DONE: &str = "  ☑ ";
 
-/// The picker of a permission question: the label in the rule above, the option
-/// it is on and the ones it is not on, and the option that was chosen once the
-/// question is answered.
-pub const ASK_LABEL: &str = "permission";
+/// The picker of a permission question: the option it is on and the ones it
+/// is not on.
 pub const OPTION_PICKED: &str = "❯ ";
 pub const OPTION_IDLE: &str = "  ";
-pub const ANSWER_MARKER: &str = "↳ ";
 
-/// Markdown marks, kept with the pane's other visible vocabulary.
+/// Markdown marks, kept with the console's other visible vocabulary.
 pub const RULE: &str = "─";
 pub const QUOTE_BAR: &str = "│ ";
 pub const CODE_CONTINUATION: &str = "↪";
 pub const LIST_BULLETS: [&str; 3] = ["• ", "◦ ", "▪ "];
 pub const TASK_DONE: &str = "☑ ";
 pub const TASK_TODO: &str = "☐ ";
-
-/// The box around a welcome banner where the pane is wide enough for one.
-pub const BANNER_TOP_LEFT: &str = "╭";
-pub const BANNER_TOP_RIGHT: &str = "╮";
-pub const BANNER_BOTTOM_LEFT: &str = "╰";
-pub const BANNER_BOTTOM_RIGHT: &str = "╯";
-pub const BANNER_HORIZONTAL: &str = "─";
-pub const BANNER_VERTICAL: &str = "│";
 
 #[cfg(test)]
 mod tests {
@@ -155,30 +149,25 @@ mod tests {
             (USER_MARKER, "the user's"),
             (INPUT_PROMPT, "the user's"),
             (OPTION_PICKED, "the user's"),
-            (AGENT_MARKER, "the agent speaks"),
-            (THOUGHT_MARKER, "the agent thinks"),
-            (DAEMON_MARKER, "the daemon speaks"),
             (ERROR_MARKER, "failed"),
             (CALL_FAILED, "failed"),
             (CALL_DONE, "done"),
             (CALL_RUNNING, "in progress"),
             (CALL_PENDING, "pending"),
-            (KIND_OTHER, "a call of another kind"),
-            (OUTPUT_MARKER, "output"),
             (PLAN_TODO, "to do"),
             (PLAN_DOING, "in progress"),
             (PLAN_DONE, "done"),
             (TASK_TODO, "to do"),
             (TASK_DONE, "done"),
-            (ANSWER_MARKER, "the answer"),
             (CODE_CONTINUATION, "a line goes on"),
             (QUOTE_BAR, "a quote"),
         ];
         marks.extend(LIST_BULLETS.iter().map(|bullet| (*bullet, "a list item")));
         marks.extend(KINDS.iter().map(|(kind, glyph)| (*glyph, *kind)));
-        // The footer's tokens are part of the pane too.
-        marks.push((TOKENS_IN, "tokens read"));
-        marks.push((TOKENS_OUT, "tokens written"));
+        marks.push((KIND_FALLBACK, "a call of another kind"));
+        marks.push((GROUP, "a group of calls"));
+        marks.push((SESSION_IDLE, "a session that waits"));
+        marks.push((SESSION_ENDED, "a session that ended"));
         // A move names the old place and the new, as a renamed file does.
         let rename = "→";
 

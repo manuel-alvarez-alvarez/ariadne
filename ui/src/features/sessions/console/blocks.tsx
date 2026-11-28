@@ -2,22 +2,36 @@ import { CodeIcon, Loader2Icon, UserIcon } from "lucide-react"
 import type { KeyboardEvent } from "react"
 
 import { Markdown } from "@/components/markdown"
+import { NamedIcon } from "@/components/named-icon"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/format"
 
 import type { PermissionOption } from "./transcript"
 
-/** What a person typed is a message: set apart and full size, with the time it was sent. */
+/** A daemon prompt of more lines than this shows its first lines and a Show more. */
+const FOLDED_LINES = 4
+
+/**
+ * What a person typed is a message: set apart and full size, with the time it
+ * was sent. An icon names who typed it, with the role as its name and tooltip.
+ */
 export function PromptBox({
   text,
   queued,
   time,
   role = "You",
+  fold,
 }: {
   text: string
   queued?: boolean
   time?: string
   role?: string
+  /** Folds a prompt of more than `FOLDED_LINES` lines; its state is the caller's. */
+  fold?: { open: boolean; onToggle: () => void }
 }) {
+  const lines = text.split("\n")
+  const folded = fold !== undefined && lines.length > FOLDED_LINES
+  const shut = folded && !fold.open
   return (
     <div
       className={cn(
@@ -26,11 +40,12 @@ export function PromptBox({
         role === "You" && "bg-primary/12 ring-1 ring-inset ring-border/50",
       )}
     >
-      <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-foreground">
-        {role === "Developer" ? <CodeIcon aria-hidden className="size-3.5 shrink-0" /> : null}
-        {role === "You" ? <UserIcon aria-hidden className="size-3.5 shrink-0" /> : null}
-        {role}
-      </div>
+      <NamedIcon
+        icon={role === "Developer" ? CodeIcon : UserIcon}
+        label={role}
+        focusable
+        className="mb-1 text-foreground"
+      />
       <div className="min-w-0 flex-1">
         {queued ? (
           <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">
@@ -38,7 +53,26 @@ export function PromptBox({
           </span>
         ) : null}
         <div className="flex items-start gap-3">
-          <Markdown className="min-w-0 flex-1">{text}</Markdown>
+          <div className="min-w-0 flex-1">
+            {shut ? (
+              <p className="whitespace-pre-wrap break-words text-sm">
+                {lines.slice(0, FOLDED_LINES).join("\n")}
+              </p>
+            ) : (
+              <Markdown>{text}</Markdown>
+            )}
+            {folded ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                aria-expanded={fold.open}
+                onClick={fold.onToggle}
+                className="mt-1 font-mono text-muted-foreground"
+              >
+                {fold.open ? "Show less" : "Show more"}
+              </Button>
+            ) : null}
+          </div>
           {time ? (
             <span
               data-block-time

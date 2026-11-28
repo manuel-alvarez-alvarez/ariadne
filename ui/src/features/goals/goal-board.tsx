@@ -17,6 +17,7 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import {
   type CSSProperties,
+  Fragment,
   type ReactNode,
   type RefObject,
   useEffect,
@@ -28,7 +29,9 @@ import { Link } from "react-router-dom"
 import { type GoalDto, type Host, type HostRow, type TaskDto, useHostLists } from "@/api"
 import { RefreshWarning } from "@/components/error-state"
 import { HostLabel } from "@/components/host-label"
+import { StatusIcon } from "@/components/status-icon"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -48,11 +51,13 @@ import { stepTitle } from "@/features/tasks/steps"
 import { cn, formatAbsolute } from "@/lib/format"
 import { paths } from "@/routes/paths"
 import {
+  type AttentionItem,
   type BoardAttention,
   NO_BOARD_ATTENTION,
   taskAttentionReason,
   useBoardAttention,
 } from "./attention"
+import { AttentionBlock } from "./attention-block"
 import { useCollapsedLanes } from "./collapsed-lanes"
 import { type GroupOrder, goalCounts, goallessTasks, goalSummary, orderGroups } from "./groups"
 import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
@@ -60,7 +65,9 @@ import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 /**
  * The board's own scrollport: sticky only works against the box that scrolls.
  * It fills {@link BOARD_FRAME}, which is what the edge fades are positioned
- * against — they have to sit outside the thing that scrolls under them.
+ * against — they have to sit outside the thing that scrolls under them. It
+ * draws no frame: the rows sit on the screen itself, and the rounding is only
+ * the shape of the keyboard's focus ring.
  *
  * `contain-paint` is what keeps that scrolling to *this* box. Without it the
  * rows hidden past the bottom edge still counted as overflow for the shell's
@@ -78,7 +85,7 @@ import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
  * and the focus ring below is this box's own rather than a descendant's — the
  * one thing containment would have clipped.
  */
-const BOARD_BOX = "h-full rounded-lg border contain-paint"
+const BOARD_BOX = "h-full rounded-lg contain-paint"
 
 /**
  * The board's slot on the screen: the height it gets, and the fades' anchor.
@@ -123,7 +130,7 @@ export function GoalBoard({
   activeOnly?: boolean
   /** The title search, which narrows the tasks with no goal too. */
   query?: string
-  /** Name each goal's host: the board shows goals of more than one. */
+  /** Name each goal's host, and each goal-less task's: the board shows more than one. */
   showHost?: boolean
   /** Drawn in place of the list once the board has read that it has nothing. */
   empty?: ReactNode
@@ -232,7 +239,15 @@ export function GoalBoard({
           )}
         >
           <div className="sticky top-0 z-30 bg-background px-5 py-2">
-            <h2 className="text-sm font-semibold">Tasks ({total})</h2>
+            {/* The count is a badge to the eye and "Tasks (N)" to a screen reader. */}
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              {"Tasks "}
+              <span className="sr-only">(</span>
+              <Badge variant="secondary" className="tabular-nums">
+                {total}
+              </Badge>
+              <span className="sr-only">)</span>
+            </h2>
           </div>
           <div
             className={BOARD_LIST}
@@ -242,15 +257,25 @@ export function GoalBoard({
               if (group.kind === "task") {
                 const { row } = group
                 const own = attention(row.host)
-                return (
+                const blocks = own.blocksByTask.get(row.id)
+                const taskRow = (
                   <TaskRow
-                    key={group.key}
                     host={row.host}
                     task={{ ...row, host: row.executionHost }}
                     steps={row.steps ?? []}
                     attention={own.byTask.get(row.id)}
                     lastActivityAt={own.lastActivity.get(row.id)}
+                    showHost={showHost}
                   />
+                )
+                // A task with no goal is a group of one: its blocks stay with its row.
+                return blocks ? (
+                  <div key={group.key} className={BOARD_LINE}>
+                    {taskRow}
+                    <AttentionBlocks items={blocks} />
+                  </div>
+                ) : (
+                  <Fragment key={group.key}>{taskRow}</Fragment>
                 )
               }
               const { goal } = group
@@ -328,6 +353,8 @@ function GoalGroup({
           </span>
         )}
       </GoalLine>
+      {/* A folded goal shows no block: its line keeps the badge. */}
+      {collapsed ? null : <AttentionBlocks items={attention.blocksByGoal.get(goal.id)} />}
       {collapsed ? null : shown.length === 0 ? (
         <p
           data-goal-placeholder
@@ -337,17 +364,35 @@ function GoalGroup({
         </p>
       ) : (
         shown.map((task) => (
-          <TaskRow
-            key={task.id}
-            host={goal.host}
-            task={task}
-            steps={goal.steps}
-            attention={attention.byTask.get(task.id)}
-            lastActivityAt={attention.lastActivity.get(task.id)}
-          />
+          <Fragment key={task.id}>
+            <TaskRow
+              host={goal.host}
+              task={task}
+              steps={goal.steps}
+              attention={attention.byTask.get(task.id)}
+              lastActivityAt={attention.lastActivity.get(task.id)}
+            />
+            <AttentionBlocks items={attention.blocksByTask.get(task.id)} />
+          </Fragment>
         ))
       )}
     </div>
+  )
+}
+
+/**
+ * The items that name one task or goal, each a block over the board's whole
+ * width, directly below its row or line. `min-w-0` and the block's own wrapping
+ * keep a long summary from widening the board past its floor.
+ */
+function AttentionBlocks({ items }: { items: readonly AttentionItem[] | undefined }) {
+  if (!items || items.length === 0) return null
+  return (
+    <ul data-attention-blocks className="col-span-full min-w-0 pl-3">
+      {items.map((item) => (
+        <AttentionBlock key={`${item.host}\n${item.id}`} item={item} expanded />
+      ))}
+    </ul>
   )
 }
 
@@ -456,10 +501,7 @@ function GoalLine({
         <FoldToggle goal={goal} collapsed={collapsed} refocus={refocus} onToggle={onToggle} />
         <GoalTitle goal={goal} tasks={tasks} />
         {showHost ? <HostLabel host={goal.host} className={HOST_HIDES} /> : null}
-        <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
-          <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)} aria-hidden />
-          {status.label}
-        </span>
+        <StatusIcon icon={status.icon} label={status.label} tone={status.text} />
         {children}
         {orchestrator ? <SessionAttentionBadge size="sm" attention={orchestrator} /> : null}
       </div>

@@ -9,7 +9,7 @@
 mod print;
 mod view;
 
-pub(crate) use print::activity;
+pub(crate) use print::counts_line;
 pub use print::{Printer, kind, settled, text};
 pub use view::{Gap, Touched, View, step_at, step_id, step_turn};
 

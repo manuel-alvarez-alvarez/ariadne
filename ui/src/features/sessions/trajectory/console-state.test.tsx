@@ -195,7 +195,7 @@ it("shows one plan line above the composer while a plan has an open entry, and a
   expect(within(finished).getByRole("button").textContent).toBe("Plan 3/3·done")
 })
 
-it("shows the status, the mode, the options, the context use, the cost and the tokens in one line", () => {
+it("shows the status, the tokens, the context use, the model, the mode, the options and the cost in rank order", () => {
   const snapshot = aSnapshot([aTurn()])
   snapshot.session = {
     ...snapshot.session,
@@ -207,6 +207,20 @@ it("shows the status, the mode, the options, the context use, the cost and the t
       ],
     },
     config_options: [
+      {
+        id: "effort",
+        name: "Effort",
+        category: "thought_level",
+        current_value: "high",
+        values: [{ value: "high", name: "High" }],
+      },
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        current_value: "code",
+        values: [{ value: "code", name: "Code" }],
+      },
       {
         id: "model",
         name: "Model",
@@ -225,11 +239,35 @@ it("shows the status, the mode, the options, the context use, the cost and the t
   renderConsole(snapshot)
 
   const row = screen.getByRole("region", { name: "Session status" })
-  expect(row.textContent).toBe("idlemode CodeModel Opus 5.5context 25%$0.42↑1.2k ↓340")
-  // jsdom lays nothing out: the classes are what keep the row one line.
-  expect(row.className).toContain("whitespace-nowrap")
-  expect(row.className).toContain("overflow-hidden")
-  expect(row.className).not.toContain("flex-wrap")
+  expect(row.textContent).toBe("idle↑1.2k ↓340context 25%Model Opus 5.5mode CodeEffort High$0.42")
+  // jsdom lays nothing out: the classes keep the row to one line of whole facts,
+  // and the browser proof of spec 015 rule 99b measures them.
+  const line = row.firstElementChild as HTMLElement
+  expect(line.className).toContain("whitespace-nowrap")
+  expect(line.className).toContain("overflow-hidden")
+  expect(line.className).toContain("flex-wrap")
+  expect(line.className).toContain("h-4")
+})
+
+it("shows the mode one time when the mode state and a mode option both name it", () => {
+  const snapshot = aSnapshot([aTurn()])
+  snapshot.session = {
+    ...snapshot.session,
+    mode: { current_id: "code", available: [{ id: "code", name: "Code" }] },
+    config_options: [
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        current_value: "code",
+        values: [{ value: "code", name: "Code" }],
+      },
+    ],
+  }
+  renderConsole(snapshot)
+
+  const row = screen.getByRole("region", { name: "Session status" })
+  expect(row.textContent?.match(/mode/gi)).toHaveLength(1)
 })
 
 it("counts no running subagent in the status row, and draws no bar of views for one", () => {
@@ -302,9 +340,9 @@ it("marks an answered permission on the row of its call, with who decided", asyn
   await user.click(activityLine(turn))
 
   const rows = await within(article(turn)).findAllByRole("listitem")
-  expect(rows.map((row) => row.textContent)).toEqual([
-    "executecompletedRemove the build✓ Allow once · AI12s",
-    "executecompletedPush the branch✗ Reject · you12s",
+  expect(rows.map((row) => row.textContent?.trim())).toEqual([
+    "Remove the build ✓ Allow once · AI 12s",
+    "Push the branch ✗ Reject · you 12s",
   ])
 })
 
@@ -354,6 +392,27 @@ it("finds the text of the loaded turns and the loaded steps", async () => {
   expect(within(find).getByRole("status").textContent).toBe("No matches in loaded messages")
   await act(async () => release())
   await waitFor(() => expect(within(find).getByRole("status").textContent).toBe("1 of 1"))
+})
+
+it("finds the shown prompt of a daemon turn, not its seat brief", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn({
+    prompt: {
+      id: anId(),
+      content: text("Seat brief zebra\n\nFix the bug"),
+      text: "Fix the bug",
+      source: "daemon",
+    },
+  })
+  renderConsole(aSnapshot([turn]))
+
+  await user.click(screen.getByRole("button", { name: "Find in transcript" }))
+  const field = screen.getByRole("textbox", { name: "Find in transcript" })
+  const find = field.closest("search") as HTMLElement
+  await user.type(field, "zebra")
+  expect(within(find).getByRole("status").textContent).toBe("No matches in loaded messages")
+  fireEvent.change(field, { target: { value: "fix the" } })
+  expect(within(find).getByRole("status").textContent).toBe("1 of 1")
 })
 
 /**
@@ -532,4 +591,79 @@ it("loads back to the oldest turn it had loaded before it puts the reader's plac
   const reads = requests.filter((one) => one.path === `/v1/sessions/${SESSION_ID}/trajectory`)
   expect(reads.map((one) => one.query.get("before"))).toEqual([newest.id, newest.id])
   await waitFor(() => expect(again.top).toBe(250))
+})
+
+it("names the session in the header when the agent gives no title", () => {
+  const snapshot = aSnapshot([aTurn()])
+  snapshot.session = { ...snapshot.session, title: null }
+  renderScreen(
+    <TrajectoryConsole
+      host="local"
+      sessionId={SESSION_ID}
+      status="idle"
+      session={aSession({ id: SESSION_ID, status: "idle", seat: "reviewer" })}
+    />,
+  )
+  const source = latestSource()
+  act(() => {
+    source.succeed()
+    source.emit("snapshot", snapshot)
+  })
+
+  expect(screen.getByLabelText("Session title").textContent).toBe("Reviewer session")
+})
+
+it("puts the find icon in the header row and opens the find pane below it", () => {
+  const snapshot = aSnapshot([aTurn()])
+  snapshot.session = { ...snapshot.session, title: "Fix the login bug" }
+  renderConsole(snapshot)
+
+  const header = screen.getByLabelText("Session title").closest("div.border-b") as HTMLElement
+  const trigger = within(header).getByRole("button", { name: "Find in transcript" })
+  expect(trigger.textContent).toBe("")
+  fireEvent.keyDown(transcript(), { key: "f", ctrlKey: true })
+  const pane = screen.getByLabelText("Find loaded transcript")
+  expect(header.contains(pane)).toBe(true)
+  expect(pane.className).toContain("top-full")
+  expect(header.className).toContain("relative")
+})
+
+it("marks only what a person or the AI allowed, or anything rejected, and says who in the detail", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn()
+  const answer = (option_id: string, label: string, decided_by: string) =>
+    aPermissionStep(turn.id, { state: "answered", answer: { option_id, label, decided_by } })
+  const permissions = [
+    answer("allow", "Allow once", "auto"),
+    answer("allow", "Allow once", "learned"),
+    answer("allow", "Allow once", "ai"),
+    answer("allow", "Allow once", "console"),
+    answer("reject", "Reject", "auto"),
+  ]
+  const calls = permissions.map((one, at) =>
+    aToolStep(turn.id, { title: `Call ${at}`, subject: null, tool_call_id: one.tool_call_id }),
+  )
+  reply(
+    `/trajectory/turns/${turn.id}/steps`,
+    Response.json({ steps: [...permissions, ...calls], earlier_steps: 0 }),
+  )
+  renderConsole(aSnapshot([turn]))
+
+  await user.click(activityLine(turn))
+
+  const rows = await within(article(turn)).findAllByRole("listitem")
+  expect(rows.map((row) => row.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+    "Call 0 12s",
+    "Call 1 12s",
+    "Call 2 ✓ Allow once · AI 12s",
+    "Call 3 ✓ Allow once · you 12s",
+    "Call 4 ✗ Reject · auto 12s",
+  ])
+  const marks = article(turn).querySelectorAll("[data-permission-mark]")
+  expect(marks[0]?.className).toContain("text-muted-foreground")
+  expect(marks[2]?.className).toContain("text-status-danger-fg")
+
+  await user.click(within(rows[0] as HTMLElement).getByRole("button"))
+  const detail = article(turn).querySelector("[data-step-detail]") as HTMLElement
+  expect(within(detail).getByText("Allow once · auto")).toBeTruthy()
 })

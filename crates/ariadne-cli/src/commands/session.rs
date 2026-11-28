@@ -26,7 +26,7 @@ use crate::output::{
     Column, Format, Kv, UNCAPPED, age, at, col, dash, empty_state, moment, ok_id_line, print,
     print_kv, short_id, status_line, tokens, usage_block, usage_cell, view,
 };
-use ariadne_console::transcript::Since;
+use ariadne_console::Since;
 
 use crate::commands::transcript::Filters;
 

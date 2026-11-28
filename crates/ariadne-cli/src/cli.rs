@@ -502,8 +502,9 @@ pub(crate) enum Command {
     },
     /// Attach to the console of a session, task or goal id
     ///
-    /// The console of whichever agent that id names, revived first when it is
-    /// gone. Leave the console with Ctrl-C; the agent keeps working.
+    /// The console of whichever agent that id names. A session that has ended
+    /// is revived first. Leave the console with Ctrl-C twice or Ctrl-D; the
+    /// agent keeps working.
     #[command(after_help = ATTACH_EXAMPLES)]
     Attach {
         /// Session, task or goal id
@@ -514,10 +515,6 @@ pub(crate) enum Command {
         /// goal; not valid with a session id)
         #[arg(long, value_parser = values::Spelling::<ariadne_core::Seat>::new())]
         seat: Option<ariadne_core::Seat>,
-        /// Draw the trajectory as turns on the whole screen (008, rules 39
-        /// to 50). Hidden until it is the default console.
-        #[arg(long, hide = true)]
-        full_screen: bool,
     },
     /// Serve Ariadne MCP tools over stdio (spawned by coding agents)
     #[command(hide = true)]

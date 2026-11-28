@@ -15,7 +15,7 @@ use ariadne_core::SessionStatus;
 use ariadne_store::{AgentPin, EventFilter};
 
 use common::acp::{registry_home, script, stub_acp_agent};
-use common::{Harness, TIMEOUT, eventually, expect_sse, get, harness};
+use common::{Harness, TIMEOUT, eventually, harness};
 
 /// One stored event: its kind and its payload.
 type Stored = (String, Value);
@@ -272,12 +272,11 @@ async fn an_agent_that_announces_nothing_stores_what_it_did_before() {
     assert_eq!(of_kind(&events, "agent_message")[0]["text"], "done");
 }
 
-/// A child's slash commands reach the console stream under their own kind,
-/// `available_commands_update`, with the child named, and never stored, as
-/// the parent's are. The parent's list stays the session's own: a snapshot
-/// still carries it alone.
+/// A child's slash commands are never stored, as the parent's are, and the
+/// parent's list stays the session's own: the trajectory still carries it
+/// alone.
 #[tokio::test]
-async fn a_childs_commands_reach_the_console_named_and_leave_the_parents_alone() {
+async fn a_childs_commands_are_never_stored_and_leave_the_parents_alone() {
     let agent_dir = tempfile::tempdir().unwrap();
     let finish = agent_dir.path().join("finish-turn");
     let publish = agent_dir.path().join("publish-child");
@@ -305,40 +304,31 @@ async fn a_childs_commands_reach_the_console_named_and_leave_the_parents_alone()
         finish.with_extension("reached").exists()
     })
     .await;
-    let mut stream = h
-        .stream(get(&format!("/v1/sessions/{}/console/stream", session.id)))
-        .await;
-    expect_sse(&mut stream, "snapshot").await;
-
+    // The child's list goes out between the pause and the end of the turn:
+    // the stub sends it right after the child is announced, so once the
+    // trajectory holds the child, the turn is let go and the agent has said
+    // everything before the turn ends.
     std::fs::write(&publish, "go").unwrap();
-    let commands = loop {
-        let event = expect_sse(&mut stream, "event").await;
-        if event["kind"] == "available_commands_update" {
-            break event;
-        }
-    };
-    assert_eq!(
-        commands["payload"],
-        json!({"session_id": "c1",
-               "available_commands": [{"name": "explore", "description": "Explore."}],
-               "subagent": {"id": "c1", "title": "explorer"}}),
-    );
-
-    let snapshot: Vec<Value> = h.get(&format!("/v1/sessions/{}/console", session.id)).await;
-    assert_eq!(
-        snapshot
-            .iter()
-            .filter(|event| event["kind"] == "available_commands_update")
-            .map(|event| event["payload"]["available_commands"][0]["name"].clone())
-            .collect::<Vec<_>>(),
-        [json!("review")],
-        "the parent's list is the session's own"
-    );
+    eventually(TIMEOUT, "the child in the trajectory", || async {
+        let trajectory: Value = h
+            .get(&format!("/v1/sessions/{}/trajectory", session.id))
+            .await;
+        !trajectory["subagents"].as_array().unwrap().is_empty()
+    })
+    .await;
     std::fs::write(&finish, "go").unwrap();
     eventually(TIMEOUT, "the turn to end", || async {
         h.session_status(&session).await == SessionStatus::Idle
     })
     .await;
+    let trajectory: Value = h
+        .get(&format!("/v1/sessions/{}/trajectory", session.id))
+        .await;
+    assert_eq!(
+        trajectory["session"]["commands"],
+        json!([{"name": "review", "description": "Review the change.", "hint": null}]),
+        "the parent's list is the session's own"
+    );
     assert!(
         events(&h, &session.id)
             .await

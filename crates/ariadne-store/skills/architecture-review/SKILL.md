@@ -17,8 +17,8 @@ Use `code-review` when the question is correctness, tests or conventions.
    `git rev-parse HEAD`. List each boundary the diff changes: a new
    dependency, a moved responsibility or a new stored value. Where the
    list is empty, go to step 5. Beside
-   `code-review`, the line is `Architecture: pass: no boundary changed`. Reuse the column report's
-   evidence only where it covers the reviewed revision.
+   `code-review`, the line is `Architecture: pass: no boundary changed`.
+   Reuse the report's evidence only where it covers the reviewed revision.
 
    Done when each changed boundary is listed, or the list is empty.
 2. Map each listed boundary: its modules, owners and dependency
@@ -41,7 +41,7 @@ Use `code-review` when the question is correctness, tests or conventions.
    - Beside `code-review`: add one line under the Repository conventions
      heading of its one verdict:
      `Architecture: <pass|fail>: <finding, or none>`. A must-fix finding
-     fails that verdict. That skill ends the column.
+     fails that verdict. That skill ends the stage.
    - Beside `pr-reviewer`: write each finding as an inline comment by the
      rules of that skill. Add no line. Where there is no finding, say
      nothing.

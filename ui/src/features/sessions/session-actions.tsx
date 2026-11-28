@@ -30,7 +30,7 @@ import {
   submitOnChord,
   useResetOnOpen,
 } from "@/components/form-dialog"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/icon-button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { modelRefField } from "@/features/models/model-ref"
 import { PinPicker } from "@/features/models/pin-picker"
@@ -182,29 +182,29 @@ export function SessionActions({
   return (
     <div className="flex items-center gap-2">
       {!goalCancelled ? (
-        <Button variant="outline" size="sm" onClick={() => setSwitchOpen(true)}>
-          <ArrowRightLeftIcon />
-          Switch
-        </Button>
+        <IconButton
+          icon={<ArrowRightLeftIcon />}
+          label="Switch"
+          onClick={() => setSwitchOpen(true)}
+        />
       ) : null}
       {live ? (
         // Only opens the confirm; the solid red — and the spinner, since the
         // dialog is where the kill is actually running — are on the click
         // inside it.
-        <Button variant="destructive-ghost" size="sm" onClick={() => setConfirmKill(true)}>
-          <SkullIcon />
-          Kill session
-        </Button>
+        <IconButton
+          variant="destructive-ghost"
+          icon={<SkullIcon />}
+          label="Kill session"
+          onClick={() => setConfirmKill(true)}
+        />
       ) : (
-        <Button
-          variant="outline"
-          size="sm"
+        <IconButton
+          icon={<PlayIcon />}
+          label="Resume session"
           pending={resume.pending}
           onClick={() => resume.resume(session.id)}
-        >
-          <PlayIcon />
-          Resume session
-        </Button>
+        />
       )}
 
       <ConfirmDialog

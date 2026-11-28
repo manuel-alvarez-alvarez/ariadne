@@ -537,6 +537,43 @@ impl Writer {
 }
 
 /// The grammars fenced code is coloured by, and the style of each scope.
+/// A file's text as its lines, coloured by the grammar of `language` as a
+/// fenced block is, and plain where no grammar is bundled. A line longer
+/// than `width` goes on under a continuation mark.
+pub(crate) fn code(text: &str, language: Option<&str>, width: usize) -> Vec<Line<'static>> {
+    let mut highlight = language.and_then(Highlight::new);
+    let mut lines = Vec::new();
+    for line in text.trim_end_matches('\n').lines() {
+        let runs = match highlight.as_mut().map(|highlight| highlight.line(line)) {
+            Some(Some(runs)) => runs,
+            Some(None) => {
+                highlight = None;
+                vec![(0, CODE_PLAIN)]
+            }
+            None => vec![(0, CODE_PLAIN)],
+        };
+        let mut rest = line;
+        let mut first = true;
+        loop {
+            let room = width.saturating_sub(usize::from(!first)).max(1);
+            let start = line.len() - rest.len();
+            let (part, next) = cut(rest, room);
+            let mut spans = Vec::new();
+            if !first {
+                spans.push(Span::styled(CODE_CONTINUATION, MARK));
+            }
+            spans.extend(styled(line, start..start + part.len(), &runs));
+            lines.push(Line::from(spans));
+            let Some(next) = next else {
+                break;
+            };
+            rest = next;
+            first = false;
+        }
+    }
+    lines
+}
+
 struct Grammars {
     syntaxes: SyntaxSet,
     styles: Vec<(Scope, Style)>,

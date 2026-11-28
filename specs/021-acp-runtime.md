@@ -174,7 +174,7 @@ it leaves nothing to delete.
    the turn runs. Its `cost` goes to the display state (rule 24).
    An `available_commands_update` keeps the agent's latest complete command
    list while it runs, including between turns and through every `session/load`
-   replay. It goes live to the console alone as
+   replay. It goes live to the trajectory alone (040) as
    `available_commands_update` with `{session_id, available_commands}`; each
    command is the ACP JSON the agent sent. It is never stored. A later list,
    including an empty one, replaces the earlier list. The list is dropped
@@ -201,11 +201,11 @@ it leaves nothing to delete.
    text before the call and its text after it as two events, and the last
    run comes before `stop`; a turn that fails stores its last run before the
    error. Text that arrives between turns is not stored. While the
-   turn runs, each chunk goes live to the session's console stream alone
-   (008) — `agent_message_chunk` and `agent_thought_chunk`, each
+   turn runs, each chunk goes live to the session's trajectory alone
+   (040) — `agent_message_chunk` and `agent_thought_chunk`, each
    `{session_id, item_id, text}`, with the `item_id` that the run's stored
    whole carries
-   (`acp_items.rs::each_live_chunk_and_its_stored_whole_carry_one_item_id`).
+   (`trajectory.rs::a_streamed_run_keeps_its_id_across_opens_and_ends_on_its_stored_id`).
    On a relay (rule 19), the `item_id` comes from the launch and the output
    frame of the run's first chunk, so a reconnect that replays the frame
    stores the whole under the id its live chunks carried
@@ -213,10 +213,11 @@ it leaves nothing to delete.
    A direct child's runs take a new id. The `item_id` of a
    `user_prompt_submit` is its turn's id, which a reconnect keeps.
    No chunk is stored, and none reaches `/v1/events` or `/v1/events/stream`.
-   A console stream open before the turn starts receives every chunk of it
+   A trajectory stream open before the turn starts receives every chunk of it
    unless it falls behind the live buffer, which is a `resync` and the end of
    the stream (012,
-   `http/console.rs::tests::a_live_channel_that_lagged_while_the_console_opened_is_told_to_resync_first`).
+   `http/console.rs::tests::a_live_channel_that_lagged_while_the_console_opened_is_told_to_resync_first`,
+   `acp_console.rs::a_lagged_trajectory_client_gets_a_resync_and_the_stream_ends`).
    Each chunk it receives comes below the stored whole that
    follows it: a stored event never goes out while a chunk sent before its
    commit is still waiting on the live channel
@@ -231,9 +232,9 @@ it leaves nothing to delete.
    `tool_call_update`. The interval starts when the write ends, not when it
    begins, so a slow write cannot let two updates into one interval
    (`acp_items.rs::the_interval_starts_again_at_each_stored_update`).
-   `GET /v1/events` lists it, and the console reads it from the store
+   `GET /v1/events` lists it, and the trajectory reads it from the store
    (`acp_items.rs::a_running_calls_progress_is_stored_once_its_interval_has_passed`).
-   Inside that interval the update goes live to the console stream alone, in
+   Inside that interval the update goes live to the trajectory alone, in
    the same shape, and is not stored
    (`::a_running_calls_progress_inside_its_interval_is_not_stored`). An
    update the store refuses also goes live, and the next update tries the
@@ -275,9 +276,8 @@ it leaves nothing to delete.
    one is stored once under the call's own source in its launch
    (`acp.rs::tests::a_call_whose_abandonment_the_store_refused_is_stored_on_the_next_try`,
    `acp_recovery.rs::replaying_one_relay_effect_keeps_one_event_and_one_usage_record`).
-   A console snapshot taken while a turn runs carries each open call, merged
-   so far, as a live `tool_call_update` after the stored events
-   (`::a_console_opened_during_a_call_reads_the_open_call`). A call's state
+   A trajectory snapshot taken while a turn runs shows each open call, merged
+   so far (`trajectory_acp.rs::a_new_open_shows_the_newest_stored_progress_of_a_running_call`). A call's state
    changes, and its events are stored or published, under the turn lock a
    snapshot reads it under: a snapshot holds a call only from the first
    stored event about it, its `pre_tool_use` or, where the store refused
@@ -502,7 +502,7 @@ it leaves nothing to delete.
     of its own (rule 6), and its tool calls are merged apart from the
     parent's (rule 7). A child's `usage_update` is dropped: the window is
     the session's own agent's. A child's `available_commands_update` goes
-    live to the console as `available_commands_update` with the `subagent`
+    live to the trajectory as `available_commands_update` with the `subagent`
     field, is never stored (rule 5), and never replaces the session's own
     list. An update under any other session id is
     the parent's own, and an unknown kind is still let by. A child's event
@@ -702,8 +702,13 @@ it leaves nothing to delete.
   (`acp_state.rs::plans_notices_compactions_and_mode_changes_are_stored_under_their_names`).
   A whole summary replaces the chunks before it
   (`::a_whole_compaction_summary_replaces_its_chunks`).
-- Summary chunks and display state changes go out live
-  (`acp_state.rs::summary_chunks_and_display_changes_go_out_live`).
+- A compaction's summary chunks and the display state changes reach the
+  trajectory as they come
+  (`trajectory_acp.rs::a_notice_is_a_note_and_a_compaction_is_one_step_with_its_status_and_summary`,
+  `::the_session_state_holds_what_the_agent_reports_and_changes_by_patch`).
+- The agent's command list reaches the trajectory, each later list replaces
+  the earlier one, and none is stored
+  (`acp_console.rs::available_commands_reach_the_trajectory_without_storage`).
 - The session keeps the modes, options, title, cost and commands that its
   agent reports
   (`acp_state.rs::the_session_keeps_the_display_state_its_agent_reports`),
@@ -860,7 +865,7 @@ it leaves nothing to delete.
   `acp_runtime.rs::reconnect_finds_a_live_relay_without_the_pane_metadata_file`.
 - Subagents from completed turns retain their names after reconnect:
   `acp_runtime.rs::reconnect_keeps_a_subagent_announced_in_an_earlier_turn`.
-- The console retains the command list from completed turns:
+- The trajectory retains the command list from completed turns:
   `acp_runtime.rs::reconnect_restores_commands_offered_in_a_completed_turn`.
 - Transcript usage retains the resumed launch's initial baseline:
   `transcript_usage.rs::reconnect_keeps_the_resumed_launchs_original_transcript_baseline`.
@@ -1036,10 +1041,9 @@ it leaves nothing to delete.
   (`acp_runtime.rs::an_unknown_session_update_does_not_fail_the_session`).
 - A scheduler nudge arrives at the agent as a `session/prompt`
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`).
-- Message chunks reach the console stream before the turn ends
-  (`acp_console.rs::a_console_stream_client_sees_message_chunks_before_the_turn_ends`),
-  and so do thought chunks and a tool call's progress
-  (`::thought_chunks_and_tool_call_progress_reach_the_console_stream_live`).
+- Message chunks reach the trajectory stream before the turn ends, as appends
+  to the step their first chunk opened
+  (`trajectory.rs::the_stream_sends_a_snapshot_then_updates_and_text_as_appends`).
 - Each run of text is stored once, whole, where the agent wrote it — before
   the plan, the tool call or the `stop` that ended it — and no chunk is
   (`acp_console.rs::the_snapshot_after_a_turn_holds_each_run_of_text_where_it_was_written`),
@@ -1057,8 +1061,8 @@ it leaves nothing to delete.
   (`acp_items.rs::a_stored_message_keeps_each_content_block_in_order_and_its_message_id`,
   `::a_content_block_over_one_megabyte_is_stored_as_a_placeholder`).
 - Each live chunk carries the `item_id` of its stored whole
-  (`acp_items.rs::each_live_chunk_and_its_stored_whole_carry_one_item_id`).
-- Each live chunk reaches a console stream open before the turn, below the
+  (`trajectory.rs::a_streamed_run_keeps_its_id_across_opens_and_ends_on_its_stored_id`).
+- Each live chunk reaches a trajectory stream open before the turn, below the
   stored whole that follows it, unless the stream falls behind the live
   buffer and is told to resync
   (`http/console.rs::tests::a_live_channel_that_lagged_while_the_console_opened_is_told_to_resync_first`)
@@ -1091,8 +1095,10 @@ it leaves nothing to delete.
   `::an_agent_that_ends_mid_call_abandons_it_as_session_ended`). Neither
   new kind moves the status or the attention
   (`classify.rs::tests::stored_progress_and_an_abandoned_call_move_nothing`).
-- A console opened during a call reads the open call in its snapshot
-  (`acp_items.rs::a_console_opened_during_a_call_reads_the_open_call`).
+- A trajectory opened during a call shows the open call
+  (`trajectory_acp.rs::a_new_open_shows_the_newest_stored_progress_of_a_running_call`).
+- Progress that the store refuses reaches an open trajectory stream
+  (`acp_items.rs::a_running_calls_progress_the_store_refused_still_goes_live`).
 - `user_prompt_submit` carries the typed text and its source
   (`acp_console.rs::console_input_is_reported_as_its_text_from_the_console`).
 - A cancel ends the running turn as `cancelled`
@@ -1139,9 +1145,9 @@ it leaves nothing to delete.
 - A later announcement's concrete `capabilities` object replaces the
   earlier one, even to clear a `cancel` the child had advertised
   (`ariadne-daemon::acp_subagents::tests::a_later_concrete_capabilities_object_replaces_an_earlier_cancel`).
-- A child's command list reaches the console stream named, is not
-  stored, and leaves the session's own list in the snapshot
-  (`subagents.rs::a_childs_commands_reach_the_console_named_and_leave_the_parents_alone`).
+- A child's command list is not stored, and leaves the session's own list in
+  the trajectory
+  (`subagents.rs::a_childs_commands_are_never_stored_and_leave_the_parents_alone`).
 - An agent that announces nothing stores no `subagent_update` and no
   `subagent` field, an update under an unknown session id is the parent's
   own, and an unknown kind is let by

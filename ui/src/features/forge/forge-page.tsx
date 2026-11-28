@@ -13,11 +13,17 @@
 import { Outlet, useLocation, useNavigate } from "react-router-dom"
 
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { TAB_ICONS } from "@/lib/tab-icons"
 import { paths } from "@/routes/paths"
 
 const TABS = [
-  { value: "pull-requests", label: "Pull requests", to: paths.pullRequests() },
-  { value: "issues", label: "Issues", to: paths.issues() },
+  {
+    value: "pull-requests",
+    label: "Pull requests",
+    icon: TAB_ICONS.pullRequests,
+    to: paths.pullRequests(),
+  },
+  { value: "issues", label: "Issues", icon: TAB_ICONS.issues, to: paths.issues() },
 ] as const
 
 export function ForgePage() {
@@ -36,9 +42,12 @@ export function ForgePage() {
       >
         <TabsList>
           {TABS.map((each) => (
-            <TabsTrigger key={each.value} value={each.value}>
-              {each.label}
-            </TabsTrigger>
+            <TabsTrigger
+              key={each.value}
+              value={each.value}
+              icon={<each.icon />}
+              label={each.label}
+            />
           ))}
         </TabsList>
       </Tabs>

@@ -86,6 +86,35 @@ it("offers the ready hosts, starting on this machine", async () => {
   expect(names).toEqual(["local", "box"])
 })
 
+it("picks the repository by search in the field the goal dialog uses", async () => {
+  const other = aRepository({ id: "other", path: "/work/website" })
+  stubHosts(
+    {
+      local: {
+        "/v1/repositories": [REPO, other],
+        "/v1/workflows": [WORKFLOW],
+        "/v1/models": [MODEL],
+        "/v1/skills": [],
+        "/v1/acp-agents": [],
+      },
+    },
+    [LOCAL, BOX],
+  )
+  const user = userEvent.setup()
+  renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} />)
+
+  const field = await screen.findByRole("combobox", { name: "Repository" })
+  expect(field.textContent).toContain("Select a repository…")
+  await user.click(field)
+  await user.type(await screen.findByPlaceholderText("Search repositories…"), "website")
+  expect(screen.queryByRole("option", { name: /^\/work\/ariadne/ })).toBeNull()
+  await user.click(screen.getByRole("option", { name: /^\/work\/website/ }))
+
+  // One pick closes the search and leaves the path in the field.
+  expect(screen.queryByPlaceholderText("Search repositories…")).toBeNull()
+  expect(screen.getByText("/work/website")).toBeTruthy()
+})
+
 it("creates the task in the repository with no workflow, on this machine", async () => {
   const task = aTask({ id: "01JNOGOAL", goal_id: null, title: "Fix the typo" })
   const seen = stubHosts(
@@ -108,7 +137,7 @@ it("creates the task in the repository with no workflow, on this machine", async
 
   await user.type(await screen.findByLabelText("Title"), "Fix the typo")
   await user.click(screen.getByRole("combobox", { name: "Repository" }))
-  await user.click(await screen.findByRole("option", { name: "/work/ariadne" }))
+  await user.click(await screen.findByRole("option", { name: /^\/work\/ariadne/ }))
   await user.click(screen.getByRole("button", { name: "Agent runs on" }))
   await user.click(
     within(await screen.findByRole("listbox", { name: "Models" })).getByText(MODEL.id),
@@ -167,7 +196,7 @@ it("shows the daemon's reason when it refuses the host", async () => {
 
   fireEvent.change(await screen.findByLabelText("Title"), { target: { value: "Far task" } })
   fireEvent.click(screen.getByRole("combobox", { name: "Repository" }))
-  fireEvent.click(await screen.findByRole("option", { name: "/work/ariadne" }))
+  fireEvent.click(await screen.findByRole("option", { name: /^\/work\/ariadne/ }))
   await user.click(screen.getByRole("combobox", { name: "Host" }))
   await user.click(await screen.findByRole("option", { name: "box" }))
   fireEvent.click(screen.getByRole("button", { name: "Agent runs on" }))

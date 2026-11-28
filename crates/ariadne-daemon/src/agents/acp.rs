@@ -69,10 +69,17 @@ fn plan(
     })
 }
 
-/// The MCP server's environment: the session's own, and the index of its
-/// skills, which the server puts in its instructions after the seat text.
+/// The MCP server's environment: the session's own, the supplements of its
+/// skills and their index, which the server puts in its instructions after
+/// the seat text in that order.
 fn mcp_env(ctx: &SpawnCtx) -> Vec<(String, String)> {
     let mut env = base_env(ctx);
+    if !ctx.skill_supplements.is_empty() {
+        env.push((
+            "ARIADNE_SKILL_SUPPLEMENTS".into(),
+            ctx.skill_supplements.clone(),
+        ));
+    }
     if !ctx.skill_index.is_empty() {
         env.push(("ARIADNE_SKILL_INDEX".into(), ctx.skill_index.clone()));
     }

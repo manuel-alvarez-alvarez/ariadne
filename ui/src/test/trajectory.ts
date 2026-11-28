@@ -27,6 +27,7 @@ export function aTurn(overrides: Partial<TurnDto> = {}): TurnDto {
     ended_at: "2026-11-14T10:01:04Z",
     prompt: { id, content: text("Fix the bug"), source: "console" },
     answer: text("Fixed it"),
+    answer_step_id: null,
     activity: {
       steps: 5,
       files_changed: 2,
@@ -172,6 +173,7 @@ export function aSnapshot(
     rev: 1,
     session: {
       status: "idle",
+      running_turn_id: turns.find((turn) => turn.state === "running")?.id ?? null,
       commands: [],
       config_options: [],
       usage: { input_tokens: 0, output_tokens: 0, cached_input_tokens: 0 },

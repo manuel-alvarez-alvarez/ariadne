@@ -39,6 +39,7 @@ import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { taskCopyEntries } from "@/lib/clipboard"
+import { TAB_ICONS } from "@/lib/tab-icons"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
 import { taskQueryOptions } from "./queries"
@@ -157,11 +158,14 @@ export function TaskPanel({
 
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
-                <TabsTrigger value="description">Description</TabsTrigger>
-                <TabsTrigger value="history">History</TabsTrigger>
-                <TabsTrigger value="diff">Diff</TabsTrigger>
-                <TabsTrigger value="sessions">
-                  Sessions
+                <TabsTrigger
+                  value="description"
+                  icon={<TAB_ICONS.description />}
+                  label="Description"
+                />
+                <TabsTrigger value="history" icon={<TAB_ICONS.history />} label="History" />
+                <TabsTrigger value="diff" icon={<TAB_ICONS.diff />} label="Diff" />
+                <TabsTrigger value="sessions" icon={<TAB_ICONS.sessions />} label="Sessions">
                   <TabCount count={sessions.data?.length} noun="session" />
                 </TabsTrigger>
               </TabsList>

@@ -312,6 +312,7 @@ it("shows the raw input and the raw output only behind Raw", async () => {
   expect(within(detail).queryByText(/secret-/)).toBeNull()
 
   const raw = within(detail).getByRole("button", { name: "Raw" })
+  expect(raw.textContent).toBe("")
   await user.click(raw)
   expect(raw.getAttribute("aria-pressed")).toBe("true")
   await within(section(detail, "raw input")).findByText(/secret-input/)
@@ -369,6 +370,7 @@ it("shows an image inline in a message and in a detail, and audio and resources 
   const images = () =>
     within(transcript())
       .getAllByRole("img")
+      .filter((image) => image.tagName === "IMG")
       .map((image) => image.getAttribute("src"))
   expect(images()).toEqual([`${DAEMON}${blob}`])
 
@@ -432,8 +434,9 @@ it("draws a subagent step with its title, task, state, time and step count, open
   }
 
   const line = row(subagent)
-  for (const fact of ["subagent", "running", "Explore the tests", "Find the flaky test", "4 steps"])
+  for (const fact of ["Explore the tests", "Find the flaky test", "4 steps"])
     within(line).getByText(fact)
+  for (const word of ["subagent", "running"]) within(line).getByRole("img", { name: word })
   expect(line.textContent).toMatch(/\d+m \d+s|\d+s/)
 
   await user.click(line)
@@ -463,7 +466,7 @@ it("offers no cancel on a subagent the agent does not let cancel", () => {
     subagent = aSubagentStep(turnId, { can_cancel: false, state: "completed" })
     return [subagent]
   })
-  within(row(subagent)).getByText("completed")
+  within(row(subagent)).getByRole("img", { name: "completed" })
   expect(within(transcript()).queryByRole("button", { name: /Cancel the subagent/ })).toBeNull()
 })
 
@@ -789,4 +792,22 @@ it("returns focus to the step row when Escape closes a drawer whose opener disap
   await waitFor(() => expect(document.activeElement).toBe(stepRow))
   expect(screen.queryByRole("dialog")).toBeNull()
   expect(requests.filter((one) => one.path.endsWith("/console/cancel"))).toEqual([])
+})
+
+it("opens a subagent's steps in the scroll of the transcript, with no box of its own", async () => {
+  const user = userEvent.setup()
+  let subagent = aSubagentStep("none")
+  renderTurn((turnId) => {
+    subagent = aSubagentStep(turnId)
+    return [subagent]
+  })
+  subagentSteps[subagent.subagent_id] = [
+    aToolStep(subagent.turn_id, { lane: subagent.subagent_id }),
+  ]
+
+  await user.click(row(subagent))
+
+  const detail = detailOf(subagent) as HTMLElement
+  expect(detail.className).not.toContain("max-h-")
+  expect(detail.className).not.toContain("overflow")
 })

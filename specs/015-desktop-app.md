@@ -90,7 +90,7 @@ Out: the daemon endpoints themselves (012).
    colours, light and dark, from one rule in `index.css` keyed on a
    `data-platform="linux"` marker; macOS keeps its overlay scrollbars.
 3. Screens: the goals board (one list of task rows) has Active,
-   All and Finished status segments. A status-menu icon holds a custom
+   All and Finished status tabs (rule 110). A status-menu icon holds a custom
    selection. The rows of one goal are adjacent, and the goal line over them
    carries the goal's tokens in the token column (rule 39). The task
    panel (facts, diff, history), sessions — Ariadne's own,
@@ -332,8 +332,8 @@ Out: the daemon endpoints themselves (012).
 21. Every session is shown in its console, which draws the turns of the
     daemon's trajectory (040): rules 89 to 109 say what a turn shows. The
     session view mounts it in the session panel, a task, a goal and a pull
-    request, with no switch and no URL parameter. The UI calls neither
-    `GET /v1/sessions/{id}/console` nor `GET /v1/sessions/{id}/console/stream`
+    request, with no switch and no URL parameter. The UI reads a session through
+    the trajectory routes alone
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the turn console in the session view, with no parameter`,
     `ui/src/features/sessions/session-mounts.test.tsx::shows the turn console in the session panel`,
     `::shows the turn console in a task`,
@@ -346,13 +346,13 @@ Out: the daemon endpoints themselves (012).
     `kbd` and inline code styled, a single newline in a prompt still a line
     break, and a fenced block a `CodeBlock`
     (`ui/src/features/sessions/console/blocks.test.tsx::renders a prompt as Markdown: headings, task lists, a fenced block, and a single newline still breaks`,
-    `::renders developer prompts as full Markdown without a fold`,
+    `::renders a developer prompt as Markdown, folded to 4 lines with Show more where it is longer`,
     `::draws <kbd> in a prompt as a kbd element, and leaves other raw HTML as text`,
     `::shows the time of a prompt and marks a queued one`).
 22. An input box posts a prompt as `{"text"}` to
     `POST /v1/sessions/{id}/console/input`: Enter sends it, and Shift+Enter
     adds a line. A failed post is kept, rule 22d. The box is disabled while
-    the session is not live. A running turn shows a Stop control that posts
+    the session is not live. A running turn, as rule 99b says, shows a Stop control that posts
     `POST /v1/sessions/{id}/console/cancel` with no body, and Escape inside
     the console cancels it too. A pending permission is answered as rule 93
     says
@@ -787,12 +787,14 @@ Out: the daemon endpoints themselves (012).
 38. Toasts show at the bottom left, clear of the header and the pane
     (`ui/src/components/ui/sonner.test.tsx::renders toasts at the bottom left`).
 39. The goals board shows one global "Tasks" heading with the number of
-    shown task rows, the tasks of folded goals included. The board is one
+    shown task rows, the tasks of folded goals included. The number is a
+    badge beside the word, and the heading's name is "Tasks (N)". The board
+    draws no frame around the list. The board is one
     list, and each shown task is one full-width row. Active hides finished
     and cancelled tasks; All, Finished and custom filters show every task in
     each matching goal. Progress counts use all tasks.
     A task row shows on one line the facts of the task card: the title, the
-    session attention badge, the state badge, the host label, the step track,
+    session attention badge, the state icon, the host label, the step track,
     the token figure, the PR link and the last activity. The board is one
     grid and each row takes its columns, so the columns align from row to
     row. The board has no line of column names. The token column is as wide
@@ -800,12 +802,34 @@ Out: the daemon endpoints themselves (012).
     no border and no fill. Pointer hover and keyboard focus give it a soft
     tint. It is one link to `?task=` with one tab stop, and the PR link is a
     real anchor outside it with no tab stop.
+    The board shows a state as an icon, not a pill. A task row shows one
+    coloured icon for every status: pending a clock, ready a play circle, in
+    progress a spinner circle, finished a check circle, failed a cross circle,
+    cancelled a ban sign, and a stalled task a warning triangle in place of its
+    status. A goal line shows its status the same way: planning a compass,
+    active a spinner circle, completed a check circle, cancelled a ban sign.
+    Each state has its own shape, so colour is never the only carrier. The icon
+    takes its colour from the `status-*` tokens of `ui/src/index.css`, and the
+    muted foreground for cancelled; no token is added. The icon's accessible
+    name is the status word ("Pending" for a waiting row, "Stalled" for a
+    stalled one), and its tooltip leads with it and adds the detail, such as
+    "Waits for N tasks to merge". A row whose execution owner is unconfigured shows a
+    warning icon named "Unconfigured worker", with the words in its tooltip,
+    in place of the text. The panes keep the state pill with its word
+    (`ui/src/features/goals/goal-board.test.tsx::shows each task state as its own coloured icon with the word as its name and tooltip`,
+    `::shows a stalled task as a warning icon`,
+    `::names a waiting task's icon by its state word and keeps the dependencies in the tooltip`,
+    `::shows an unresolved execution owner on a row as a warning icon`,
+    `::shows each goal state as its own coloured icon`,
+    `ui/src/features/tasks/task-panel.test.tsx::shows the task's state in the pane as a pill with its word`,
+    `ui/src/features/goals/goal-panel.test.tsx::shows the goal's state in the pane as a pill with its word`).
     Each row has a rail segment at its left edge. The segment takes the
     colour the card's border has, in the card's order of precedence, and
     the border colour when the card has none. The rows of one goal are
     adjacent, in a named group (`<goal>: Tasks`), so their segments join into
     one rail. A gap separates one group from the next. A task with no goal is
-    a group of one row, with its own segment.
+    a group of one row, with its own segment. Its row names its host by
+    rule 74, as a goal line does.
     From 33.9rem wide up, the board never scrolls sideways. Below 33.9rem it
     scrolls sideways and cuts no column. It is a CSS container, so its own width
     decides the columns, and a pinned inspector narrows it like a narrow
@@ -848,6 +872,21 @@ Out: the daemon endpoints themselves (012).
     of `done/total`, no border and no task row.
     Finished and cancelled goals start folded, and the fold the user picks
     for a goal is kept in `localStorage`.
+    Attention blocks: an unfolded goal shows, below each task row, one block
+    for each attention item that names the task, or one of its sessions
+    through the shared sessions list. An item that names many tasks shows one
+    block below each. Directly below the goal line, it shows one block for each
+    item that names the goal, or a session of the goal with no task. A task
+    with no goal shows its blocks below its row. A folded goal shows no block,
+    and its goal line keeps the attention badge. A block is the drawer row
+    (`AttentionBlock`, shared with the popover and the drawer): the reason,
+    the summary, the required action, the age, the affected links, the target
+    link and Dismiss. A form of one single-select question (rule 59) shows its
+    message and one button for each choice; every other form links to the
+    console. The blocks come only from `GET /v1/attention`, also during an
+    incomplete read, and follow its query with no new polling and no new
+    stream. The blocks keep the columns and width rules above, and each link
+    and button of a block takes a tab stop.
     A task card is three contained rows, for every status, in the goal
     panel. Finished cards have green borders, cancelled cards gray borders,
     and failed cards red borders. Its target minimum width is 18rem (about
@@ -1204,7 +1243,22 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     (rule 22f) of one single-select field is answered in the row too, with one
     button per choice that posts `accept` to that host's
     `POST /v1/sessions/{id}/questions/{question_id}/answer`; any other form is
-    answered in the console its row opens. An attention
+    answered in the console its row opens. A
+    row of a session that waits for a permission (031, rule 11a) shows the
+    oldest pending permission of that session, read from
+    `GET /v1/sessions/{id}/trajectory` on the host of the item: the tool, its
+    subject, the question and one button for each option, and the subagent
+    that asked. A click posts the option id as `text` to that host's
+    `POST /v1/sessions/{id}/console/input`. Every button is disabled while the
+    post runs, in every view of that permission, and a failed post shows its error and permits a new attempt. A permission whose answer the daemon accepted stays disabled in every view until the trajectory shows another pending permission, even when the list refresh fails
+    (`ui/src/features/goals/attention-permissions.test.tsx::disables every option while the post runs`,
+    `ui/src/features/goals/attention-permissions.test.tsx::disables the buttons of every view of the permission while one view posts`,
+    `ui/src/features/goals/attention-permissions.test.tsx::shows a failed post and permits a new attempt`,
+    `ui/src/features/goals/attention-permissions.test.tsx::keeps an answered permission disabled when the attention list refresh fails`). A session with no
+    pending permission shows no button and keeps the console link. The
+    trajectory is read again after each change of the host's attention list.
+    The board, the popover and the drawer show the same buttons
+    (`ui/src/features/goals/attention-permissions.test.tsx::draws the same buttons in the popover and in the drawer`). An attention
     error of one host follows rule 75: it names that host and has Retry; the items of the other
     hosts stay and their toasts continue. The first answer of a host raises no
     toast, also for a host that answers late, becomes listed, or comes back: a
@@ -1549,7 +1603,8 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     task" keeps its name and the palette's entry for a task with no goal is
     "Add a task outside any goal".
 86. The dialog for a task with no goal asks for a repository, and refuses to
-    create the task without one. Its workflow picker starts on "No workflow",
+    create the task without one. Its repository field is the searchable field
+    of the goal dialog, with one pick, which closes the search. Its workflow picker starts on "No workflow",
     its first entry. With a workflow it shows one staffing row for each column
     of that workflow. With "No workflow" it shows one staffing row with no
     column, and sends one agent with no `step` and no `workflow`. It has no
@@ -1578,13 +1633,26 @@ the ops of each update by id.
     (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the turn console in the session view, with no parameter`).
 90. A turn shows its prompt, one activity line and its answer. A closed turn
     with nothing in its `attention` is these three rows. The activity line
-    gives the time of the turn, its steps, the files it changed and its
-    failed calls, as `1m 04s · 5 steps · 2 files changed · 1 failed`
-    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws a closed turn as its prompt, one activity line and its answer`).
+    gives the duration of the turn, then the count of its steps, then each of
+    the files changed, the failed, the cancelled and the subagents only where
+    it is above zero, as `1m 04s · 5 steps · 2 files changed · 1 failed`,
+    after the icon of the turn's state (rule 112). A turn with no steps shows
+    the duration alone
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::draws a closed turn as its prompt, one activity line and its answer`,
+    `::shows the duration, then the steps, then each count above zero`).
+90a. A daemon prompt shows its `text`, the prompt without the seat brief, and
+    without its `untrusted` marks. Where it is more than 4 lines, it shows its
+    first 4 lines and a `Show more` control, which opens the whole prompt as
+    Markdown; `Show less` folds it again. A typed prompt shows whole. The
+    console keeps the fold of each prompt with its other folds
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows a daemon prompt without its seat brief and its untrusted marks`,
+    `::folds a daemon prompt of more than 4 lines, and keeps its fold off the screen`,
+    `::shows a typed prompt whole, and a daemon prompt of 4 lines whole`).
 91. The activity line is a button with `aria-expanded`. It opens to the step
     rows of the turn, which it reads from
     `GET /v1/sessions/{id}/trajectory/turns/{turn_id}/steps`. A row shows the
-    kind, the status, the title, the subject and the duration of its step.
+    status and the kind of its step as icons (rule 112), then the title, the
+    subject and the duration of its step.
     Where earlier steps exist, `Show N earlier` reads the page before the
     first row. Each row is drawn by the slot for the detail of its step
     (`trajectory/step-detail.tsx`), which rules 100 to 109 describe. A step that an
@@ -1597,6 +1665,11 @@ the ops of each update by id.
     `ui/src/features/sessions/trajectory/store.test.ts::keeps a row seen live in an open fold after its turn ends`,
     `::shows the live status of a step over a page read before it`,
     `::shows the steps of an open fold in the turn's order, each counted once`).
+    A row shows the first line of the title, and the subject after it only
+    where the title does not contain the subject. An open turn does not show
+    the message step that is its `answer_step_id` as a row
+    (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the first line of a title, and a subject only when the title lacks it`,
+    `::does not show the message step that is the answer of an open turn`).
 92. The running turn shows its last 3 steps under its activity line, and
     each new step pushes the oldest one out. Its newest message is its
     answer, and a `text_append` op extends it as it streams. The rows and
@@ -1706,16 +1779,46 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     as the same line, closed. A removed plan and a plan with no entries show
     nowhere
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows one plan line above the composer while a plan has an open entry, and a finished plan in its turn`).
-99b. The status row shows, in this order, the status, the running turn, the
-    mode, each config option with its current value, the context use as a
-    share of the window, the cost in its currency, and the token totals at
-    its right end. The row is one line at each width: it does not wrap, and
-    a fact that does not fit is cut. The row does not count the running
-    subagents, and it has no bar of views: the console of events said
-    `running N subagents`, and that ends here. A running subagent shows as its
-    own step row, with its state and its step count (rule 106)
+99b. The status row is one line of whole facts. The row shows, highest rank
+    first: the state, the turn activity, the token totals, the context use as
+    a share of the window, the model, the mode, each other config option
+    with its current value, then the cost in its currency. The state is
+    the `session.status` of the trajectory, and the status of the session row
+    only until the first snapshot. After the first snapshot the row shows a turn
+    activity (`thinking`, `running <tool>` and its clock) only while
+    `session.running_turn_id` names a turn (`waiting for you` too, whatever the session's liveness), and the composer shows Stop only
+    then (rule 22). When the facts do not fit, the row drops whole facts, the
+    lowest rank first. It never cuts a fact to a part of its words and it
+    draws no text over other text. The turn activity is cut with an ellipsis
+    and takes no more than half of the row. The mode shows one time, from
+    `session.mode`, else from the config option of category `mode`. The row
+    does not count the running subagents, and it has no bar of views: the
+    console of events said `running N subagents`, and that ends here. A running
+    subagent shows as its own step row, with its state and its step count
+    (rule 106). The row wraps inside a clip of exactly one line, with its padding outside
+    the clip, so no part of a second line shows and a fact that
+    does not fit drops out of view with every fact after it. The tokens are
+    third, not at the right end
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::counts no running subagent in the status row, and draws no bar of views for one`,
-    `ui/src/features/sessions/trajectory/console-state.test.tsx::shows the status, the mode, the options, the context use, the cost and the tokens in one line`).
+    `::shows the status, the tokens, the context use, the model, the mode, the options and the cost in rank order`,
+    `::shows the mode one time when the mode state and a mode option both name it`,
+    `ui/src/features/sessions/console/status.test.tsx::holds the turn activity to half of the row, cut with an ellipsis, and never cuts a fact`,
+    `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::takes the state word and the busy state from the trajectory once its snapshot came`,
+    `::shows no waiting-for-you activity for an open question while no turn runs`,
+    `::shows a turn activity and Stop while running_turn_id names a turn, whatever the session row says`).
+    The widths have a browser proof, as jsdom lays out nothing: a Playwright
+    probe on a temporary daemon, with four config options injected, at a pane
+    of 384 px (the narrowest, 24rem), 420, 480, 560, 720 and 960 px and the
+    expanded console on a 1600 px window. At each width, with a long running
+    command and with `npm test`, no two facts overlapped, every shown fact fit
+    whole in the row, and the facts dropped in rank order. The long command
+    took 0.50 of the row at every width, cut with an ellipsis. `npm test`
+    took 182 px, whole from 480 px up and at 0.50 with an ellipsis at 384 and
+    420 px. At 384 to 480 px only the state, the turn and the tokens show; the
+    context comes at 560 px. The model, the mode and the effort come at
+    960 px with `npm test` only. In the expanded console `npm test` shows
+    all nine facts, and the long command shows seven of them: the cost and
+    the fast-mode option drop
 99c. A warning note and a compaction always show as lines of their turn,
     whatever the fold, and an error shows as rule 94 says. The console takes
     the warning notes and the compactions from the `notices` field of the
@@ -1734,17 +1837,22 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     call's `permission` id or by its tool call id, and not a row of its own
     where the call's row shows. The mark gives `✓` or `✗` by the kind of the
     option chosen, the option's label, and who decided: `you`, `AI`, a
-    learned rule or `auto`
-    (`ui/src/features/sessions/trajectory/console-state.test.tsx::marks an answered permission on the row of its call, with who decided`).
+    learned rule or `auto`. An allow that `auto` or a learned permission gave
+    has no mark. An allow by the AI or by a person is a mark in the muted
+    colour, and a rejection is one in the danger colour. The open detail of
+    the call shows the answer and who decided, for each decider
+    (`ui/src/features/sessions/trajectory/console-state.test.tsx::marks an answered permission on the row of its call, with who decided`,
+    `::marks only what a person or the AI allowed, or anything rejected, and says who in the detail`).
 99e. The title that the agent gives the session shows as the subtitle of the
     console, under its stream line, and a `session_patch` changes it
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the title that the agent gives as the subtitle of the console`).
 99f. Find (`trajectory/find-slot.tsx`, over `console/transcript-find.tsx`) searches the loaded turns and the
-    loaded steps: the prompt and the answer of each turn shown, and each
+    loaded steps: the prompt as shown (a daemon prompt without its seat brief) and the answer of each turn shown, and each
     step the console holds for it, including live steps, full pages, attention
     and the notices of the turn. Each step appears once by ID.
     Find reports when older turns are unloaded and loads them on request
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::finds the text of the loaded turns and the loaded steps`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::finds the shown prompt of a daemon turn, not its seat brief`,
     `ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn from its notices, and reads no steps for them`).
 99g. The console expands into a modal and collapses back. Expand, collapse and a change of tab each
     mount a new pane. The console keeps the draft, the scroll place and
@@ -1858,8 +1966,10 @@ view.
      `before=<step id>`, in place and in the full view. Where `can_cancel` is true, the
      row has a Cancel control that posts `{"subagent_id"}` to
      `POST /v1/sessions/{id}/console/cancel`. Where it is false, the row has
-     none
-     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::draws a subagent step with its title, task, state, time and step count, opens it to its steps, and cancels it`,
+     none. The open detail of a subagent has no set height and no scroll of
+     its own: its steps scroll with the transcript
+     (`ui/src/features/sessions/trajectory/step-detail.test.tsx::opens a subagent's steps in the scroll of the transcript, with no box of its own`,
+     `::draws a subagent step with its title, task, state, time and step count, opens it to its steps, and cancels it`,
      `::offers no cancel on a subagent the agent does not let cancel`,
      `::reads the earlier steps of a subagent with Show N earlier`).
 107. `Open` shows the whole content of a step, with no set height, in the
@@ -1883,6 +1993,117 @@ view.
      98 says of the whole turn console
      (`ui/src/features/sessions/trajectory/tokens.test.ts::names no fixed colour in any source of the turn console`).
 
+110. Every tab trigger shows an icon before its word. One tab concept has one
+    icon in the whole app, kept in `ui/src/lib/tab-icons.tsx`: Description,
+    History, Diff, Tasks, Sessions, Console, Agent activity, Pull requests,
+    Issues, Learned, AI, Write, Preview, and the goals board's Active, All and
+    Finished. Sessions is the same icon in the task, goal and pull request
+    panes. A tab the sidebar also names has the sidebar's icon: Sessions and
+    Forge's Pull requests. The agents screen's tabs show the agent's own icon.
+    The goals board's status filter is the same `Tabs` component as the panes.
+    In a pane narrower than 26rem (the `pane` container of the pane body: a
+    docked pane of 24rem to about 28rem) the word leaves the layout: the tab
+    shows its icon and its count, its accessible name is the word alone (a count is not part of it), and
+    the word is its tooltip. The tooltip opens only while the word is hidden.
+    A tab outside a pane never narrows. A browser probe at pane widths from 22
+    to 34rem found the word at 1px up to 24.9rem and at its full width from
+    27.9rem, with no overflow of the tab list in either state
+    (`ui/src/components/ui/tabs.test.tsx::draws the icon before the word, keeps the word as the name, and keeps the count`;
+    `::names the word in a tooltip when the word is hidden`;
+    `::hides the word in a narrow pane and keeps it otherwise`;
+    `ui/src/components/pane-tabs.test.tsx::names each task pane tab by its word and draws its icon, count included`;
+    `::names each goal pane tab by its word and draws its icon, count included`;
+    `::names each pull request pane tab by its word and draws its icon`;
+    `::names each session pane tab by its word and draws its icon`;
+    `ui/src/features/agents/agents-page.test.tsx::counts each agent's catalog on its tab`;
+    `ui/src/components/ui/tabs.test.tsx::gives each tab concept one icon, on every screen that has the tab`;
+    `::uses the sidebar's icon for a tab the sidebar names`;
+    `::shows an icon on the Forge, Permissions and markdown tabs`;
+    `ui/src/features/goals/goals-list-page.test.tsx::leaves every status tab unselected for a custom selection`).
+111. An action is an icon-only button with a tooltip, built from one
+     component, `IconButton` (`ui/src/components/icon-button.tsx`). It takes an
+     icon and a label. The label is the tooltip and the accessible name. A
+     tooltip of its own may add to the name, and a `mark` is a dot with text
+     for a screen reader. It is a `Button`: it keeps `aria-pressed`, `pending`
+     and `disabled`.
+     - The goal actions (New task, Complete goal, Cancel goal, Delete goal),
+       the task actions (Edit task, Retry task, Cancel task) and the session
+       actions (Switch, Kill session, Resume session) use it. Cancel goal,
+       Delete goal, Cancel task and Kill session keep their confirmation.
+       Retry task shows what a retry keeps in its tooltip.
+     - The attention block shows its open action (in the drawer) and Dismiss,
+       and the attention strip shows View all and Retry, as icon buttons.
+     - The step detail shows `Open` and `Raw`, which keeps `aria-pressed`. The
+       console shows Retry and Edit of a failed prompt, and `Jump to latest`,
+       which carries a mark `New output` while output is unread.
+     - The header shows Search, whose tooltip names the palette chord, and
+       Settings and the sidebar toggle. The composer's Send and Stop use it.
+     - The settings dialog shows `Retry connection` and `Reset to default` as
+       icon buttons. `Save address` and `Close` keep their words.
+     - A tooltip opened by focus never keeps the pane open: Escape on an icon
+       button of the pane still closes the pane
+       (`ui/src/components/pane-focus.test.tsx::returns focus to the board opener after closing the replacement goal breadcrumb`).
+     - Tabs, state pills and buttons that submit a form or a dialog stay as
+       they are. Step rows, turn lines and turn headers show icons by rule 112
+       (`ui/src/components/icon-button.test.tsx::names the button by its label and draws no text`,
+       `::shows the label as the tooltip when the button takes focus`,
+       `::shows a tooltip of its own without changing the accessible name`,
+       `::shows a mark only when it has one`,
+       `::keeps its pressed state and click`;
+       `ui/src/features/goals/goal-action-icons.test.tsx::draws Complete goal and Cancel goal as icon-only buttons on an active goal`,
+       `::draws Delete goal as an icon-only button on a stopped goal`,
+       `::draws New task as an icon-only button in the goal panel header`,
+       `::draws New task as an icon-only button in the empty task list`,
+       `::draws Edit task and Cancel task as icon-only buttons on a task that waits`,
+       `::draws Resume session as an icon-only button on a session that ended`;
+       `ui/src/features/sessions/session-actions.test.tsx::draws Switch and Kill session as icon-only buttons, and Kill session still asks first`;
+       `ui/src/features/tasks/task-action-feedback.test.tsx::draws Retry task as an icon whose tooltip says what a retry keeps`;
+       `ui/src/components/app-shell.test.tsx::shows Search as an icon whose tooltip names the palette chord`;
+       `ui/src/components/settings-dialog.test.tsx::keeps the footer to Reset to default and Close, with no Save button there`;
+       `ui/src/features/goals/attention-blocks.test.tsx::draws the content of a drawer row: summary, action, age, links, target and Dismiss`;
+       `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::follows the newest output, and offers Jump to latest once the reader scrolls away`;
+       `ui/src/features/sessions/trajectory/step-detail.test.tsx::shows the raw input and the raw output only behind Raw`).
+112. The turn console shows its rows with the design of the terminal
+     console (008, rule 59): icons, groups and line counts.
+     - A step row shows a state icon, then a kind icon, then its title and
+       subject. The state word and the kind word are the tooltips of the
+       icons, and stay in the accessible name of the row. A tool call has the
+       icon of its kind, and a kind with no icon has one fallback icon
+       (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::shows the state and the kind of a step row as icons, with their words as names and tooltips`).
+     - A state has the icon and the colour that the board gives the same
+       state: running is in progress, completed is finished, and failed,
+       cancelled and pending are the same words
+       (`::shows a step state with the icon and the colour the board gives the same state`).
+     - Consecutive tool steps of kind `read` or `search` in one turn show as
+       one group row (`trajectory/step-groups.ts`). The group row shows the
+       subject of each step, else its title, cut to the width. A group of one
+       kind has the icon of that kind, and a group of both kinds has a group
+       icon. A step of another kind ends a group, and a group of one step is
+       a normal step row. A running turn takes its last 3 steps (rule 92)
+       before it folds them. A browser probe of a session panel at viewports
+       of 1400, 900 and 640 CSS pixels found the subjects cut with an
+       ellipsis inside the group row, and each row one line of 20 pixels
+       (`::folds consecutive read and search steps into one group row of their subjects`,
+       `::gives a group of one kind the icon of that kind`).
+     - The state of a group is running while a step in it runs, failed if a
+       step in it failed, and completed in all other cases
+       (`::shows a group as running while a step runs, failed if a step failed, and completed otherwise`).
+     - A group row is a disclosure with `aria-expanded`. A click opens the
+       group and shows its steps as rows, and each of those rows opens its
+       detail as rule 100 says
+       (`::opens a group row to its steps, and each opens its detail`).
+     - An edit step row shows its subject and `+N -N` from `diff_stat`, in
+       the diff colours, when the step carries one
+       (`::shows the subject of an edit row and the lines it added and removed`).
+     - The activity line shows the time and the counts. A state icon
+       replaces the state word, which stays in the accessible name
+       (`::shows the state of a turn line as an icon, with the time and the counts`).
+     - The prompt and the answer of a turn show an icon for the user, the
+       developer and the assistant. The role word is the icon's tooltip and
+       its accessible name
+       (`::shows the author of each turn part as an icon, its word as the name`,
+       `ui/src/features/sessions/console/blocks.test.tsx::renders developer prompts as full Markdown without a fold`).
+
 ## Acceptance criteria
 
 - Goal task cards show a remote host in its host colour and explain when it
@@ -1892,6 +2113,12 @@ view.
 
 - Each goal-less task is a group of one row, in no goal's group
   (`ui/src/features/goals/goal-board.test.tsx::draws each goal-less task as a group of one row, in no goal's group`).
+- A goal-less task's row names its host by rule 74, as a goal line does, `local`
+  included. Where the goals name no host, the row names none for a task that runs on its own host
+  (`ui/src/features/goals/goal-board.test.tsx::names a goal-less task's host in its row, as a goal line names its goal's`;
+  `::names no host on a goal-less task's row while the goals name none`).
+- A goal-less task's row names the host that lists it, not the task's own `local`
+  (`ui/src/features/goals/goal-board.test.tsx::names the host that lists a goal-less task, not the task's own host`).
 - A far goal-less task that its source and its worker both list is on the board once
   (`ui/src/features/goals/goal-board.test.tsx::shows a far goal-less task once, though its source and its worker both list it`).
 - A `task_created` event adds a goal-less task's row, and a `task_updated` event moves a row into its goal
@@ -1904,6 +2131,8 @@ view.
   (`ui/src/features/command-palette/command-palette.test.tsx::offers a task with no goal over a screen with no goal open, and opens its dialog`; `::offers the goal-less task beside the goal's own when a goal is open`).
 - The dialog offers "No workflow" first with one row and no column, one row per column with a workflow, no dependency field, and the ready hosts starting on this machine
   (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::offers No workflow first, and one staffing row with no column under it`; `::staffs one row for each column of the picked workflow`; `::has no dependency field`; `::offers the ready hosts, starting on this machine`; `::shows the host picker directly above the staffing rows`; `::offers the models of the picked host in each staffing row`; `::clears the picked model and effort of each row when the host changes`).
+- The dialog picks its repository by search in the goal dialog's field
+  (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::picks the repository by search in the field the goal dialog uses`).
 - The dialog posts the repository, the one agent and no workflow, and refuses a missing repository
   (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::creates the task in the repository with no workflow, on this machine`; `::asks for a repository before it creates anything`; `::shows the daemon's reason when it refuses the host`).
 - The panel of a goal-less task has no goal breadcrumb or goal query, and no columns without a workflow
@@ -2418,8 +2647,8 @@ view.
   `ui/src/features/sessions/trajectory/trajectory-console.test.tsx::moves the keyboard to the pane's Close button on ⌘Escape, and closes nothing`,
   `ui/src/components/panel-sheet.test.tsx::leaves Escape on the board alone and returns focus when the pane closes`).
 - The status row cuts a multiline tool name to its first line, whole on hover,
-  with the tokens at the right end (rule 99b)
-  (`ui/src/features/sessions/console/status.test.tsx::shows only the first line of a multiline tool name, whole on hover, with the tokens at the right end`).
+  with the tokens after the turn (rule 99b)
+  (`ui/src/features/sessions/console/status.test.tsx::shows only the first line of a multiline tool name, whole on hover`).
 - The blocked banner says where to answer, says to resume an agent that is
   gone, and shows for no other reason
   (`ui/src/features/sessions/session-blocked-banner.test.tsx::says what a permission prompt is waiting for, and where to answer it`,
@@ -2565,6 +2794,8 @@ view.
   progress
   (`ui/src/features/goals/goal-board.test.tsx::draws each task as one row of one list, the rows of a goal in its group, and counts them`,
   `::hides terminal tasks under Active while preserving progress`).
+- The board has no frame, and its Tasks heading shows the count as a badge
+  (`ui/src/features/goals/goal-board.test.tsx::draws the board with no frame, and the count as a badge beside the Tasks heading`).
 - The board has no line of column names
   (`ui/src/features/goals/goal-board.test.tsx::draws each task as one row of one list, the rows of a goal in its group, and counts them`).
 - A task row is one link to the task panel with one tab stop, its PR link
@@ -2574,6 +2805,28 @@ view.
   and its rail segment takes the card's border colour, a goal-less task's
   too
   (`ui/src/features/goals/goal-board.test.tsx::draws a row with no border and no fill, its rail segment in the status colour`).
+- An attention item is a block below the task row or goal line it names:
+  below each task it names or whose session it names, one below each of many
+  tasks, below the goal line for the goal or a session with no task, below the
+  row of a task with no goal, and none under a folded goal, whose line keeps
+  the badge
+  (`ui/src/features/goals/attention-blocks.test.tsx::shows a block below the row of the task an item names, and none below the others`;
+  `::shows a block below a task whose session an item names`;
+  `::shows one block below each task an item names, and one if it names a task and its session`;
+  `::shows a block for the goal, or for a session of the goal with no task, directly below the goal line`;
+  `::shows a task with no goal its blocks below its row`;
+  `::shows no block under a folded goal, and its goal line keeps the attention badge`).
+- A block draws the content of a drawer row and keeps every link and button
+  in the tab order
+  (`ui/src/features/goals/attention-blocks.test.tsx::draws the content of a drawer row: summary, action, age, links, target and Dismiss`;
+  `::keeps every link and button of a block in the tab order`).
+- A block of a form of one single-select question answers it with one button
+  for each choice, and a block of any other form links to the console
+  (`ui/src/features/goals/attention-blocks.test.tsx::answers a form of one single-select question from its block with one button per choice`;
+  `::links a form of another shape to the console and draws no buttons`).
+- The blocks read only the shared list, also while its read is incomplete
+  (`ui/src/features/goals/attention-blocks.test.tsx::shows blocks from the shared list while the read is incomplete`;
+  `ui/src/features/goals/attention-incomplete.test.tsx::retains known items and their board badges while reporting an incomplete read`).
 - The token figures share one column sized to the largest figure, the
   goal's total directly above its rows', and no cell cuts a figure
   (`ui/src/features/goals/goal-board.test.tsx::puts the token figures in one column, the goal's total over its rows', never cut`).
@@ -2903,6 +3156,8 @@ This overrides the original requirement to keep permission responses inline. Que
 ### Loaded transcript find
 
 The console offers Find in transcript and a scoped Ctrl/Cmd+F shortcut.
+The control is an icon button with the accessible name "Find in transcript", in the header row of the console beside the title. No row holds only the find control.
+Ctrl/Cmd+F opens the find pane below the header row.
 Text fields, editors, the composer, and nested dialogs retain keyboard ownership.
 Search uses the current view's loaded block text, including folded activity and tool details.
 Each occurrence has a count and an active mark in a separate result pane.
@@ -2912,3 +3167,15 @@ Escape closes find and restores focus. Stream updates retain the selected block 
 The coverage message identifies unloaded history. Load earlier history uses the existing page action.
 
 Acceptance: `ui/src/features/sessions/console/transcript-find.test.tsx` proves result navigation, history selection stability, focus return, and shortcut ownership.
+`ui/src/features/sessions/trajectory/console-state.test.tsx::puts the find icon in the header row and opens the find pane below it` proves the place of the control and the pane.
+
+### Session panel facts and console name
+
+The control that folds the session facts of the session panel is in the line of the panel heading. It has no row of its own.
+The pane remembers the fold in the settings store (`sessionFactsOpen`), across sessions and across a restart of the app. The facts are open until the user folds them.
+The console header names the session when the agent gives no title. It shows the heading that the session panel shows.
+
+Acceptance:
+`ui/src/features/sessions/session-detail-view.test.tsx::folds the session facts from a control in the line of the panel heading` proves the place of the control.
+`::keeps the fold across a restart of the app` proves the remembered fold, and `::opens the facts when the user has not folded them` proves the default.
+`ui/src/features/sessions/trajectory/console-state.test.tsx::names the session in the header when the agent gives no title` proves the header name.

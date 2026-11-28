@@ -23,7 +23,7 @@ mod permissions;
 mod pins;
 mod posts;
 pub(crate) use posts::agent_sender;
-mod pull_requests;
+pub(crate) mod pull_requests;
 mod query;
 mod questions;
 use query::QueryRoutes;
@@ -191,7 +191,7 @@ impl AppState {
         channel::open_pull_request, steps::complete, steps::fail,
         sessions::list,
         sessions::get, sessions::kill, sessions::resume, sessions::switch,
-        console::snapshot, console::stream, console::input, console::cancel,
+        console::input, console::cancel,
         questions::list, questions::answer,
         trajectory::snapshot, trajectory::stream, trajectory::steps,
         trajectory::item, trajectory::blob,
@@ -463,8 +463,6 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}/kill", post(sessions::kill))
         .route("/v1/sessions/{id}/resume", post(sessions::resume))
         .route("/v1/sessions/{id}/switch", post(sessions::switch))
-        .route("/v1/sessions/{id}/console", get(console::snapshot))
-        .route("/v1/sessions/{id}/console/stream", get(console::stream))
         .route("/v1/sessions/{id}/console/input", post(console::input))
         .route("/v1/sessions/{id}/questions", get(questions::list))
         .route("/v1/sessions/{id}/trajectory", get(trajectory::snapshot))
@@ -594,7 +592,6 @@ async fn record_request_duration(request: Request, next: Next) -> Response {
         .map(|route| route.as_str().to_string());
     let response = next.run(request).await;
     let excluded = matches!(path.as_str(), "/v1/events/stream" | "/v1/logs/stream")
-        || path.contains("/console/stream")
         || path.contains("/trajectory/stream")
         || path.contains("/console/terminal")
         || ["/otlp/", "/api/v1/", "/loki/"]

@@ -182,6 +182,35 @@ impl Titles {
     }
 }
 
+/// The title `ariadne session ls` shows one session, read for that session
+/// alone: [`Titles::of`], and for a pull request session the request's title
+/// with its URL beside it, as the CLI sets it.
+pub(crate) async fn title_of(
+    state: &crate::http::AppState,
+    session: &AgentSession,
+) -> Option<String> {
+    let store = &state.store;
+    // The request as `GET /v1/pull-requests/{id}` reads it: held, or read
+    // off the forge where nothing has read it yet.
+    let pull = match &session.pull_request_id {
+        Some(id) => match store.get_pull_request(id).await {
+            Ok(row) => crate::http::pull_requests::read_held(state, row).await.ok(),
+            Err(_) => None,
+        },
+        None => None,
+    };
+    if let Some(pull) = &pull {
+        return Some(format!("{} ({})", pull.title, pull.url));
+    }
+    if let Some(task) = &session.task_id
+        && let Ok(task) = store.get_task(task).await
+    {
+        return Some(task.title);
+    }
+    let goal = session.goal_id.as_ref()?;
+    store.get_goal(goal).await.ok().map(|goal| goal.title)
+}
+
 /// One row of the listing before the page is cut: what it takes to build the
 /// entry, once the page is known.
 enum Row {

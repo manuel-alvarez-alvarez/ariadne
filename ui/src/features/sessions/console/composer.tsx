@@ -2,8 +2,7 @@ import { SendIcon, SquareIcon } from "lucide-react"
 import type { KeyboardEvent, ReactNode, RefObject } from "react"
 import { useLayoutEffect } from "react"
 
-import { Button } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { IconButton } from "@/components/icon-button"
 import { cn } from "@/lib/format"
 
 import type { AgentCommand } from "./transcript"
@@ -171,39 +170,23 @@ export function Composer({
         ) : null}
       </div>
       {running ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon"
-                variant="outline"
-                onClick={onStop}
-                aria-label="Stop the turn"
-                className="shrink-0"
-              />
-            }
-          >
-            <SquareIcon />
-          </TooltipTrigger>
-          <TooltipContent>Stop the turn</TooltipContent>
-        </Tooltip>
+        <IconButton
+          size="icon"
+          icon={<SquareIcon />}
+          label="Stop the turn"
+          onClick={onStop}
+          className="shrink-0"
+        />
       ) : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              size="icon"
-              onClick={onSend}
-              disabled={!live || draft.trim().length === 0}
-              aria-label="Send"
-              className="shrink-0"
-            />
-          }
-        >
-          <SendIcon />
-        </TooltipTrigger>
-        <TooltipContent>Send</TooltipContent>
-      </Tooltip>
+      <IconButton
+        size="icon"
+        variant="default"
+        icon={<SendIcon />}
+        label="Send"
+        onClick={onSend}
+        disabled={!live || draft.trim().length === 0}
+        className="shrink-0"
+      />
     </div>
   )
 }

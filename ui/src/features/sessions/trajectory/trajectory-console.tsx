@@ -26,7 +26,7 @@
  */
 
 import { skipToken, useQuery } from "@tanstack/react-query"
-import { ArrowDownIcon, Maximize2Icon, Minimize2Icon } from "lucide-react"
+import { ArrowDownIcon, Maximize2Icon, Minimize2Icon, RotateCcwIcon } from "lucide-react"
 import {
   type KeyboardEvent,
   useCallback,
@@ -49,6 +49,7 @@ import {
   type SessionStatus,
   unwrap,
 } from "@/api"
+import { IconButton } from "@/components/icon-button"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { copyText } from "@/lib/clipboard"
@@ -340,7 +341,10 @@ function TrajectoryPane({
 
   const live = isLiveStatus(status)
   const sessionState = state.session
-  const running = live && (status === "running" || (sessionState?.running_turn_id ?? null) !== null)
+  // Once a snapshot came, a turn runs only where the trajectory names it.
+  const running = sessionState
+    ? (sessionState.running_turn_id ?? null) !== null
+    : status === "running"
   const runningTurn = state.turns.find((turn) => turn.state === "running")
   const startedAt = running ? runningTurn?.started_at : undefined
 
@@ -767,7 +771,7 @@ function TrajectoryPane({
     ? { input: usageNow.input_tokens, output: usageNow.output_tokens }
     : (usage ?? { input: 0, output: 0 })
   const waiting =
-    live &&
+    running &&
     state.turns.some((turn) =>
       turn.attention.some((step) => step.type === "question" && step.state === "open"),
     )
@@ -787,13 +791,20 @@ function TrajectoryPane({
         className,
       )}
     >
-      <div className="flex items-center gap-3 border-b px-3 py-1.5 font-mono text-xs text-muted-foreground">
+      <div className="relative flex items-center gap-3 border-b px-3 py-1.5 font-mono text-xs text-muted-foreground">
         <div className="flex min-w-0 flex-1 flex-col">
           <span role="status" className="flex min-w-0 items-center gap-3">
             <StreamStatusLine status={streamStatus} error={streamError} />
           </span>
-          <ConsoleSubtitle title={sessionState?.title} />
+          <ConsoleSubtitle title={sessionState?.title} session={session} />
         </div>
+        <TrajectoryFind
+          turns={shown}
+          pages={state.pages}
+          older={state.hasOlder}
+          loading={history.state === "loading"}
+          loadOlder={() => void loadOlder()}
+        />
         {onExpand ? (
           <Button size="icon-xs" variant="ghost" onClick={onExpand} aria-label="Expand the console">
             <Maximize2Icon />
@@ -811,13 +822,6 @@ function TrajectoryPane({
           </Button>
         ) : null}
       </div>
-      <TrajectoryFind
-        turns={shown}
-        pages={state.pages}
-        older={state.hasOlder}
-        loading={history.state === "loading"}
-        loadOlder={() => void loadOlder()}
-      />
       <HistoryLine history={history} onRetry={() => void loadOlder()} />
       <StepWorkspace
         host={host}
@@ -877,9 +881,12 @@ function TrajectoryPane({
               className="flex items-center gap-2 rounded-md border border-status-danger/40 px-3 py-1 font-mono text-xs text-status-danger-fg"
             >
               Could not read the open questions: {questionsError}
-              <Button size="xs" variant="outline" onClick={readQuestions}>
-                Retry
-              </Button>
+              <IconButton
+                size="icon-xs"
+                icon={<RotateCcwIcon />}
+                label="Retry"
+                onClick={readQuestions}
+              />
             </div>
           ) : null}
           {failed.map((one) => (
@@ -892,23 +899,14 @@ function TrajectoryPane({
           ))}
         </div>
         {away ? (
-          <Button
-            size="sm"
+          <IconButton
             variant="secondary"
+            icon={<ArrowDownIcon />}
+            label="Jump to latest"
+            mark={unread ? "New output" : undefined}
             onClick={jumpToLatest}
             className="absolute right-3 bottom-2 shadow-md"
-          >
-            <ArrowDownIcon />
-            Jump to latest
-            {unread ? (
-              <span
-                role="status"
-                className="rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground"
-              >
-                New output
-              </span>
-            ) : null}
-          </Button>
+          />
         ) : null}
       </StepWorkspace>
       <TrajectoryDock>

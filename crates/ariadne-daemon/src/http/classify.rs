@@ -271,7 +271,7 @@ fn tool_call_summary(payload: &serde_json::Value) -> Option<String> {
 
 /// The agent's own words, wherever the payload carries any: the prompt that
 /// began the turn, the message or thought it produced — whole, or one chunk
-/// of it on the console stream — or an error's — `{data: {message, …}}`, the
+/// of it on the trajectory — or an error's — `{data: {message, …}}`, the
 /// shape `session.error` carries it in.
 fn agent_text(kind: &str, payload: &serde_json::Value) -> Option<String> {
     let text = match kind {

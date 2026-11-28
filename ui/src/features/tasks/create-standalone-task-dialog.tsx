@@ -1,7 +1,8 @@
 /**
  * "New task": a task with no goal, created straight from the app.
  *
- * The repository is required and the workflow starts on "No workflow". With a
+ * The repository is required, picked by search in the goal dialog's field, and
+ * the workflow starts on "No workflow". With a
  * workflow the dialog staffs one row per column; without one it staffs the one
  * agent that does the whole task. There is no dependency field: a goal-less
  * task depends on nothing. The host picker offers the ready hosts and starts on
@@ -30,6 +31,7 @@ import { HostDot } from "@/components/host-dot"
 import { MarkdownField } from "@/components/markdown-field"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { RepositoryCombobox } from "@/features/goals/repository-combobox"
 import { PinPicker } from "@/features/models/pin-picker"
 import { modelsQueryOptions } from "@/features/models/queries"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
@@ -139,16 +141,19 @@ export function CreateStandaloneTaskDialog({
           />
           <Field data-invalid={errors.repo_id ? "" : undefined}>
             <FieldLabel htmlFor="standalone-repo">Repository</FieldLabel>
-            <FormSelect
+            <Controller
               control={form.control}
               name="repo_id"
-              id="standalone-repo"
-              options={(repositories.data ?? []).map((repo) => ({
-                label: repo.path,
-                value: repo.id,
-              }))}
-              placeholder="Select a repository"
-              invalid={errors.repo_id ? true : undefined}
+              render={({ field }) => (
+                <RepositoryCombobox
+                  id="standalone-repo"
+                  repositories={repositories.data ?? []}
+                  value={field.value ? [field.value] : []}
+                  onChange={(ids) => field.onChange(ids[0] ?? "")}
+                  invalid={errors.repo_id ? true : undefined}
+                  single
+                />
+              )}
             />
             <FieldError>{errors.repo_id?.message}</FieldError>
           </Field>

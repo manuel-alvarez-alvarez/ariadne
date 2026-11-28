@@ -29,8 +29,8 @@ use ariadne_api::permissions::{
 };
 use ariadne_api::skills::SkillDto;
 use ariadne_api::trajectory::{
-    TrajectoryQuery, TrajectorySnapshotDto, TrajectoryStepsDto, TrajectoryStepsQuery,
-    TrajectoryStreamQuery,
+    ToolCallDetailDto, TrajectoryItemQuery, TrajectoryQuery, TrajectorySnapshotDto,
+    TrajectoryStepsDto, TrajectoryStepsQuery, TrajectoryStreamQuery,
 };
 use ariadne_api::{HealthResponse, VersionResponse};
 
@@ -449,6 +449,21 @@ impl Client {
     ) -> Result<TrajectoryStepsDto, ClientError> {
         self.get_json(&with_query(
             &format!("/v1/sessions/{session_id}/trajectory/turns/{turn_id}/steps"),
+            query,
+        ))
+        .await
+    }
+
+    /// The typed detail of one tool call step, with its raw input and raw
+    /// output where `query` asks for them (040).
+    pub async fn trajectory_item(
+        &self,
+        session_id: &str,
+        item_id: &str,
+        query: &TrajectoryItemQuery,
+    ) -> Result<ToolCallDetailDto, ClientError> {
+        self.get_json(&with_query(
+            &format!("/v1/sessions/{session_id}/trajectory/items/{item_id}"),
             query,
         ))
         .await
@@ -885,6 +900,54 @@ mod tests {
             request.starts_with(
                 "GET /v1/sessions/s1/trajectory/turns/t1/steps?before=c+9&limit=200 HTTP/1.1\r\n"
             ),
+            "{request}"
+        );
+    }
+
+    /// The detail route of a step asks for the raw input and output only
+    /// where the query says so, and reads the typed detail back.
+    #[tokio::test]
+    async fn a_step_detail_sends_its_route_and_reads_the_typed_detail() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket.read(&mut buffer).await.unwrap();
+                request.extend_from_slice(&buffer[..read]);
+            }
+            let body = r#"{"id": "c1", "tool_call_id": "call", "title": "Run", "kind": "execute",
+                "status": "completed", "detail_rev": 3,
+                "detail": {"type": "command", "command": "ls", "cwd": null, "output": "a",
+                           "exit_code": 0, "truncated": false},
+                "raw": {"input": {"command": "ls"}, "output": null}}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        let client = Client::tcp(format!("http://{address}"));
+
+        let detail = client
+            .trajectory_item("s1", "c1", &TrajectoryItemQuery { raw: true })
+            .await
+            .unwrap();
+
+        assert_eq!(detail.detail_rev, 3);
+        assert!(matches!(
+            detail.detail,
+            ariadne_api::trajectory::ToolDetailDto::Command(_)
+        ));
+        assert!(detail.raw.is_some());
+        let request = server.await.unwrap();
+        assert!(
+            request.starts_with("GET /v1/sessions/s1/trajectory/items/c1?raw=true HTTP/1.1\r\n"),
             "{request}"
         );
     }

@@ -15,10 +15,10 @@ task asks for a change, not an answer.
 ## Steps
 
 1. Write the question in one sentence, with its scope and the evidence that
-   settles it. Confirm it with the orchestrator through `post_to_session` where
+   settles it. Confirm it with the requester where
    the task does not state it.
 
-   Done when the task or the orchestrator states the question.
+   Done when the task or the requester states the question.
 2. List what an answer needs. Name the sources that can give it.
 
    Done when each need names a source.
@@ -33,13 +33,12 @@ task asks for a change, not an answer.
    what would change the recommendation, and what you did not check.
 
    Done when the research report has all six parts.
-6. Post the full research report to `orchestrator` with `post_to_session`.
+6. Send the full research report to the requester.
 
-   Done when the post holds the full research report and the tool
-   accepts it.
-7. Call `complete_step` with the column report.
+   Done when the requester has the full research report.
+7. Send the report.
 
-   Done when the column report has been submitted.
+   Done when the report has been submitted.
 
 ## Rules
 

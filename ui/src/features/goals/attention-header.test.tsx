@@ -80,6 +80,7 @@ it("opens a drawer from View all and filters a goal-less item by goal", async ()
   recovery = [item()]
   renderScreen(<AttentionPopover />, { route: "/profiles" })
   fireEvent.click(await screen.findByRole("button", { name: /Needs attention/ }))
+  expect((await screen.findByRole("button", { name: "View all" })).textContent).toBe("")
   fireEvent.click(await screen.findByRole("button", { name: "View all" }))
   expect(await screen.findByText("Showing 1 of 1")).not.toBeNull()
   expect(screen.getAllByText("Free resources").length).toBeGreaterThan(0)
@@ -102,14 +103,14 @@ it("labels a console row and a task row by where each one navigates", async () =
   ]
   renderScreen(<AttentionPopover />, { route: "/profiles" })
   await openDrawer()
-  expect(await screen.findByText("Open console")).not.toBeNull()
-  expect(screen.getByText("Open task")).not.toBeNull()
+  expect(await screen.findByRole("button", { name: "Open console" })).not.toBeNull()
+  expect(screen.getByRole("button", { name: "Open task" })).not.toBeNull()
 })
 it("navigates to the row target from the drawer and closes it", async () => {
   recovery = [item()]
   const { location } = renderScreen(<AttentionPopover />, { route: "/profiles" })
   await openDrawer()
-  fireEvent.click(await screen.findByText("Open task"))
+  fireEvent.click(await screen.findByRole("button", { name: "Open task" }))
   await waitFor(() => expect(screen.queryByText("Showing 1 of 1")).toBeNull())
   expect(location.url).toContain(`task=${task.id}`)
 })
@@ -153,7 +154,7 @@ it("does not return focus to the trigger after a row is picked", async () => {
   renderScreen(<AttentionPopover />, { route: "/profiles" })
   const trigger = await openDrawer()
   const refocus = vi.spyOn(trigger, "focus")
-  fireEvent.click(await screen.findByText("Open console"))
+  fireEvent.click(await screen.findByRole("button", { name: "Open console" }))
   await waitFor(() => expect(screen.queryByText("Showing 1 of 1")).toBeNull())
   expect(refocus).not.toHaveBeenCalled()
 })
@@ -196,7 +197,7 @@ it("opens agent settings for quota recovery", async () => {
   recovery = [item({ kind: "settings", section: "agents" })]
   const { location } = renderScreen(<AttentionPopover />, { route: "/sessions" })
   await openDrawer()
-  fireEvent.click(await screen.findByText("Open agents"))
+  fireEvent.click(await screen.findByRole("button", { name: "Open agents" }))
   expect(location.url).toBe("/agents")
 })
 
@@ -204,6 +205,6 @@ it("opens the active goal for orchestrator recovery from the sessions screen", a
   recovery = [item({ kind: "goal", goal_id: goal.id })]
   const { location } = renderScreen(<AttentionPopover />, { route: "/sessions" })
   await openDrawer()
-  fireEvent.click(await screen.findByText("Open goal"))
+  fireEvent.click(await screen.findByRole("button", { name: "Open goal" }))
   expect(location.url).toBe(`/goals?goal=${goal.id}`)
 })

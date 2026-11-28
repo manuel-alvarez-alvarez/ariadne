@@ -40,7 +40,7 @@ import { useSettingsStore } from "@/stores/settings"
 import { goalsQueryOptions } from "./queries"
 
 /** `GET /v1/attention` of one host: that daemon's own authoritative recovery list. */
-function attentionListQueryOptions(host: Host) {
+export function attentionListQueryOptions(host: Host) {
   return queryOptions({
     queryKey: qk.attention.list(host),
     queryFn: () => unwrap(api(host).GET("/v1/attention")),
@@ -284,6 +284,16 @@ export interface BoardAttention {
   byGoal: Map<string, SessionAttention>
   /** Task id → the latest `last_activity_at` of any of its sessions, previous ones included. */
   lastActivity: Map<string, string>
+  /**
+   * Task id → every shared-list item that names the task, or one of its
+   * sessions, newest first: the blocks drawn below its row.
+   */
+  blocksByTask: Map<string, AttentionItem[]>
+  /**
+   * Goal id → every item that names the goal, or a session of it that has no
+   * task, newest first: the blocks drawn below its goal line.
+   */
+  blocksByGoal: Map<string, AttentionItem[]>
 }
 
 /** Nothing on any card: what a host with no sessions read yet shows. */
@@ -291,6 +301,8 @@ export const NO_BOARD_ATTENTION: BoardAttention = {
   byTask: new Map(),
   byGoal: new Map(),
   lastActivity: new Map(),
+  blocksByTask: new Map(),
+  blocksByGoal: new Map(),
 }
 
 /**
@@ -310,7 +322,10 @@ export function useBoardAttention(hosts: readonly Host[]): Map<Host, BoardAttent
   return useMemo(
     () =>
       new Map(
-        hosts.map((host, index) => [host, collectBoardAttention(sessions[index], lists[index])]),
+        hosts.map((host, index) => [
+          host,
+          collectBoardAttention(host, sessions[index], lists[index]),
+        ]),
       ),
     [hosts, stamp],
   )
@@ -325,6 +340,7 @@ export function useBoardAttention(hosts: readonly Host[]): Map<Host, BoardAttent
  * the one the strip lists first, and the one the user has not seen yet.
  */
 function collectBoardAttention(
+  host: Host,
   sessions: SessionDto[] | undefined,
   attention?: AttentionListDto,
 ): BoardAttention {
@@ -356,7 +372,49 @@ function collectBoardAttention(
     if (!held || held.at.localeCompare(at) < 0) index.set(key, { reason, at })
   }
 
-  return { byTask: reasons(byTask), byGoal: reasons(byGoal), lastActivity }
+  return {
+    byTask: reasons(byTask),
+    byGoal: reasons(byGoal),
+    lastActivity,
+    ...collectBlocks(host, sessions ?? [], attention),
+  }
+}
+
+/**
+ * The shared list's items, indexed by the task row or the goal line each one
+ * is drawn below. An item names a task through an `affected` entry of kind
+ * `task`, or of kind `session` through the sessions list: a session with a
+ * task is that task's, one without is its goal's. An item that names the same
+ * task twice is one block there, and one that names many tasks is a block
+ * below each. The list is the only source, also while its read is incomplete.
+ */
+function collectBlocks(
+  host: Host,
+  sessions: readonly SessionDto[],
+  attention: AttentionListDto | undefined,
+): Pick<BoardAttention, "blocksByTask" | "blocksByGoal"> {
+  const blocksByTask = new Map<string, AttentionItem[]>()
+  const blocksByGoal = new Map<string, AttentionItem[]>()
+  const bySession = new Map(sessions.map((session) => [session.id, session]))
+  for (const item of collectAttention([host], [attention])) {
+    const tasks = new Set<string>()
+    const goals = new Set<string>()
+    for (const subject of item.recovery?.affected ?? []) {
+      if (subject.kind === "task") tasks.add(subject.id)
+      else if (subject.kind === "goal") goals.add(subject.id)
+      else if (subject.kind === "session") {
+        const session = bySession.get(subject.id)
+        if (session?.task_id) tasks.add(session.task_id)
+        else if (session?.goal_id) goals.add(session.goal_id)
+      }
+    }
+    for (const [index, ids] of [
+      [blocksByTask, tasks],
+      [blocksByGoal, goals],
+    ] as const)
+      for (const id of ids) index.set(id, [...(index.get(id) ?? []), item])
+  }
+  return { blocksByTask, blocksByGoal }
 }
 
 /** The later of two RFC 3339 stamps, compared as instants. */

@@ -129,6 +129,10 @@ pub(crate) struct AriadneMcp {
     /// The index of the skills this session loads, as the launcher renders
     /// it (`ARIADNE_SKILL_INDEX`). None where the session loads no skill.
     skill_index: Option<String>,
+    /// The supplement of each skill this session loads, for its seat, as
+    /// the launcher renders them (`ARIADNE_SKILL_SUPPLEMENTS`). None where
+    /// no skill of the session has one.
+    skill_supplements: Option<String>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -157,6 +161,7 @@ impl AriadneMcp {
             pull_request_id,
             found_pull_request_id: Default::default(),
             skill_index: std::env::var("ARIADNE_SKILL_INDEX").ok(),
+            skill_supplements: std::env::var("ARIADNE_SKILL_SUPPLEMENTS").ok(),
             tool_router: Self::tool_router(),
         })
     }
@@ -289,21 +294,25 @@ fn drop_empty_fields(v: &mut serde_json::Value) {
 /// the answer.
 ///
 /// Every seat asks with the question tool of its own client, and the rule
-/// names no client. A seat whose client has no such tool asks in its turn
-/// text. The rule names no Ariadne tool: Ariadne shows the question the seat
-/// asked, and the seat's own playbook says how it reaches another agent.
+/// names no client. The orchestrator asks every question that way and never
+/// in its turn text. Any other seat whose client has no such tool asks in its
+/// turn text. The rule names no Ariadne tool: Ariadne shows the question the
+/// seat asked, and the seat's own playbook says how it reaches another agent.
 ///
-/// Only the opening differs by seat: whether the seat asks at all, or asks
-/// only where its work cannot go on. The rest is one tail, written once, so
-/// a rewording reaches every seat and no copy goes stale.
+/// Only the opening differs by seat: whether the seat asks at all, asks
+/// only where its work cannot go on, or asks every question with the tool.
+/// The closing is one tail, written once, so a rewording reaches every seat
+/// and no copy goes stale.
 fn ask_rule(seat: &McpSeat) -> String {
     let opening = match seat {
-        McpSeat::Orchestrator => "To ask the user, use",
+        McpSeat::Orchestrator => {
+            "To ask the user, use the question tool of your own client. Ask every question with it. Never ask a question in your turn text."
+        }
         McpSeat::Agent => {
-            "Ask the user only where the task cannot continue without a user answer. Use"
+            "Ask the user only where the task cannot continue without a user answer. Use the question tool of your own client. If you have no such tool, ask in your turn text."
         }
         McpSeat::PullRequestReviewer | McpSeat::PullRequestKeeper => {
-            "Ask the user only where the request cannot continue without a user answer. Use"
+            "Ask the user only where the request cannot continue without a user answer. Use the question tool of your own client. If you have no such tool, ask in your turn text."
         }
     };
     format!("{opening} {ASK_RULE_TAIL}")
@@ -311,7 +320,7 @@ fn ask_rule(seat: &McpSeat) -> String {
 
 /// What every seat is told about asking, after the opening [`ask_rule`]
 /// picks for it.
-const ASK_RULE_TAIL: &str = "the question tool of your own client. If you have no such tool, ask in your turn text. Put the recommended option first. End its label with \"(Recommended)\". Give the reason in its description. Then end the turn.";
+const ASK_RULE_TAIL: &str = "Put the recommended option first. End its label with \"(Recommended)\". Give the reason in its description. Then end the turn.";
 
 /// How a seat that may keep or review a pull or merge request learns of its
 /// news: never by checking itself (026, 030). The orchestrator works no
@@ -446,9 +455,10 @@ impl ServerHandler for AriadneMcp {
     /// seat is handed, and because a profile's prompts are the developer's to
     /// edit: what Ariadne *is* should not be something an edit can delete.
     ///
-    /// After the rules come the seat text and the skill index (006). No
-    /// adapter is proven to keep these in its system prompt, so the runtime
-    /// sends both in a turn too, after a launch and after a model switch.
+    /// After the rules come the seat text, the supplements of the skills and
+    /// the skill index (006). No adapter is proven to keep these in its
+    /// system prompt, so the runtime sends them in a turn too, after a launch
+    /// and after a model switch.
     fn get_info(&self) -> ServerConfig {
         let mut info = ServerConfig::default();
         let mut instructions = format!(
@@ -459,11 +469,13 @@ impl ServerHandler for AriadneMcp {
             session_rules(&self.seat),
             seat_text(&self.seat).trim()
         );
-        if let Some(index) = self.skill_index.as_deref().map(str::trim)
-            && !index.is_empty()
-        {
-            instructions.push_str("\n\n");
-            instructions.push_str(index);
+        for part in [&self.skill_supplements, &self.skill_index] {
+            if let Some(part) = part.as_deref().map(str::trim)
+                && !part.is_empty()
+            {
+                instructions.push_str("\n\n");
+                instructions.push_str(part);
+            }
         }
         info.instructions = Some(instructions);
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
@@ -557,6 +569,7 @@ pub(crate) mod tests {
             pull_request_id: pull_request.then(|| "01PR".into()),
             found_pull_request_id: Default::default(),
             skill_index: Some(skill_index),
+            skill_supplements: None,
             tool_router: AriadneMcp::tool_router(),
         }
     }
@@ -1000,9 +1013,10 @@ pub(crate) mod tests {
 
     /// The orchestrator is told to ask the user; a column's agent is told to
     /// work alone and ask only where the task cannot go on without the
-    /// answer. Every seat asks with the question tool of its own client, and
-    /// with its turn text where it has none. The rules name no client, no
-    /// hint and no withdrawal.
+    /// answer. Every seat asks with the question tool of its own client. The
+    /// orchestrator asks every question with it and never in its turn text;
+    /// the other seats ask in their turn text where they have none. The rules
+    /// name no client, no hint and no withdrawal.
     #[test]
     fn only_the_orchestrator_is_told_to_ask() {
         let orchestrator = server_at(
@@ -1013,6 +1027,12 @@ pub(crate) mod tests {
         assert!(
             instructions.contains("To ask the user, use the question tool of your own client.")
         );
+        assert!(instructions.contains("Ask every question with it."));
+        assert!(instructions.contains("Never ask a question in your turn text."));
+        assert!(
+            !instructions.contains("If you have no such tool"),
+            "{instructions}"
+        );
 
         for seat in SEATS {
             let mcp = server_at(
@@ -1020,9 +1040,14 @@ pub(crate) mod tests {
                 Client::resolve(Some("http://127.0.0.1:1"), None),
             );
             let instructions = mcp.get_info().instructions.expect("instructions");
+            let fallback = "If you have no such tool, ask in your turn text.";
+            assert_eq!(
+                instructions.contains(fallback),
+                !matches!(seat, McpSeat::Orchestrator),
+                "{seat:?}: {fallback}: {instructions}"
+            );
             for rule in [
                 "the question tool of your own client.",
-                "If you have no such tool, ask in your turn text.",
                 "Put the recommended option first. End its label with \"(Recommended)\". Give the reason in its description.",
             ] {
                 assert!(
@@ -1212,6 +1237,29 @@ pub(crate) mod tests {
                 "{seat:?}: {instructions}"
             );
         }
+        // The supplements sit between the seat text and the index, word for
+        // word as the launcher hands them over.
+        let mut staffed = server_at(
+            McpSeat::Agent,
+            Client::resolve(Some("http://127.0.0.1:1"), None),
+        );
+        let supplement =
+            ariadne_store::defaults::skill_supplement("code-review", ariadne_core::Seat::Agent)
+                .unwrap()
+                .trim();
+        staffed.skill_supplements = Some(supplement.to_string());
+        let instructions = staffed.get_info().instructions.expect("instructions");
+        let seat_at = instructions
+            .find(default_system_prompt(ariadne_core::Seat::Agent))
+            .expect("the seat text");
+        let supplement_at = instructions.find(supplement).expect("the supplement");
+        let index_at = instructions
+            .find(SKILL_INDEX_HEADER)
+            .expect("the skill index");
+        assert!(
+            seat_at < supplement_at && supplement_at < index_at,
+            "{instructions}"
+        );
         // A session that loads no skill is told no index.
         let mut bare = server_at(
             McpSeat::Agent,
