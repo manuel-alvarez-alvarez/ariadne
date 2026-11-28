@@ -225,6 +225,9 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
 61. `?` opens an overlay that lists every key of the console, in a group for each zone: the input, its box editing, a permission, a question, the transcript, the tabs, and the keys of every zone.
     It opens in the transcript zone and in an empty input box. `?` in a box that holds text types the character.
     The first row names the close and the scroll keys. Up, Down, PgUp, PgDn, Home and End scroll the list where it is taller than the screen, so every key shows on a 60 by 24 terminal.
+    The groups stand in columns where the width holds two or more: a column takes 3 columns of indent, 14 of key, the longest description and a gap of 2, and the overlay has as many columns as fit across the width, and one where fewer than two fit.
+    Each group stays whole in one column with its keys under its heading, and the groups keep their order down each column, then across. The columns are as short as that order allows, so every key shows with no scroll on a 160 by 50 terminal.
+    While the overlay is open the screen shows no text cursor. The cursor returns to the input box when it closes.
     `?` or Esc closes it. The transcript position and the input text stay as they were.
 
 ## Acceptance criteria
@@ -274,7 +277,7 @@ Number selection and question navigation use
 44. Rule 58: `ariadne-console::app::tests::an_image_audio_resource_and_link_show_as_one_line_with_type_and_name`, `::a_changed_image_name_or_link_title_draws_again_while_the_text_stays`.
 45. Rule 59: `ariadne-console::app::tests::a_tool_row_starts_with_its_state_mark_and_the_icon_of_its_kind_and_prints_no_kind_word`, `::a_kind_with_no_icon_shows_the_fallback_icon`, `::consecutive_read_and_search_steps_show_as_one_group_row_of_their_subjects`, `::a_group_row_cuts_its_subjects_to_the_width`, `::a_group_is_running_while_a_step_runs_failed_if_one_failed_and_completed_otherwise`, `::enter_on_a_group_row_opens_its_steps_as_rows_that_open_their_detail`, `::an_edit_row_shows_its_subject_and_the_lines_it_added_and_removed`, `::a_group_of_one_kind_has_the_icon_of_that_kind`, `::a_folded_running_turn_shows_its_last_three_steps_even_when_they_group`. Rule 41, no state word on a completed turn: `::a_turn_shows_its_prompt_one_activity_line_and_its_answer`.
 46. Rule 60: `ariadne-console::app::tests::a_narrow_bottom_row_drops_whole_items_in_rank_order_and_the_keys_hint_last`, `::reconnecting_and_the_leave_hint_replace_the_left_side_of_the_row_while_they_apply`, `::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`.
-47. Rule 61: `ariadne-console::app::tests::a_question_mark_opens_an_overlay_of_every_key_in_groups_by_zone`, `::a_question_mark_in_a_non_empty_input_types_the_character`, `::a_question_mark_or_escape_closes_the_overlay_and_the_screen_stays_as_it_was`, `::the_question_mark_opens_the_overlay_from_the_transcript_zone_too`, `::every_key_of_the_overlay_is_reached_by_scrolling_in_a_60_by_24_terminal`.
+47. Rule 61: `ariadne-console::app::tests::a_question_mark_opens_an_overlay_of_every_key_in_groups_by_zone`, `::a_question_mark_in_a_non_empty_input_types_the_character`, `::a_question_mark_or_escape_closes_the_overlay_and_the_screen_stays_as_it_was`, `::the_question_mark_opens_the_overlay_from_the_transcript_zone_too`, `::every_key_of_the_overlay_is_reached_by_scrolling_in_a_60_by_24_terminal`, `::a_wide_overlay_shows_its_groups_whole_in_columns_with_no_scroll`, `::an_overlay_fills_every_column_the_width_holds`, `::a_narrow_overlay_shows_one_column`, `::the_overlay_hides_the_text_cursor_and_closing_it_brings_the_cursor_back`.
 
 ## Sources
 

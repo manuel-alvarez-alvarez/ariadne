@@ -11,7 +11,8 @@
  * - a breadcrumb back to the entity this panel is drilled into — a goal, for
  *   a task's or a session's own panel; a task, for one of its sessions;
  * - the title, which always truncates to one line with the full text as its
- *   `title` attribute, and the panel's own actions at the row's end;
+ *   `title` attribute, a control before it where the panel has one, and the
+ *   panel's own actions at the row's end;
  * - the dense meta row: the entity's status first, then its id, then when it
  *   was made and when it last moved.
  */
@@ -24,6 +25,7 @@ import { PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 export function PanelHeader({
   breadcrumb,
   title,
+  lead,
   actions,
   status,
   id,
@@ -37,6 +39,8 @@ export function PanelHeader({
     onClick: () => void
   }
   title: string
+  /** A control in the title's line, before the title. */
+  lead?: ReactNode
   /** What can be done to the entity, at the title row's end. */
   actions?: ReactNode
   /** The entity's own status badge, or badges, leading the meta row. */
@@ -71,6 +75,7 @@ export function PanelHeader({
         </nav>
       ) : null}
       <div className="flex items-start gap-3">
+        {lead ? <div className="shrink-0">{lead}</div> : null}
         <PaneTitle className="min-w-0 flex-1 truncate" title={title}>
           {title}
         </PaneTitle>

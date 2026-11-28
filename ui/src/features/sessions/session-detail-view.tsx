@@ -31,8 +31,9 @@
  *
  * The facts are dense, like the goal and task panels' own, and a chevron
  * folds them to the one line that still says what the console beneath them
- * is running and what it has spent — open by default, in local state nothing
- * outlives this mount. The stamps that say when (`Started`, `Last activity`)
+ * is running and what it has spent. The chevron sits in the line of the panel
+ * heading, and the fold is a setting: open until the user folds it, then
+ * kept across sessions and restarts. The stamps that say when (`Started`, `Last activity`)
  * sit on their own meta line under the heading instead of taking a fact's
  * width, the way the goal panel's own stamps do.
  *
@@ -45,7 +46,7 @@
 
 import { useQuery } from "@tanstack/react-query"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
-import { type ReactNode, useState } from "react"
+import type { ReactNode } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import type { Host, SessionDto } from "@/api"
@@ -71,6 +72,7 @@ import { sessionCopyEntries } from "@/lib/clipboard"
 import { formatTokens } from "@/lib/format"
 import { TAB_ICONS } from "@/lib/tab-icons"
 import { paths, usePanelSessionTo, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
+import { useSettingsStore } from "@/stores/settings"
 
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
@@ -125,6 +127,7 @@ export function SessionPanelHeader({
     <PanelHeader
       breadcrumb={breadcrumb}
       title={sessionHeading(session)}
+      lead={<SessionFactsToggle />}
       actions={
         <SessionActions
           host={host}
@@ -164,6 +167,23 @@ export function SessionPanelHeader({
         </>
       }
     />
+  )
+}
+
+/** The fold of the session facts, in the line of the panel heading. */
+function SessionFactsToggle() {
+  const open = useSettingsStore((state) => state.sessionFactsOpen)
+  const setOpen = useSettingsStore((state) => state.setSessionFactsOpen)
+  return (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      aria-expanded={open}
+      aria-label={`${open ? "Collapse" : "Expand"} session facts`}
+      onClick={() => setOpen(!open)}
+    >
+      {open ? <ChevronDownIcon /> : <ChevronRightIcon />}
+    </Button>
   )
 }
 
@@ -215,10 +235,9 @@ export function SessionDetailView({
   // a prompt: what it is waiting for is an answer, so the console takes the
   // keyboard rather than waiting to be clicked. Read once, on arrival.
   const focusTerminal = useTerminalFocusRequest()
-  // Open by default — a session is opened to be read — and never remembered
-  // past this mount: a fold is a glance away from being undone, not a
-  // setting.
-  const [factsOpen, setFactsOpen] = useState(true)
+  // Open until the user folds it, and remembered: the control is in the
+  // panel heading's line (`SessionFactsToggle`), which reads the same value.
+  const factsOpen = useSettingsStore((state) => state.sessionFactsOpen)
   const hasContext =
     session.context_used !== null &&
     session.context_used !== undefined &&
@@ -240,25 +259,14 @@ export function SessionDetailView({
       <SessionBlockedBanner session={session} />
 
       <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-expanded={factsOpen}
-            aria-label={`${factsOpen ? "Collapse" : "Expand"} session facts`}
-            onClick={() => setFactsOpen((open) => !open)}
-          >
-            {factsOpen ? <ChevronDownIcon /> : <ChevronRightIcon />}
-          </Button>
-          {/* Folded, the facts are the one line that still says what the
-              console below is running and what it has spent. */}
-          {factsOpen ? null : (
-            <div className="flex min-w-0 items-center gap-3 text-xs">
-              <ModelPin model={session.model} effort={session.effort} mode="line" />
-              <TokenFigure usage={session.usage} />
-            </div>
-          )}
-        </div>
+        {/* Folded, the facts are the one line that still says what the
+            console below is running and what it has spent. */}
+        {factsOpen ? null : (
+          <div className="flex min-w-0 items-center gap-3 text-xs">
+            <ModelPin model={session.model} effort={session.effort} mode="line" />
+            <TokenFigure usage={session.usage} />
+          </div>
+        )}
         {factsOpen ? (
           <FactList dense>
             {context === "goal" || !session.goal_id ? null : (
