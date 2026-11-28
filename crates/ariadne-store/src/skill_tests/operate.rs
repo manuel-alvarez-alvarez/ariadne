@@ -407,8 +407,8 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
         "When the call is refused, read the refusal and call again; the call opens no second request.",
         "`<head>` is the task branch.",
         "On a merge, update `<base>` in the primary checkout.",
-        "Run `git -C <path> merge --ff-only <remote>/<base>` where `<base>` is checked out.",
-        "Else run `git -C <path> fetch <remote> <base>:<base>`.",
+        "Run `git -C <repo> merge --ff-only <remote>/<base>` where `<base>` is checked out.",
+        "Else run `git -C <repo> fetch <remote> <base>:<base>`.",
         "Then call `complete_step`. A call refused because the task already ended needs nothing more: end your turn.",
         "On a close, call `fail_task` with the reason.",
     ] {
@@ -508,9 +508,7 @@ fn the_pr_babysit_skill_names_no_seat_and_its_supplements_own_the_difference() {
     assert!(agent.contains("With no request open, push the task branch"));
     assert!(agent.contains("`<head>` is the task branch."));
     let keeper = unwrapped(skill_supplement(PR_BABYSIT_SKILL, ariadne_core::Seat::Keeper).unwrap());
-    assert!(keeper.contains(
-        "The requester is the user. Ask the user once about a failure the request did not cause."
-    ));
+    assert!(keeper.contains("Ask the user once about a failure the request did not cause."));
     assert!(keeper.contains("Run the push command of the briefing as given."));
     assert!(keeper.contains("On a merge or a close, end your turn."));
     for task_tool in [

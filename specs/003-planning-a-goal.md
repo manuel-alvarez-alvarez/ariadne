@@ -214,11 +214,14 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     split into tracer tasks, write the four sections of a ticket, get a
     written yes, and run the plan to its end. Each Ariadne rule it held has
     one owner:
-    - the orchestrator seat text keeps its three rules (rule 2, 006 rule 5);
+    - the orchestrator seat text keeps its three rules (rule 2, 006 rule 5),
+      asks the user before it agrees to a spec, and
+      ties a stage to a column and your instructions to the briefing;
     - the orchestrator seat's `orchestration` supplement (006 rule 21)
       holds the call of each step, in the order of the steps: the hosts,
-      the skills, the models, the staffing, `finalize_plan`, the posts, the
-      failed tasks and `complete_goal`. It also holds the model rules of
+      the skills, the models, the staffing, `finalize_plan` and the end of
+      the turn after it, `get_task` before a post, the posts, the relay of
+      each question an agent asks of the user and of the answer, the failed tasks and `complete_goal`. It also holds the model rules of
       rule 6: the ranks, `local`, and different ACP agents for the coding
       and review columns.
 
@@ -228,6 +231,10 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   (`skill_tests/operate.rs::the_orchestration_skill_names_no_ariadne_word`),
   and the supplement holds the call of each step in order
   (`defaults.rs::the_orchestration_supplement_holds_each_steps_call_in_order`).
+  The supplement ends the turn after `finalize_plan`, reads a task with
+  `get_task` and relays an agent's question, and the seat text asks the
+  user before it agrees to an agent's spec
+  (`defaults.rs::the_orchestrator_relays_an_agents_question_and_asks_before_it_agrees_to_a_spec`).
 - The playbook asks before it plans and plans before it starts
   (`skill_tests/operate.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
   asks one question at a time and names the parts of a question

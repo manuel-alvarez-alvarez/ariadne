@@ -96,11 +96,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    (017), in plain words, and the call of each phase is the orchestrator
    seat's `orchestration` supplement (rule 21), in the order of the phases.
    Its seat text keeps only what no skill edit may take away: no code is
-   written, the plan is made with the user, and no open point is decided
-   alone. The `agent` seat text is the one text every column's agent
+   written, the plan is made with the user, no open point is decided
+   alone, and the user is asked before it agrees to a spec. It also ties the plain words of its skill: a stage is a column,
+   and your instructions are the briefing (rule 21). The `agent` seat text is the one text every column's agent
    runs under: work in the task's worktree and on the current column, read
-   its skills, and what `complete_step`, `fail_step` and `fail_task` are for,
-   with the ban on `--no-verify` and `-n`. What a column does — build,
+   its skills, what `complete_step`, `fail_step` and `fail_task` are for,
+   when to call `get_task`, the ban on `--no-verify` and `-n`, and the ties
+   of rule 21. What a column does — build,
    review, merge, keep a request — is its skill's to say. The `reviewer` seat
    text is the pull request review session's (029 rule 5).
    It states the explicit ask, all authors, no required GitHub assignment, and drafts (029 rule 1).
@@ -108,7 +110,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    neither its skill, which the skill index does for every seat, nor the end
    of its turn, which its briefing and the news prompt each end on. The
    `keeper` seat text is the session's that keeps a request of the user's
-   own asked for by hand (032).
+   own asked for by hand (032). Neither text ties a plain word: one block
+   of their session rules does (rule 21).
 4. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
    the instruction to read a document before doing the work it covers. That
@@ -125,26 +128,29 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      turn text, where it asks, and neither says "of your own client";
    - working in the task's worktree and on the current column: the `agent`
      seat text alone; no column's skill repeats it;
-   - planning the goal with the user, writing no code, and deciding no
-     open point alone: the `orchestrator` seat text alone; the
-     `orchestration` skill states its phases, never these three;
+   - planning the goal with the user, writing no code, deciding no
+     open point alone, and asking the user before it agrees to a spec: the `orchestrator` seat text alone; the
+     `orchestration` skill states its phases, never these four;
    - the call of each `orchestration` phase — `list_hosts`, `list_skills`,
      `list_models`, `create_task` with `depends_on` and `brief`,
-     `finalize_plan` and that it is called no earlier, `post_to_session`,
-     `retry_task`, `update_task`, `cancel_task`, `switch_session` and
+     `finalize_plan`, that it is called no earlier and that the turn ends
+     after it, `get_task` before a post,
+     `post_to_session`, each question an agent sends for the user asked of
+     the user and the user's answer posted back to that agent, `retry_task`, `update_task`, `cancel_task`, `switch_session` and
      `complete_goal` — and the model rules — the column ranks, `local`, and
      different ACP agents for the coding and review columns: the
      orchestrator seat's `orchestration` supplement alone (003 rule 19);
-   - ending the turn after a call: the `complete_step`, `fail_step` and
-     `post_to_session` descriptions;
+   - ending the turn after a call: the `complete_step`, `fail_step`,
+     `fail_task` and `post_to_session` descriptions, and for
+     `finalize_plan` the orchestrator seat's `orchestration` supplement;
    - how a check runs — in the foreground, split by crate, logged outside
      the worktree, its failures alone printed, never polled: the session
      rules. A skill says only which checks it runs: the checks of what it
      changed. The repository's hooks run its whole suite at a push, and the
      merge skill pushes before it fast-forwards (030);
    - no trailer in any text: the session rules;
-   - never polling a request: the session rules of the `agent` and
-     `reviewer` seats alone, which say that Ariadne wakes the session with
+   - never polling a request: the session rules of the `agent`,
+     `reviewer` and `keeper` seats alone, which say that Ariadne wakes the session with
      the request's news (026, 030) instead. No skill names a timer or a
      poll;
    - the column report a column ends on, and the return report a column is
@@ -154,12 +160,25 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      names no report;
    - stopping a fix loop: the agent seat text alone, which stops an agent
      after three failed attempts at one fix;
-   - what a plain word of a shipped skill stands for in Ariadne — the
-     requester is the orchestrator, reached with `post_to_session`, a stage
-     is a column, the report is the column report, to return the work is to
-     fail the step, an update is news, your instructions are the briefing,
-     and the primary checkout is the `Repo:` path: the agent seat text
-     alone (rule 21);
+   - what a plain word of a shipped skill stands for in Ariadne: the text
+     of each seat whose skills say it (rule 21), and one tie for each word
+     in each seat:
+     - the agent seat text: the requester is the orchestrator, reached with
+       `post_to_session`, a stage is a column, the report is the column
+       report, `complete_step` sends the report and passes the work,
+       `fail_step` returns the work, and an update is news. Its
+       `merge` supplement ties the primary checkout to the `Repo:` path,
+       and its `pr-babysit` supplement names `<repo>` as that path;
+     - the orchestrator seat text: a stage is a column, and your
+       instructions are the briefing;
+     - the reviewer and keeper seats: one block of their session rules
+       (`request_words_rule`), written once for both. The requester is the
+       user, a stage is one turn, the report is the request body, an update
+       is news, and the primary checkout is the repository path from
+       `get_pull_request`. Only the end of work differs by seat. The
+       reviewer sends the report, passes the work or returns the work by
+       submitting the round with `submit_review`. The keeper, which lists
+       no call that delivers work, writes the result in its turn text;
    - which call reads the whole change and which calls return and pass the
      work, for `code-review` in the `agent` seat — `get_diff`, `fail_step`
      with the return report, `complete_step` with the verdict: that seat's
@@ -372,21 +391,35 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       | column | stage |
       | column report | the report |
       | fail the step | return the work, with a return report |
+      | `complete_step` | send the report, pass the work |
       | news | an update |
       | briefing | your instructions |
       | `Repo:` path | the primary checkout of the repository |
       | seat, keeper | not used in a skill |
       | task, ticket, goal | unchanged |
 
-      The agent seat text binds each plain word to its Ariadne word in one
-      line, and names the orchestrator as the requester and
-      `post_to_session` as the way to reach it (rule 5). No skill and no
-      supplement repeats the binding.
+      Each seat ties every plain word that a skill it can load says (rule
+      5). The tie is in the session rules, the seat text, the supplement of
+      the skill the seat loads on every session, or that skill's own
+      supplement for the seat. A tie states the meaning that rule 5 gives
+      the word in that seat: the meaning follows the word and its "is" or
+      "are", or the sentence that says the word names the call it stands
+      for. A sentence that says the word with another meaning, such as "An
+      update is late.", ties nothing. A tie of a word that ends the
+      work — send the report, pass the work, return the work — names an
+      action the seat can take: a call that the seat lists and that
+      delivers the work (`complete_step`, `fail_step` or `submit_review`),
+      or the turn text where the seat lists none of them. It names no call
+      that the seat does not list. The orchestrator loads
+      `orchestration` every session. The agent loads every task skill and
+      `pr-babysit`, as staffed. The reviewer loads `pr-reviewer` and the
+      keeper loads `pr-babysit` every session, and each also loads any
+      task skill the user picks (029, 032). No skill states a tie.
     - Each supplement has a cap of its own and obeys the STE rules of rule
       11, the same as a default text (rule 13).
     - Eight ship, and `coding`, `documentation`, `research` and `spec-writing`
       have none, since each skill holds no Ariadne rule of its own: the seat
-      text owns their report call and the binding of the requester. No skill
+      text owns their report call and the tie of the requester. No skill
       holds a call below. Each call is in the supplement named, and the skill
       says its plain word.
       - The `pr-reviewer` supplement of the `reviewer` seat holds the calls
@@ -398,21 +431,27 @@ they describe (003, 030) — what a skill is (017), and the switch itself
         step call.
       - The `orchestration` supplement of the `orchestrator` seat holds the
         call of each playbook step in order, and the model rules (003 rule
-        19). It names the column where the skill says stage, so no binding
-        line is repeated.
-      - The `merge` supplement of the `agent` seat holds the `complete_step`
+        19). It also ends the turn after `finalize_plan`, reads a task with
+        `get_task` before a post, asks the user each question an agent asks
+        of the user, and posts the answer to the agent. The orchestrator seat
+        text ties a stage to a column.
+      - The `merge` supplement of the `agent` seat ties the primary checkout
+        to the `Repo:` path, and holds the `complete_step`
         call with its `merge_commit` and the `fail_step` call for a failed
         check.
       - The `conflict-resolution` supplement of the `agent` seat holds the
         `complete_step` call for where no skill invoked it.
-      - `architecture-review` has none: the seat text binds its plain words.
+      - `architecture-review` has none: the agent seat text and the request
+        block of the session rules tie its plain words.
       - The `pr-babysit` supplement of the `agent` seat holds the open of the
         request (the push, `open_pull_request`, the title and the body), the
         read, reply and `escalate_comment` calls, the update of the base in
-        the primary checkout on a merge, and the ends, `complete_step` on a
+        the primary checkout on a merge, with only the placeholders that the
+        skill, the supplement or the agent seat text defines (the supplement
+        says "`<repo>` is the `Repo:` path."), and the ends, `complete_step` on a
         merge and `fail_task` on a close.
       - The `pr-babysit` supplement of the `keeper` seat holds the same read,
-        reply and `escalate_comment` calls, the user as the requester, the
+        reply and `escalate_comment` calls, the
         push command of the briefing and the end of turn, and names no task
         tool.
 
@@ -436,6 +475,26 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   index (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`).
   The agent seat text binds each plain word of the word list
   (`skill_tests/template.rs::the_agent_seat_text_binds_each_plain_word_to_ariadne`).
+  Each seat ties every plain word that a skill it can load says, and the
+  test fails on a word no text of the seat ties
+  (`mcp.rs::each_seat_ties_every_plain_word_its_skills_use`), and the
+  test fails on a tie that states no meaning or the wrong one, and on an
+  end of work that names no action the seat can take, such as a reviewer
+  told only to end its turn. The reviewer
+  and keeper seats read one block of ties, and no other seat reads it
+  (`mcp.rs::the_request_seats_share_one_block_of_ties`).
+  The four seat texts and the end of the keeper briefing ship word for
+  word (`defaults.rs::the_agreed_texts_ship_word_for_word`). Every size
+  cap keeps its value (`defaults.rs::size_caps_hold`,
+  `defaults.rs::supplement_size_caps_hold`,
+  `mcp.rs::the_shared_rules_stay_small`). The agent seat's
+  `pr-babysit` supplement names only placeholders the agent reads a
+  meaning of
+  (`skill_tests/template.rs::the_agent_babysit_supplement_names_only_placeholders_the_agent_text_defines`).
+  The orchestrator ends the turn after `finalize_plan`, reads a task with
+  `get_task`, relays an agent's question and the user's answer, and asks
+  the user before it agrees to an agent's spec
+  (`defaults.rs::the_orchestrator_relays_an_agents_question_and_asks_before_it_agrees_to_a_spec`).
   `code-review`, `architecture-review` and `pr-reviewer` name no Ariadne,
   no MCP tool and no Ariadne word, by the one helper `assert_names_no_ariadne_word`
   (`skill_tests/template.rs::the_review_skills_name_no_ariadne_word`),

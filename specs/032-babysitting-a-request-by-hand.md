@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-11-27
+updated: 2026-11-28
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -81,8 +81,9 @@ reads behind them ([026](026-pull-requests.md)).
    session starts or its keeper reports again. The seat text
    says what it owes: keep one open request the
    user asked it to keep, work only in the worktree on its branch, commit a fix and
-   push it as the briefing says, and that Ariadne wakes it with the news
-   and ends it on the merge or the close, then to end its turn.
+   push it as the briefing says, that Ariadne ends it on the merge or the
+   close. The briefing ends "Keep this request. End your turn."
+   (`defaults.rs::the_agreed_texts_ship_word_for_word`).
 6. The session loads what its agent was staffed with: `pr-babysit` — the
    same skill the `pr` column of a task stages — through the fixed
    `babysit` column (030 rule 11), and the skills the user picked when
@@ -334,9 +335,10 @@ reads behind them ([026](026-pull-requests.md)).
 - The panel sends the Babysit New turn on a task-kept request and shows a refusal:
   `pull-request-panel.test.tsx::asks for a keeper turn on a task kept request and shows the daemon refusal`.
 - The skill names no seat, and a keeper fixes only what the request's own
-  change breaks. The keeper seat's `pr-babysit` supplement names the user as
-  the requester, the push command of the briefing, and the end of turn on a
-  merge or a close, and names no task tool:
+  change breaks. The keeper seat's `pr-babysit` supplement names the push
+  command of the briefing and the end of turn on a merge or a close, and
+  names no task tool. The request block of the session rules names the user
+  as the requester (006 rule 21):
   `skill_tests/operate.rs::the_pr_babysit_skill_names_no_seat_and_its_supplements_own_the_difference`,
   `::the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks`,
   `defaults.rs::a_supplement_is_picked_by_its_skill_and_its_seat`.

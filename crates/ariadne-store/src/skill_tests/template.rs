@@ -351,7 +351,7 @@ fn each_rule_is_stated_in_exactly_one_briefing() {
         "Work only in the task's worktree",
         "Plan the goal with the user",
         "return the work with `fail_step`",
-        "A skill uses plain words.",
+        "The requester is the orchestrator.",
     ] {
         let places = all_defaults()
             .into_iter()
@@ -519,40 +519,44 @@ fn merge_and_conflict_resolution_name_no_ariadne_word() {
     }
 }
 
-/// The agent seat text binds each plain word of a shipped skill to the
-/// Ariadne word it stands for, names the orchestrator as the requester, and
-/// names `post_to_session` as the way to reach it (006 rule 21).
+/// The agent seat text ties the plain words that the task skills say to
+/// the Ariadne words they stand for, names the orchestrator as the
+/// requester, names `post_to_session` as the way to reach it, ties the two
+/// plain words of the call that passes the work to `complete_step`, and says
+/// when to call `get_task` (006 rule 21). A word only one skill says is tied
+/// in that skill's supplement, and `each_seat_ties_every_plain_word_its_skills_use`
+/// proves every tie of every seat.
 #[test]
 fn the_agent_seat_text_binds_each_plain_word_to_ariadne() {
     let agent = default_system_prompt(ariadne_core::Seat::Agent);
     let line = agent
         .lines()
-        .find(|line| line.contains("A skill uses plain words."))
+        .find(|line| line.contains("The requester is the orchestrator."))
         .expect("the agent seat text binds no plain word");
     for sentence in [
-        "The requester is the orchestrator.",
         "Reach it with `post_to_session`.",
         "A stage is a column.",
         "The report is the column report.",
-        "To return the work is to fail the step.",
         "An update is news.",
-        "Your instructions are your briefing.",
-        "The primary checkout of the repository is the `Repo:` path.",
     ] {
         assert!(line.contains(sentence), "the binding line and {sentence}");
     }
-    for (ariadne, plain) in WORD_LIST {
-        if let Some(plain) = plain {
-            let plain = plain.trim_start_matches("the ").trim_start_matches("an ");
-            assert!(
-                ste::sentences(line).iter().any(|s| {
-                    let s = s.to_lowercase();
-                    s.contains(&plain.to_lowercase()) && s.contains(&ariadne.to_lowercase())
-                }),
-                "the binding line ties no sentence of {plain} to {ariadne}"
-            );
-        }
-    }
+    assert!(
+        agent.contains(
+            "- Call `complete_step` when your work is done, to send the report and pass the work."
+        ),
+        "{agent}"
+    );
+    assert!(
+        agent.contains(
+            "- Call `fail_step` when the previous column must fix something, to return the work."
+        ),
+        "{agent}"
+    );
+    assert!(
+        agent.contains("- Call `get_task` for a missing value."),
+        "{agent}"
+    );
 }
 
 /// Every shipped skill reads the same in any harness (017 rule 16). The
@@ -563,5 +567,34 @@ fn no_shipped_skill_names_an_ariadne_word() {
     assert!(!BUILTIN_SKILLS.is_empty());
     for skill in &BUILTIN_SKILLS {
         assert_names_no_ariadne_word(skill.name, skill.document);
+    }
+}
+
+/// Every placeholder of the agent seat's `pr-babysit` supplement has a
+/// meaning the agent reads (006 rule 21): the skill or the supplement says
+/// "`<name>` is", or the agent seat text names it.
+#[test]
+fn the_agent_babysit_supplement_names_only_placeholders_the_agent_text_defines() {
+    use ariadne_core::Seat;
+    let supplement = skill_supplement(PR_BABYSIT_SKILL, Seat::Agent).unwrap();
+    let skill = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
+    let seat = default_system_prompt(Seat::Agent);
+    let placeholders: std::collections::BTreeSet<&str> = supplement
+        .split('<')
+        .skip(1)
+        .filter_map(|rest| rest.split_once('>'))
+        .map(|(name, _)| name)
+        .filter(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase()))
+        .collect();
+    assert!(placeholders.contains("repo"), "{placeholders:?}");
+    for name in placeholders {
+        let defined = seat.contains(&format!("`<{name}>`"))
+            || [skill.as_str(), supplement]
+                .iter()
+                .any(|text| text.contains(&format!("`<{name}>` is ")));
+        assert!(
+            defined,
+            "the agent babysit supplement names <{name}>, which no text defines"
+        );
     }
 }

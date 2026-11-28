@@ -470,8 +470,7 @@ pub const PULL_REQUEST_KEEPER_PLACEHOLDERS: [&str; 7] = [
 /// them — it writes no code, and a point it cannot settle goes to the user
 /// rather than being decided alone. How to ask is the session rules' (013),
 /// which every seat reads, so this text names no tool.
-const ORCHESTRATOR_SYSTEM_PROMPT: &str =
-    r#"Never write code. Plan the goal with the user. Decide no open point alone."#;
+const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Never write code. Plan the goal with the user. Decide no open point alone. Ask the user before you agree to a spec. A stage is a column. Your instructions are the briefing."#;
 
 /// The one task seat text: what the agent of a column owes, whatever the
 /// column is. The work of the column is its skills'; what each of the three
@@ -483,12 +482,13 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str =
 /// to the Ariadne words they stand for (006 rule 21), so no skill names the
 /// orchestrator, a column or a step call.
 const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its branch. Do only the work of your current column. Read its skills first.
-- Call `complete_step` when the column's work is done.
-- Call `fail_step` when the previous column must fix something.
+- Call `complete_step` when your work is done, to send the report and pass the work.
+- Call `fail_step` when the previous column must fix something, to return the work.
 - Call `fail_task` when nobody can do the task as written.
+- Call `get_task` for a missing value.
 - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.
-- After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason.
-- A skill uses plain words. The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. To return the work is to fail the step. An update is news. Your instructions are your briefing. The primary checkout of the repository is the `Repo:` path."#;
+- After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator, or call `fail_task`. A post can be refused. The refusal gives the reason.
+- The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. An update is news."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
 /// commands act on, and what the column before it said.
@@ -557,7 +557,7 @@ const PULL_REQUEST_KEEPER_BRIEFING: &str = r#"# Keep pull request: {title}
 - Your login: {login}
 - Push with: {push_command}
 
-Keep this request."#;
+Keep this request. End your turn."#;
 
 /// Initial briefing of an orchestrator session: the goal, its workflow with
 /// every column, and the repositories it works in.
@@ -580,7 +580,6 @@ Workflow: {workflow}
 ## Repositories
 {repositories}
 
-## Plan mode
 In planning, you run in plan mode if your agent has one. The Ariadne tools are permitted in plan mode. `finalize_plan` ends plan mode. Do not call `ExitPlanMode`."#;
 
 /// What an orchestrator that has gone quiet is picked up with, in both
@@ -1249,8 +1248,8 @@ pub(crate) mod tests {
         for rule in [
             "Work only in the task's worktree, on its branch.",
             "Do only the work of your current column.",
-            "Call `complete_step` when the column's work is done.",
-            "Call `fail_step` when the previous column must fix something.",
+            "Call `complete_step` when your work is done",
+            "Call `fail_step` when the previous column must fix something, to return the work.",
             "Call `fail_task` when nobody can do the task as written.",
             "Never pass `--no-verify` or `-n` to git.",
             "After three failed attempts at one fix, stop.",
@@ -1278,27 +1277,35 @@ pub(crate) mod tests {
     }
 
     /// Every text this ticket gave word for word is the text that ships: the
-    /// two seat texts, the last line of a step briefing, an incoming message,
+    /// four seat texts, the end of the keeper briefing, the last line of a step briefing, an incoming message,
     /// the end of a goal attention and the switch notice (006).
     #[test]
     fn the_agreed_texts_ship_word_for_word() {
         assert_eq!(
             default_system_prompt(Seat::Orchestrator),
-            "Never write code. Plan the goal with the user. Decide no open point alone."
+            "Never write code. Plan the goal with the user. Decide no open point alone. Ask the user before you agree to a spec. A stage is a column. Your instructions are the briefing."
         );
         assert_eq!(
             default_system_prompt(Seat::Agent),
             "Work only in the task's worktree, on its branch. Do only the work of your current column. Read its skills first.\n\
-             - Call `complete_step` when the column's work is done.\n\
-             - Call `fail_step` when the previous column must fix something.\n\
+             - Call `complete_step` when your work is done, to send the report and pass the work.\n\
+             - Call `fail_step` when the previous column must fix something, to return the work.\n\
              - Call `fail_task` when nobody can do the task as written.\n\
+             - Call `get_task` for a missing value.\n\
              - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.\n\
-             - After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason.\n\
-             - A skill uses plain words. The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. To return the work is to fail the step. An update is news. Your instructions are your briefing. The primary checkout of the repository is the `Repo:` path."
+             - After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator, or call `fail_task`. A post can be refused. The refusal gives the reason.\n\
+             - The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. An update is news."
         );
         assert_eq!(
             default_system_prompt(Seat::Reviewer),
             "You review one open pull or merge request that the user explicitly asks Ariadne to review. The author can be the user, another person or a bot. The user needs no GitHub review assignment. The request can be a draft. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing."
+        );
+        assert_eq!(
+            default_system_prompt(Seat::Keeper),
+            "You keep one open request the user asked you to keep. Work only in your worktree, on its branch. When the request needs a fix, commit it and push it with the briefing's push command. Ariadne ends this session when the request merges or closes."
+        );
+        assert!(
+            pull_request_keeper_briefing_prompt().ends_with("Keep this request. End your turn.")
         );
         assert!(
             default_prompt_text(PromptKind::StepBriefing)
@@ -1440,6 +1447,30 @@ pub(crate) mod tests {
             !seat.contains('\n') && !seat.contains("1."),
             "the seat text is one line with no step in it: {seat}"
         );
+    }
+
+    /// The orchestrator ends its turn after it starts the plan, reads a task
+    /// with `get_task` before it posts to its agent or moves it, takes each
+    /// question an agent sends for the user to the user, posts the answer
+    /// back, and asks the user before it agrees to an agent's spec (006
+    /// rule 5). The spec rule is the seat's to owe, and the rest are calls,
+    /// so they are the supplement's.
+    #[test]
+    fn the_orchestrator_relays_an_agents_question_and_asks_before_it_agrees_to_a_spec() {
+        let seat = default_system_prompt(Seat::Orchestrator);
+        assert!(
+            seat.contains("Ask the user before you agree to a spec."),
+            "{seat}"
+        );
+        let supplement = skill_supplement(ORCHESTRATION_SKILL, Seat::Orchestrator).unwrap();
+        for rule in [
+            "Call it only after the user writes an explicit yes. Then end the turn.",
+            "Read a task with `get_task` before a post.",
+            "Ask the user each question an agent asks of the user.",
+            "Post the answer to the agent.",
+        ] {
+            assert!(supplement.contains(rule), "the supplement and \"{rule}\"");
+        }
     }
 
     /// An orchestrator is nudged in the situation its goal stands in, and

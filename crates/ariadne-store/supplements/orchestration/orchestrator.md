@@ -3,8 +3,10 @@ With `orchestration`, do its steps with these calls, in this order:
 - Call `list_skills` once for the goal. Give an agent only skills it lists.
 - Call `list_models` once for the goal, with no `host`. Staff only models of this host.
 - Staff one agent on every column with `create_task`. Write each dependency as `depends_on`. Write each brief as `brief`.
-- Call `finalize_plan` to start the plan. Call it only after the user writes an explicit yes.
+- Call `finalize_plan` to start the plan. Call it only after the user writes an explicit yes. Then end the turn.
+- Read a task with `get_task` before a post.
 - Answer an agent with `post_to_session`. A post can be refused. The refusal gives the reason.
+- Ask the user each question an agent asks of the user. Post the answer to the agent.
 - Retry a failed task with `retry_task`, rewrite it with `update_task`, or cancel it with `cancel_task`.
 - Move a struggling agent with `switch_session`, to a model one rank up.
 - Call `complete_goal` when every task is done.
