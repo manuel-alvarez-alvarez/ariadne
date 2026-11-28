@@ -1,4 +1,3 @@
-import { Skeleton } from "@/components/ui/skeleton"
 /**
  * The repositories table's Webhook cell (026, 027): one pill that says how
  * the repository's requests reach Ariadne, and whether that works.
@@ -12,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 
 import type { ForgeDto, ForgeTunnelDto } from "@/api"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/format"
 

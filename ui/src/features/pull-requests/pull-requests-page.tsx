@@ -1,7 +1,3 @@
-import { useQuery } from "@tanstack/react-query"
-import { Skeleton } from "@/components/ui/skeleton"
-import { tunnelQueryOptions } from "@/features/repositories/queries"
-import { useHostSelection } from "@/hooks/use-host-filter"
 /**
  * The open pull requests of the enabled repositories (026, 029), the first
  * tab of the Forge screen: every one, the user's own, or the ones that ask
@@ -25,7 +21,7 @@ import { useHostSelection } from "@/hooks/use-host-filter"
  * each host that has one.
  */
 
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import { RefreshCwIcon } from "lucide-react"
 import { useEffect, useRef } from "react"
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
@@ -40,6 +36,7 @@ import { PrLink } from "@/components/pr-link"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup } from "@/components/ui/button-group"
+import { Skeleton } from "@/components/ui/skeleton"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { When } from "@/components/when"
 import {
@@ -56,7 +53,8 @@ import {
   repositoryOn,
   useHostRepositories,
 } from "@/features/forge/forge-hosts"
-import { useHostFilter } from "@/hooks/use-host-filter"
+import { tunnelQueryOptions } from "@/features/repositories/queries"
+import { useHostFilter, useHostSelection } from "@/hooks/use-host-filter"
 import { useRowsShowHost } from "@/hooks/use-host-label"
 import { paths, sessionPanelFrom } from "@/routes/paths"
 

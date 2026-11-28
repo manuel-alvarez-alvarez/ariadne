@@ -1,4 +1,3 @@
-import { Skeleton } from "@/components/ui/skeleton"
 /**
  * The webhook tunnel, as the settings dialog shows it (027): what it is for,
  * the switch that turns it on or off, and the state it is in.
@@ -13,6 +12,7 @@ import { toast } from "sonner"
 
 import type { ForgeTunnelDto } from "@/api"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { cn, describeError } from "@/lib/format"
 

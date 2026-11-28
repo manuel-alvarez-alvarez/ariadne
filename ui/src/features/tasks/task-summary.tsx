@@ -1,4 +1,3 @@
-import { Skeleton } from "@/components/ui/skeleton"
 /**
  * Why the task is where it is, as a card above its technical facts.
  *
@@ -19,6 +18,7 @@ import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 
 import type { SessionDto, TaskDto, WorkflowStepDto } from "@/api"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   isLiveStatus,
   SESSION_ATTENTION_META,

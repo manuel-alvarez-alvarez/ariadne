@@ -7,7 +7,7 @@ import { qk } from "@/api"
 import { EventStreamProvider } from "@/events/provider"
 import { latestSource, stubEventSource } from "@/test/event-source"
 import { aGoal, aSession, aSessionPage, aTask, GOAL_ID } from "@/test/fixtures"
-import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
 
 /** The paths of every request the panel made, in order. */
@@ -185,14 +185,37 @@ it("says the cause is unknown for a pending task with nothing recorded", async (
   expect(summary.textContent).toContain("Cause unknown")
 })
 
-it("does not claim a blocker while a dependency's status is unresolved", async () => {
+it("shows a skeleton while dependency status loads without claiming a blocker", async () => {
   const task = aTask({ status: "pending", step: null, depends_on: ["dep-unloaded"] })
+  daemonFetch.mockImplementation(() => new Promise(() => {}))
+  renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
+  })
+  const skeleton = await screen.findByLabelText("Loading dependencies")
+  expect(skeleton.getAttribute("data-slot")).toBe("skeleton")
+  expect(screen.queryByText("Cause unknown")).toBeNull()
+  expect(screen.queryByText(/Waiting for/)).toBeNull()
+  expect(screen.queryByText(/Dependency status is not loaded/)).toBeNull()
+})
+
+it("shows an unknown cause when dependency status fails to load", async () => {
+  const task = aTask({ status: "pending", step: null, depends_on: ["dep-unloaded"] })
+  daemonFetch.mockImplementation(async (input) => {
+    const path = new URL((input as Request).url).pathname
+    if (path === "/v1/tasks/dep-unloaded") {
+      return errorResponse(500, "internal", "Could not read dependency")
+    }
+    return new Promise(() => {})
+  })
   renderScreen(<TaskPanel host="local" taskId={task.id} onClose={() => {}} />, {
     seed: (client) => client.setQueryData(qk.tasks.detail("local", task.id), task),
   })
   const summary = await screen.findByRole("region", { name: "Execution summary" })
+  expect(within(summary).getByText("Cause unknown")).toBeTruthy()
+  expect(within(summary).getByText("Not loaded")).toBeTruthy()
+  expect(summary.textContent).toContain("Dependency status is not loaded")
   expect(summary.textContent).not.toContain("Waiting for")
-  expect(summary.textContent).toContain("Cause unknown")
+  expect(screen.queryByLabelText("Loading dependencies")).toBeNull()
 })
 
 it("lists unfinished dependencies of a failed task with its reason", async () => {

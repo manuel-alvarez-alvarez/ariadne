@@ -1,4 +1,3 @@
-import { Skeleton } from "@/components/ui/skeleton"
 /**
  * A form's workflow picker: every workflow in the catalog, by name.
  *
@@ -21,6 +20,7 @@ import type { Control, FieldPath, FieldValues } from "react-hook-form"
 
 import type { Host } from "@/api"
 import { FormSelect } from "@/components/form-select"
+import { Skeleton } from "@/components/ui/skeleton"
 
 import { workflowsQueryOptions } from "./queries"
 

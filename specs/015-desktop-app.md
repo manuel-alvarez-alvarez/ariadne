@@ -2138,6 +2138,7 @@ view.
      Task steps, repository and dependency options wait for goal detail and their own queries.
      Learned-permission repository filters wait for repository names.
      Dependency summaries and the pin catalog show Skeletons while their queries load.
+     A failed dependency query shows an unknown cause and marks the dependency as not loaded.
      Pull request Refresh and repository labels wait for repositories and tunnel state, as applicable.
      Review targets wait for the other hosts' repositories.
      Review and babysit controls show Skeletons until every host answers or fails.
@@ -2147,10 +2148,12 @@ view.
 - Forms show Skeletons while remote values load (rule 114)
   (`ui/src/features/tasks/form-loading.test.tsx`,
   `ui/src/features/workflows/workflow-select.test.tsx::shows a skeleton until workflows answer`).
+- Dependency summaries distinguish pending queries from failed queries (rule 114)
+  (`ui/src/features/tasks/task-panel.test.tsx::shows a skeleton while dependency status loads without claiming a blocker`,
+  `::shows an unknown cause when dependency status fails to load`).
 - Pull request controls wait for remote data (rule 114)
   (`ui/src/features/pull-requests/pull-requests-page.test.tsx::shows skeletons for refresh and repository labels until remote data answers`,
   `ui/src/features/pull-requests/hosts.test.tsx::starts no %s while box has not answered, and none once box holds the work`).
-
 
 - Remote loading follows rule 113
   (`ui/src/hooks/hosts-loading.test.tsx::keeps All unresolved until the hosts answer`,

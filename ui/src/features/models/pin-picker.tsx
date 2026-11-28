@@ -1,4 +1,3 @@
-import { Skeleton } from "@/components/ui/skeleton"
 /**
  * What an agent runs on, as one control: the model, and the effort that model
  * is run at.
@@ -60,6 +59,7 @@ import { HostDot } from "@/components/host-dot"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { AgentIcon } from "@/features/agents/agent-icon"
 import { acpAgentsQueryOptions } from "@/features/agents/queries"

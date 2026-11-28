@@ -1,4 +1,3 @@
-import { Skeleton } from "@/components/ui/skeleton"
 /**
  * The Learned tab: every choice a repository's agents made, or had made for
  * them — a console pick under `learn` or `ai`, or a denial the AI model
@@ -46,6 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { When } from "@/components/when"
 import { permissionModeLabel } from "@/features/repositories/permission-modes"
