@@ -1879,7 +1879,6 @@ async fn a_goal_whose_tasks_all_landed_wakes_its_orchestrator() {
 /// task that ends after the restart still wakes it.
 #[tokio::test]
 async fn an_orchestrator_that_outlives_a_daemon_restart_hears_every_task_is_done() {
-    use ariadne_daemon::acp::AcpRuntime;
     let w = World::build(harness().session_place("tmux").await).await;
     let _cleanup = common::RelayCleanup(w.launcher.cfg.root.clone());
     let orchestrator = w.orchestrator_session(&w.goal).await;
@@ -1896,15 +1895,19 @@ async fn an_orchestrator_that_outlives_a_daemon_restart_hears_every_task_is_done
     })
     .await;
 
-    // The daemon stops. The relay pane and the agent in it live on.
+    // The daemon stops. The relay pane and the agent in it live on, and
+    // the next daemon attaches to them again.
     w.launcher.acp.detach_relays().await;
-    let runtime = AcpRuntime::new(w.store.clone()).with_places(
-        w.launcher.cfg.root.clone(),
-        env!("CARGO_BIN_EXE_ariadned").into(),
-        Some("tmux".into()),
-    );
-    assert_eq!(runtime.reconnect_relays().await.unwrap(), 1);
-    tokio::time::sleep(common::QUIET).await;
+    assert_eq!(w.launcher.acp.reconnect_relays().await.unwrap(), 1);
+    // The driver takes a pin switch only once the replayed setup is
+    // through, and a switch on the same agent moves no status.
+    let (status, _) = w
+        .send(common::post_json(
+            &format!("/v1/sessions/{}/switch", orchestrator.id),
+            serde_json::json!({"model": orchestrator.model}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(
         w.session_status(&orchestrator).await,
         SessionStatus::Idle,
@@ -1922,22 +1925,7 @@ async fn an_orchestrator_that_outlives_a_daemon_restart_hears_every_task_is_done
         )
         .await
         .unwrap();
-    let launcher = std::sync::Arc::new(ariadne_daemon::launcher::Launcher {
-        cfg: w.launcher.cfg.clone(),
-        forge_poll: Default::default(),
-        store: w.store.clone(),
-        git: ariadne_daemon::gitwt::GitManager,
-        acp: runtime.clone(),
-        registry: w.launcher.registry.clone(),
-        branches: ariadne_daemon::branch::BranchWatchers::new(w.bus.clone()),
-        live: Default::default(),
-    });
-    let sched = Sched(scheduler::start(
-        w.store.clone(),
-        launcher,
-        false,
-        w.timeouts,
-    ));
+    let sched = w.scheduler();
     sched.goal(&w.goal);
     eventually(TIMEOUT, "the orchestrator to be woken", async || {
         w.prompted(&orchestrator).contains("Every task is done.")
@@ -1947,7 +1935,7 @@ async fn an_orchestrator_that_outlives_a_daemon_restart_hears_every_task_is_done
         .set_goal_status(&w.goal.id, GoalStatus::Cancelled)
         .await
         .unwrap();
-    runtime.kill_and_wait(&orchestrator.id).await;
+    w.launcher.acp.kill_and_wait(&orchestrator.id).await;
 }
 
 /// A goal with every task done and an orchestrator mid-turn: the daemon
