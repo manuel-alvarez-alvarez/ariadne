@@ -882,19 +882,26 @@ async fn the_poll_interval_is_bounded_stored_and_moves_the_timer_without_a_resta
     // The fetch in flight, and the one a repository update wakes, settle:
     // the count holds still for a whole QUIET listen, though the default
     // timer (30 ms here) would have fetched thrice in it.
-    let settled = loop {
-        let count = fetches(&stub);
-        if tokio::time::timeout(QUIET, async {
-            while fetches(&stub) == count {
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let mut settled = 0;
+    eventually(
+        TIMEOUT,
+        "the timer to stop at the new interval",
+        async || {
+            let count = fetches(&stub);
+            let held = tokio::time::timeout(QUIET, async {
+                while fetches(&stub) == count {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .is_err();
+            if held {
+                settled = count;
             }
-        })
-        .await
-        .is_err()
-        {
-            break count;
-        }
-    };
+            held
+        },
+    )
+    .await;
     quiet(&stub, settled).await;
 
     let reset: Value = h
