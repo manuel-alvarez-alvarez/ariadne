@@ -6,6 +6,8 @@
 
 use ratatui::style::{Color, Modifier, Style};
 
+/// Background for prose supplied as untrusted data.
+pub const UNTRUSTED: Style = Style::new().bg(Color::DarkGray);
 pub const USER: Style = Style::new().fg(Color::Cyan);
 /// The text of a typed prompt: the terminal's own foreground, bold, so it
 /// reads on a dark and a light theme alike. The bar and the marker carry the

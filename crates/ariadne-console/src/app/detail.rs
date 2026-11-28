@@ -121,16 +121,16 @@ pub(super) fn lines(
                     Some(line) => lines.push(said(&wrap::clip(&line, room), DIM)),
                     None => {
                         let text = match block {
-                            ContentBlockDto::Text { text } => text.clone(),
+                            ContentBlockDto::Text { text } => text.as_str(),
                             ContentBlockDto::Resource {
                                 text: Some(text), ..
-                            } => text.clone(),
-                            _ => String::new(),
+                            } => text.as_str(),
+                            _ => "",
                         };
                         lines.extend(
-                            wrap(text.trim_end(), room)
-                                .iter()
-                                .map(|part| said(part, OUTPUT)),
+                            markdown::plain(text.trim_end(), room, OUTPUT)
+                                .into_iter()
+                                .map(indent),
                         );
                     }
                 }
@@ -176,9 +176,9 @@ fn found(subject: Option<&str>, text: Option<&str>, room: usize, top: usize) -> 
         lines.push(said(&wrap::clip(subject, room), TOOL));
     }
     if let Some(text) = text {
-        let body = wrap(text.trim_end(), room)
-            .iter()
-            .map(|part| said(part, OUTPUT))
+        let body = markdown::plain(text.trim_end(), room, OUTPUT)
+            .into_iter()
+            .map(indent)
             .collect();
         lines.extend(folded_top(body, top));
     }

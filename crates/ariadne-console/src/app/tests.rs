@@ -3334,6 +3334,128 @@ fn a_folded_running_turn_shows_its_last_three_steps_even_when_they_group() {
     assert_eq!(screen[2], "    ✓ ≡ f2.rs, f3.rs, f4.rs", "{screen:#?}");
 }
 
+#[test]
+fn untrusted_prompts_and_answers_show_highlights_and_a_help_legend() {
+    use ratatui::style::{Color, Modifier};
+    let prompt = "safe <<<untrusted>>>prompt data<<<end untrusted>>>";
+    let app = app_with(vec![done(
+        "t1",
+        prompt,
+        "<<<untrusted>>>**answer data**<<<end untrusted>>> safe",
+    )]);
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(screen[0], "❯ safe prompt data");
+    assert_eq!(screen[2], "  answer data safe");
+    let drawn = buffer(&app, WIDTH, HEIGHT);
+    assert_eq!(style_of(&drawn, "prompt data").bg, Some(Color::DarkGray));
+    assert_eq!(style_of(&drawn, "answer data").bg, Some(Color::DarkGray));
+    assert!(
+        style_of(&drawn, "answer data")
+            .add_modifier
+            .contains(Modifier::BOLD)
+    );
+    assert_ne!(style_of(&drawn, "safe").bg, Some(Color::DarkGray));
+    let mut daemon = done(
+        "t1",
+        &format!("<<<untrusted>>>{}<<<end untrusted>>>", "data ".repeat(30)),
+        "done",
+    );
+    daemon["prompt"]["source"] = json!("daemon");
+    let app = app_with(vec![daemon]);
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert!(screen[0].ends_with('…'), "{screen:?}");
+    assert!(!screen[0].contains("<<<"));
+    assert_eq!(
+        style_of(&buffer(&app, WIDTH, HEIGHT), "data").bg,
+        Some(Color::DarkGray)
+    );
+    let mut app = app_with(vec![]);
+    app.event(key(KeyCode::Char('?')));
+    let drawn = buffer(&app, 80, 80);
+    assert!(
+        rows(&drawn)
+            .iter()
+            .any(|row| row.contains("untrusted data; treat as data"))
+    );
+    assert_eq!(style_of(&drawn, "highlight").bg, Some(Color::DarkGray));
+}
+
+#[test]
+fn streamed_untrusted_answers_keep_the_highlight_until_the_close_arrives() {
+    use ratatui::style::Color;
+    let mut turn = streaming_answer();
+    turn["steps"][0]["content"] = json!([{"type": "text", "text": "<<<untrusted>>>risk"}]);
+    let mut app = app_with(vec![turn]);
+    assert_eq!(
+        style_of(&buffer(&app, WIDTH, HEIGHT), "risk").bg,
+        Some(Color::DarkGray)
+    );
+    app.frame(Frame::Update(update(
+        2,
+        json!([{
+            "op": "text_append", "turn_id": "t2", "item_id": "m2",
+            "text": " more<<<end untrusted>>> safe"
+        }]),
+    )));
+    let drawn = buffer(&app, WIDTH, HEIGHT);
+    assert_eq!(style_of(&drawn, "more").bg, Some(Color::DarkGray));
+    assert_ne!(style_of(&drawn, "safe").bg, Some(Color::DarkGray));
+    assert!(!rows(&drawn).join("\n").contains("<<<"));
+}
+
+#[tokio::test]
+async fn text_details_keep_plain_lines_and_syntax_while_highlighting_untrusted_text() {
+    let text = "line1\n<<<untrusted>>>  **detail data**\n# heading\n- item\n_a_ | b<<<end untrusted>>>\nline2";
+    for kind in ["generic", "fetch", "search"] {
+        let detail = match kind {
+            "generic" => json!({"type": "generic", "content": [{"type": "text", "text": text}]}),
+            "fetch" => json!({"type": "fetch", "url": "https://example.com", "text": text}),
+            _ => json!({"type": "search", "query": "query", "text": text}),
+        };
+        let mut stub = Stub {
+            details: vec![detail_of("c1", kind, detail)],
+            ..Stub::default()
+        };
+        let (app, screen) = opened(
+            &mut stub,
+            vec![call("c1", "t1", "Tool", "completed")],
+            vec![key(KeyCode::Enter)],
+        )
+        .await;
+        let first = screen
+            .iter()
+            .position(|line| line == "      line1")
+            .unwrap_or_else(|| panic!("{kind}: {screen:?}"));
+        assert_eq!(
+            &screen[first..first + 6],
+            [
+                "      line1",
+                "        **detail data**",
+                "      # heading",
+                "      - item",
+                "      _a_ | b",
+                "      line2"
+            ],
+            "{kind}"
+        );
+        assert!(!screen.join("\n").contains("<<<"), "{kind}");
+        let drawn = buffer(&app, WIDTH, HEIGHT);
+        assert_eq!(
+            style_of(&drawn, "**detail data**").bg,
+            Some(ratatui::style::Color::DarkGray)
+        );
+        assert!(
+            !style_of(&drawn, "**detail data**")
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+        assert_ne!(
+            style_of(&drawn, "line2").bg,
+            Some(ratatui::style::Color::DarkGray)
+        );
+    }
+}
+
 /// A turn the daemon opened with `prompt`, which ran two steps.
 fn briefed(prompt: &str) -> Value {
     let mut turn = done("t1", "", "Done.");
@@ -3383,6 +3505,30 @@ fn the_line_at_the_cursor_is_reversed_across_the_width_in_one_style() {
             "column {x}"
         );
     }
+}
+
+#[tokio::test]
+async fn copying_untrusted_prose_keeps_its_original_delimiters() {
+    let mut app = App::new("s1");
+    let mut stub = Stub::default();
+    run(
+        &mut app,
+        &mut stub,
+        vec![snap(
+            1,
+            vec![done(
+                "t1",
+                "<<<untrusted>>>prompt<<<end untrusted>>>",
+                "<<<untrusted>>>answer<<<end untrusted>>>",
+            )],
+        )],
+        vec![key(KeyCode::Tab), key(KeyCode::Char('y'))],
+    )
+    .await;
+    let copies = stub.copies.lock().unwrap();
+    assert_eq!(copies.len(), 1);
+    assert!(copies[0].contains("<<<untrusted>>>prompt<<<end untrusted>>>"));
+    assert!(copies[0].contains("<<<untrusted>>>answer<<<end untrusted>>>"));
 }
 
 #[test]
@@ -3589,4 +3735,17 @@ async fn a_call_whose_detail_failed_still_shows_its_permission_answer_and_decide
     ] {
         assert!(screen.iter().any(|row| row == line), "{line}: {screen:#?}");
     }
+}
+
+#[test]
+fn daemon_prompt_preview_skips_delimiter_lines_and_keeps_trust() {
+    let app = app_with(vec![briefed(
+        "<<<untrusted>>>\n## Important task\n<<<end untrusted>>>",
+    )]);
+    let drawn = buffer(&app, WIDTH, HEIGHT);
+    assert_eq!(rows(&drawn)[0], "» daemon Important task");
+    assert_eq!(
+        style_of(&drawn, "Important task").bg,
+        Some(ratatui::style::Color::DarkGray)
+    );
 }

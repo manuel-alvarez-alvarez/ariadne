@@ -275,19 +275,17 @@ fn hung(
     width: usize,
 ) -> Vec<Line<'static>> {
     let hang = lead.width();
-    fit(text, width.saturating_sub(hang))
+    crate::markdown::plain(text, width.saturating_sub(hang), style)
         .into_iter()
         .enumerate()
-        .map(|(row, part)| {
+        .map(|(row, mut line)| {
             let lead = if row == 0 {
                 lead.to_string()
             } else {
                 " ".repeat(hang)
             };
-            Line::from(vec![
-                Span::styled(lead, lead_style),
-                Span::styled(part, style),
-            ])
+            line.spans.insert(0, Span::styled(lead, lead_style));
+            line
         })
         .collect()
 }
