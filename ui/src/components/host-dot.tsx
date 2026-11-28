@@ -4,8 +4,14 @@
  */
 
 import { HostColorSwatch } from "@/components/host-color-swatch"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useHostColor } from "@/hooks/use-host-color"
 
 export function HostDot({ host, className }: { host: string; className?: string }) {
-  return <HostColorSwatch color={useHostColor(host)} className={className} />
+  const color = useHostColor(host)
+  return color === null ? (
+    <Skeleton className="size-2.5 rounded-full" />
+  ) : (
+    <HostColorSwatch color={color} className={className} />
+  )
 }

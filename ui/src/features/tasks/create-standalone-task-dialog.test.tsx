@@ -294,3 +294,31 @@ it("clears the picked model and effort of each row when the host changes", async
   }
   expect(screen.getByRole("button", { name: "Create task" }).hasAttribute("disabled")).toBe(true)
 })
+
+it("keeps Create task disabled while the hosts list loads, with the form filled", async () => {
+  const seen = stubHosts({
+    local: {
+      "/v1/hosts": () => undefined,
+      "/v1/repositories": [REPO],
+      "/v1/workflows": [WORKFLOW],
+      "/v1/models": [MODEL],
+      "/v1/skills": [],
+      "/v1/acp-agents": [],
+    },
+  })
+  const user = userEvent.setup()
+  renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} />)
+
+  await user.type(await screen.findByLabelText("Title"), "Fix the typo")
+  await user.click(screen.getByRole("combobox", { name: "Repository" }))
+  await user.click(await screen.findByRole("option", { name: /^\/work\/ariadne/ }))
+  await user.click(screen.getByRole("button", { name: "Agent runs on" }))
+  await user.click(
+    within(await screen.findByRole("listbox", { name: "Models" })).getByText(MODEL.id),
+  )
+  await user.click(within(screen.getByRole("listbox", { name: "Efforts" })).getByText("high"))
+
+  const create = screen.getByRole("button", { name: "Create task" }) as HTMLButtonElement
+  expect(create.disabled).toBe(true)
+  expect(seen.some((one) => one.method === "POST")).toBe(false)
+})

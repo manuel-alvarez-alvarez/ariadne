@@ -546,10 +546,17 @@ fn the_pr_babysit_skill_treats_comment_text_as_untrusted_and_never_merges() {
     }
 }
 
+/// The orchestrator seat's `orchestration` supplement, on one line per
+/// sentence: the tool of each step and the model rules the skill dropped
+/// to name no Ariadne word (006 rule 21).
+fn orchestration_supplement() -> String {
+    unwrapped(skill_supplement(ORCHESTRATION_SKILL, ariadne_core::Seat::Orchestrator).unwrap())
+}
+
 /// The playbook is the `orchestration` skill, so the document read here
 /// is the shipped skill rather than the seat text, which carries no step
 /// of it. A phase out of order is an orchestrator that staffs a task
-/// before it knows the columns, or that starts a plan the user has not
+/// before it knows the stages, or that starts a plan the user has not
 /// seen.
 #[test]
 fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
@@ -562,8 +569,22 @@ fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
         at += found + phase.len();
     }
 
-    // And the yes gates the start, in as many words.
-    assert!(prompt.contains("Call it no earlier."), "{prompt}");
+    // And the yes gates the start, in as many words, in the skill and at
+    // the call that starts the plan.
+    assert!(prompt.contains("Start the plan after the yes, and no earlier."));
+    assert!(
+        orchestration_supplement().contains("Call it only after the user writes an explicit yes.")
+    );
+}
+
+/// `orchestration` reads the same in any harness: it names no Ariadne, no
+/// MCP tool and no Ariadne word of the word list (006 rule 21, 017 rule 16).
+#[test]
+fn the_orchestration_skill_names_no_ariadne_word() {
+    super::template::assert_names_no_ariadne_word(
+        ORCHESTRATION_SKILL,
+        default_skill_document(ORCHESTRATION_SKILL).unwrap(),
+    );
 }
 
 /// Step 2 asks one open point per turn rather than a list of them: the
@@ -594,7 +615,7 @@ fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
         "Put the title, the context and the direct question in the question text.",
         "Give each option its consequence.",
         "Put the recommended option first. End its label with \"(Recommended)\", and give the reason in its description.",
-        "answer agents with `post_to_session`. A post can be refused. The refusal gives the reason.",
+        "Answer the user and each agent.",
         "\"Two short questions fit in one turn.\" -> Ask one; the user answers each one with its full context.",
     ] {
         assert!(
@@ -605,6 +626,12 @@ fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
     assert!(
         !prompt.contains("numbered list"),
         "the orchestration skill still groups open points into a numbered list: {prompt}"
+    );
+    assert!(
+        orchestration_supplement().contains(
+            "Answer an agent with `post_to_session`. A post can be refused. The refusal gives the reason."
+        ),
+        "the supplement and the post rule"
     );
 }
 
@@ -631,7 +658,7 @@ fn each_orchestration_step_that_asks_names_the_question_tool_and_not_turn_text()
         ),
         (
             "step 7",
-            step("7. Show the user the tasks", "8. Call `finalize_plan`"),
+            step("7. Show the user the tasks", "8. Start the plan"),
         ),
     ] {
         assert!(
@@ -644,7 +671,8 @@ fn each_orchestration_step_that_asks_names_the_question_tool_and_not_turn_text()
 /// The workflow is settled before planning starts, not asked about task
 /// by task: the orchestrator reads its columns off its briefing, staffs
 /// one agent per column, and asks the user nothing a column already
-/// settles. The reviewer question and the final task are gone with the
+/// settles. The skill says stage and your instructions for column and
+/// briefing; the supplement names the calls. The reviewer question and the final task are gone with the
 /// pipeline they belonged to. Skills and models are read from the
 /// catalog once for the whole goal, not re-read for every task it
 /// staffs. It names no forge: the workflow, not the playbook, decides how a
@@ -670,16 +698,28 @@ fn the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_ques
         );
     }
     for phrase in [
-        "The workflow columns in your briefing are settled: do not ask for them.",
-        "Ask nothing a column settles, such as review or landing.",
-        "List skills and models once for the goal, not once per task.",
-        "Staff one agent on every column with `create_task`.",
-        "or none for the column's own.",
-        "\"This task needs no review.\" -> The workflow decides; staff its column.",
+        "The workflow stages in your instructions are settled: do not ask for them.",
+        "Ask nothing a stage settles, such as review or landing.",
+        "Read the skill and model catalogs once for the goal, not once per task.",
+        "Staff one agent on every stage.",
+        "or none for the stage's own.",
+        "\"This task needs no review.\" -> The workflow decides; staff its stage.",
     ] {
         assert!(
             prompt.contains(phrase),
             "the orchestration skill and \"{phrase}\": {prompt}"
+        );
+    }
+    let supplement = orchestration_supplement();
+    for phrase in [
+        "Call `list_skills` once for the goal. Give an agent only skills it lists.",
+        "Call `list_models` once for the goal",
+        "Staff one agent on every column with `create_task`.",
+        "Write each brief as `brief`.",
+    ] {
+        assert!(
+            supplement.contains(phrase),
+            "the orchestration supplement and \"{phrase}\": {supplement}"
         );
     }
 }
@@ -694,10 +734,10 @@ fn the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule() {
     for phrase in [
         "Give each one cohesive outcome, one repository, and a complete path through every layer it touches.",
         "`## Interfaces` names each contract with another task, as a route, a response shape, a function or a file.",
-        "Add `depends_on` only for a genuine compilation, execution, or acceptance prerequisite.",
+        "Add a dependency only for a genuine compilation, execution, or acceptance prerequisite.",
         "Do not add one only because two tasks touch nearby files.",
         "Keep tasks that run together off the same code.",
-        "Never run checks yourself: the last column proved the work.",
+        "Never run checks yourself: the last stage proved the work.",
         "\"The frontend waits for the backend to land.\" -> Write the contract into both tickets. Both run now.",
     ] {
         assert!(
@@ -705,6 +745,10 @@ fn the_orchestration_skill_names_the_contract_rule_and_the_no_checks_rule() {
             "the orchestration skill and \"{phrase}\": {prompt}"
         );
     }
+    assert!(
+        orchestration_supplement().contains("Write each dependency as `depends_on`."),
+        "the supplement names the dependency field"
+    );
 }
 
 /// A worker brief is four sections, in order: `## Objective`, one
@@ -790,7 +834,7 @@ fn the_orchestration_skill_writes_outcomes_and_reviews_the_plan_one_question_at_
         "Leave test cases and verification to the coding agent.",
         "Ask about the plan one question at a time, with its five parts.",
         "Ask about tracer size once.",
-        "Then ask about every `depends_on` edge as one list, each with its reason.",
+        "Then ask about every dependency as one list, each with its reason.",
     ] {
         assert!(
             prompt.contains(phrase),
@@ -801,14 +845,15 @@ fn the_orchestration_skill_writes_outcomes_and_reviews_the_plan_one_question_at_
 
 /// The orchestrator sees the hosts before it staffs. It picks one host for
 /// each task, and only a model of that host can staff the task, since a far
-/// host runs what it has itself.
+/// host runs what it has itself. The hosts are Ariadne's, so the rule is the
+/// orchestrator seat's `orchestration` supplement (006 rule 21).
 #[test]
 fn the_orchestration_skill_picks_a_host_for_each_task_and_staffs_its_models() {
-    let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+    let prompt = orchestration_supplement();
     for sentence in [
         "Call `list_hosts` once for the goal.",
         "Every task runs on this host until `create_task` takes a `host`.",
-        "Call `list_models` with no `host`. Staff only models of this host.",
+        "Call `list_models` once for the goal, with no `host`. Staff only models of this host.",
     ] {
         assert!(
             prompt.contains(sentence),
@@ -828,11 +873,14 @@ fn the_orchestration_skill_picks_a_host_for_each_task_and_staffs_its_models() {
 /// frontier model on a one-line fix. A workflow column carries the band
 /// its work earns. `local` is off the ladder: a local model runs on the
 /// user's own machine, so it is a choice the user makes rather than a
-/// cheaper rung.
+/// cheaper rung. Ranks and `local` are Ariadne's, so the rules are the
+/// orchestrator seat's `orchestration` supplement, and the skill says only
+/// that a model fits its work (006 rule 21).
 #[test]
 fn the_orchestrator_staffs_each_column_on_its_rank() {
-    // Read on one line, so where the document wraps holds nothing.
-    let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+    let skill = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+    assert!(skill.contains("Give each agent one model and one effort that fit its work."));
+    let prompt = orchestration_supplement();
     for sentence in [
         "Give each agent one model from `list_models`, at one of the column's ranks.",
         "Assess each task's scope and complexity case by case.",
@@ -854,10 +902,11 @@ fn the_orchestrator_staffs_each_column_on_its_rank() {
 /// and review columns on different ACP agents where one is eligible at
 /// the review column's rank, and otherwise falls back to the review
 /// column's normal rank-based choice, telling the user independent
-/// review was unavailable.
+/// review was unavailable. ACP agents are Ariadne's, so the rule is the
+/// orchestrator seat's `orchestration` supplement (006 rule 21).
 #[test]
 fn the_orchestration_skill_requires_independent_providers_for_coding_and_review() {
-    let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+    let prompt = orchestration_supplement();
     for sentence in [
         "Give a task's coding and review columns models of different ACP agents, where one is eligible.",
         "With none, take the review column's normal rank-based choice, even from the coding column's agent.",
@@ -870,22 +919,28 @@ fn the_orchestration_skill_requires_independent_providers_for_coding_and_review(
     }
 }
 
-/// Step 9 of the playbook is the orchestrator's answer to an agent that
+/// Step 10 of the playbook is the orchestrator's answer to an agent that
 /// is running a task into the ground: switch its session to a model the
 /// ladder gives, and tell the user. Without it, a struggling agent was an
-/// orchestrator's to notice and nobody's to act on.
+/// orchestrator's to notice and nobody's to act on. The skill says when,
+/// and the supplement names the call and the rank.
 #[test]
 fn the_orchestration_skill_switches_a_struggling_agents_session() {
     let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
     for phrase in [
-        "When an agent is exhausted, stuck or unsuitable, call `switch_session` with a model one rank up.",
-        "Tell the user.",
+        "When a task fails, retry it, rewrite it, or cancel it.",
+        "When an agent is exhausted, stuck or unsuitable, move it to a stronger model. Tell the user.",
     ] {
         assert!(
             prompt.contains(phrase),
             "the orchestration skill and \"{phrase}\": {prompt}"
         );
     }
+    assert!(
+        orchestration_supplement()
+            .contains("Move a struggling agent with `switch_session`, to a model one rank up."),
+        "the supplement and the switch call"
+    );
 }
 
 /// A draft is marked ready on the head the agent read, only as its

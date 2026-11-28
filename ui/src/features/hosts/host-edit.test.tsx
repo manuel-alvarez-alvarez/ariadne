@@ -75,6 +75,7 @@ it("adds a host with name, address, colour and an Advanced remote socket, and sh
   const seen = stubHosts(
     {
       local: {
+        "/v1/host-setups": [],
         "/v1/hosts": hostsRoute(hosts, () => jsonResponse({ ...NEW_BOX, color: "pink" }, 201)),
       },
     },
@@ -106,7 +107,7 @@ it("adds a host with name, address, colour and an Advanced remote socket, and sh
 })
 
 it("offers Default and the eight colours as swatches", async () => {
-  stubHosts({}, [LOCAL, BOX])
+  stubHosts({ local: { "/v1/host-setups": [] } }, [LOCAL, BOX])
   mount()
   const dialog = await openConnect()
   const labels = within(dialog)
@@ -119,7 +120,12 @@ it("offers Default and the eight colours as swatches", async () => {
 it("sends only the changed fields of a named host, an emptied remote as null and Default as null", async () => {
   const user = userEvent.setup()
   const seen = stubHosts(
-    { local: { "/v1/hosts/far": () => jsonResponse({ ...SSH_BOX, remote: null }) } },
+    {
+      local: {
+        "/v1/host-setups": [],
+        "/v1/hosts/far": () => jsonResponse({ ...SSH_BOX, remote: null }),
+      },
+    },
     [LOCAL, { ...SSH_BOX, color: "teal" }],
   )
   mount()
@@ -146,7 +152,12 @@ it("sends only the changed fields of a named host, an emptied remote as null and
 it("edits the colour of local alone", async () => {
   const user = userEvent.setup()
   const seen = stubHosts(
-    { local: { "/v1/hosts/local": () => jsonResponse({ ...LOCAL, color: "blue" }) } },
+    {
+      local: {
+        "/v1/host-setups": [],
+        "/v1/hosts/local": () => jsonResponse({ ...LOCAL, color: "blue" }),
+      },
+    },
     [LOCAL, BOX],
   )
   mount()
@@ -168,7 +179,9 @@ it("shows a refusal at the field it names, and any other in the dialog", async (
     "bad_request",
     "hosts.x.endpoint must be ssh://[user@]host[:port]",
   )
-  stubHosts({ local: { "/v1/hosts": hostsRoute([LOCAL], () => answer) } }, [LOCAL])
+  stubHosts({ local: { "/v1/host-setups": [], "/v1/hosts": hostsRoute([LOCAL], () => answer) } }, [
+    LOCAL,
+  ])
   mount()
   const dialog = await openConnect()
   type("Name", "x")
@@ -201,6 +214,7 @@ it("disables the submit button while its request runs", async () => {
   const seen = stubHosts(
     {
       local: {
+        "/v1/host-setups": [],
         "/v1/hosts": hostsRoute([LOCAL], () => new Promise<Response>(() => {})),
       },
     },
@@ -219,7 +233,9 @@ it("disables the submit button while its request runs", async () => {
 it("removes a named host after a confirmation that says the far daemon keeps running", async () => {
   const user = userEvent.setup()
   const seen = stubHosts(
-    { local: { "/v1/hosts/box": () => new Response(null, { status: 204 }) } },
+    {
+      local: { "/v1/host-setups": [], "/v1/hosts/box": () => new Response(null, { status: 204 }) },
+    },
     [LOCAL, BOX],
   )
   const { queryClient } = mount()
@@ -244,7 +260,12 @@ it("removes a named host after a confirmation that says the far daemon keeps run
 it("shows the error of a failed removal in a toast", async () => {
   const user = userEvent.setup()
   stubHosts(
-    { local: { "/v1/hosts/box": () => errorResponse(404, "unknown_host", "unknown host") } },
+    {
+      local: {
+        "/v1/host-setups": [],
+        "/v1/hosts/box": () => errorResponse(404, "unknown_host", "unknown host"),
+      },
+    },
     [LOCAL, BOX],
   )
   mount()
@@ -257,7 +278,12 @@ it("shows the error of a failed removal in a toast", async () => {
 it("sends color null when a new host keeps the Default colour", async () => {
   const user = userEvent.setup()
   const seen = stubHosts(
-    { local: { "/v1/hosts": hostsRoute([LOCAL], () => jsonResponse(NEW_BOX, 201)) } },
+    {
+      local: {
+        "/v1/host-setups": [],
+        "/v1/hosts": hostsRoute([LOCAL], () => jsonResponse(NEW_BOX, 201)),
+      },
+    },
     [LOCAL],
   )
   mount()

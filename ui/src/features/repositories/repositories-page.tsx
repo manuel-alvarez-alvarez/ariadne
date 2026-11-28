@@ -15,7 +15,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
-
 import { type ForgeTunnelDto, type HostView, LOCAL_HOST, type RepositoryDto, useHosts } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { DataTable, RowAction } from "@/components/data-table"
@@ -23,6 +22,7 @@ import { HostLabel } from "@/components/host-label"
 import { HostSync, syncLabel } from "@/components/host-sync"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { paths } from "@/routes/paths"
 
@@ -60,7 +60,7 @@ export function RepositoriesPage() {
   const repositories = useQuery(repositoriesQueryOptions("local"))
   // Whether a polling hook is the tunnel being off or a hook that failed.
   const tunnel = useQuery(tunnelQueryOptions())
-  const { hosts } = useHosts()
+  const { hosts, isPending } = useHosts()
   const named = hosts.filter((host) => host.name !== LOCAL_HOST)
 
   function openCreate() {
@@ -95,7 +95,11 @@ export function RepositoriesPage() {
       <DataTable
         query={repositories}
         errorTitle="Could not load repositories"
-        columns={named.length === 0 ? COLUMNS.filter((column) => column !== HOSTS_COLUMN) : COLUMNS}
+        columns={
+          !isPending && named.length === 0
+            ? COLUMNS.filter((column) => column !== HOSTS_COLUMN)
+            : COLUMNS
+        }
         empty={<NoRepositories onCreate={openCreate} />}
         rowKey={(repository) => repository.id}
         renderRow={(repository) => (
@@ -103,6 +107,7 @@ export function RepositoriesPage() {
             repository={repository}
             tunnel={tunnel.data}
             hosts={named}
+            hostsPending={isPending}
             onEdit={() => openEdit(repository)}
             onDelete={() => openDelete(repository)}
           />
@@ -123,11 +128,13 @@ function RepositoryRow({
   repository,
   tunnel,
   hosts,
+  hostsPending,
   onEdit,
   onDelete,
 }: {
   repository: RepositoryDto
   tunnel: ForgeTunnelDto | undefined
+  hostsPending: boolean
   hosts: HostView[]
   onEdit: () => void
   onDelete: () => void
@@ -182,7 +189,11 @@ function RepositoryRow({
           <span className="text-muted-foreground">-</span>
         )}
       </TableCell>
-      {hosts.length === 0 ? null : (
+      {hostsPending ? (
+        <TableCell>
+          <Skeleton aria-label="Loading hosts" className="h-5 w-24" />
+        </TableCell>
+      ) : hosts.length === 0 ? null : (
         <TableCell className="text-xs">
           <ul aria-label="Checkouts" className="flex flex-col">
             {hosts.map((host) => {

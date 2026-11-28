@@ -13,10 +13,9 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useQuery } from "@tanstack/react-query"
-import { useMemo } from "react"
+import { useEffect, useMemo } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
-
 import { ApiError, LOCAL_HOST, type TaskDto, useHosts } from "@/api"
 import {
   FormDialog,
@@ -31,6 +30,7 @@ import { HostDot } from "@/components/host-dot"
 import { MarkdownField } from "@/components/markdown-field"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { RepositoryCombobox } from "@/features/goals/repository-combobox"
 import { PinPicker } from "@/features/models/pin-picker"
 import { modelsQueryOptions } from "@/features/models/queries"
@@ -65,20 +65,24 @@ export function CreateStandaloneTaskDialog({
   onOpenChange: (open: boolean) => void
   onCreated?: (task: TaskDto) => void
 }) {
-  const { hosts } = useHosts()
+  const { hosts, isPending: hostsPending } = useHosts()
   const repositories = useQuery({ ...repositoriesQueryOptions(LOCAL_HOST), enabled: open })
   const workflows = useQuery({ ...workflowsQueryOptions(LOCAL_HOST), enabled: open })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const create = useCreateStandaloneTask()
   const form = useForm<StandaloneTaskValues>({
     resolver: zodResolver(standaloneTaskSchema),
-    defaultValues: DEFAULTS,
+    defaultValues: { ...DEFAULTS, host: "" },
   })
-  useResetOnOpen(open, form, DEFAULTS, create)
+  useResetOnOpen(open, form, { ...DEFAULTS, host: hostsPending ? "" : LOCAL_HOST }, create)
   useClearErrorOnEdit(form, create)
+  useEffect(() => {
+    if (open && !hostsPending && !form.getValues("host")) form.setValue("host", LOCAL_HOST)
+  }, [open, hostsPending, form])
   const errors = form.formState.errors
   const host = form.watch("host")
-  const models = useQuery({ ...modelsQueryOptions(host), enabled: open })
+  // Until the hosts list loads the host is empty: read this machine's models, which it will pick.
+  const models = useQuery({ ...modelsQueryOptions(host || LOCAL_HOST), enabled: open })
   const agentValues = form.watch("agents")
   const workflow = form.watch("workflow")
   const catalog = workflows.data ?? []
@@ -90,6 +94,7 @@ export function CreateStandaloneTaskDialog({
   const hasModel = agentValues.every((agent) => agent.model.trim())
 
   async function onSubmit(values: StandaloneTaskValues) {
+    if (hostsPending) return
     try {
       const task = await create.mutateAsync(toCreateStandaloneTaskRequest(values))
       toast.success("Task created", { description: task.title })
@@ -114,7 +119,7 @@ export function CreateStandaloneTaskDialog({
         }
         submitLabel="Create task"
         pending={create.isPending}
-        submitDisabled={!hasModel}
+        submitDisabled={!hasModel || hostsPending}
         onKeyDown={submitOnChord}
       >
         <FormDialogBody>
@@ -181,29 +186,33 @@ export function CreateStandaloneTaskDialog({
           </Field>
           <Field>
             <FieldLabel htmlFor="standalone-host">Host</FieldLabel>
-            <FormSelect
-              control={form.control}
-              name="host"
-              id="standalone-host"
-              empty={LOCAL_HOST}
-              renderOption={(option) => (
-                <span className="flex items-center gap-2">
-                  <HostDot host={option.value} />
-                  {option.label}
-                </span>
-              )}
-              onValueChange={() => {
-                // A model is one host's: the rows start again on the new host's catalog.
-                form.setValue(
-                  "agents",
-                  form.getValues("agents").map((agent) => ({ ...agent, model: "", effort: "" })),
-                  { shouldDirty: true },
-                )
-              }}
-              options={hosts
-                .filter((one) => one.status === "ready")
-                .map((one) => ({ value: one.name, label: one.name }))}
-            />
+            {hostsPending ? (
+              <Skeleton aria-label="Loading hosts" className="h-9 w-full" />
+            ) : (
+              <FormSelect
+                control={form.control}
+                name="host"
+                id="standalone-host"
+                empty={LOCAL_HOST}
+                renderOption={(option) => (
+                  <span className="flex items-center gap-2">
+                    <HostDot host={option.value} />
+                    {option.label}
+                  </span>
+                )}
+                onValueChange={() => {
+                  // A model is one host's: the rows start again on the new host's catalog.
+                  form.setValue(
+                    "agents",
+                    form.getValues("agents").map((agent) => ({ ...agent, model: "", effort: "" })),
+                    { shouldDirty: true },
+                  )
+                }}
+                options={hosts
+                  .filter((one) => one.status === "ready")
+                  .map((one) => ({ value: one.name, label: one.name }))}
+              />
+            )}
             <FieldDescription>Where the task runs. Starts on this machine.</FieldDescription>
           </Field>
           <Field>
@@ -228,7 +237,7 @@ export function CreateStandaloneTaskDialog({
                       name={`agents.${index}.model`}
                       render={({ field }) => (
                         <PinPicker
-                          host={host}
+                          host={host || LOCAL_HOST}
                           label={`${title} runs on`}
                           model={field.value}
                           effort={agent.effort}

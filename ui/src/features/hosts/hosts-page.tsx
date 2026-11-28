@@ -17,13 +17,13 @@
 
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
-
 import { type HostView, LOCAL_HOST, useHosts } from "@/api"
 import { HostLabel } from "@/components/host-label"
 import { hostStatus } from "@/components/host-picker"
 import { PageHeader } from "@/components/page-header"
 import { ReconnectHostButton } from "@/components/reconnect-host-button"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -42,8 +42,10 @@ import { RemoveHostDialog } from "./remove-host-dialog"
 import { UpdateMachineDialog } from "./update-machine-dialog"
 
 export function HostsPage() {
-  const { hosts, error } = useHosts()
-  const setups = useHostSetups().data ?? []
+  const { hosts, error, isPending } = useHosts()
+  const setupQuery = useHostSetups()
+  const setups = setupQuery.data ?? []
+  const setupsPending = setupQuery.isPending
   const [updating, setUpdating] = useState<HostSetup | null>(null)
   const [continuing, setContinuing] = useState<string | null>(null)
   const [discarding, setDiscarding] = useState<string | null>(null)
@@ -89,26 +91,43 @@ export function HostsPage() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {hosts.map((host) => (
-            <HostRow
-              key={host.name}
-              host={host}
-              onUpdate={(() => {
-                const saved = setups.find((one) => one.name === host.name)
-                return saved && (saved.state === "complete" || saved.operation === "update")
-                  ? () => setUpdating(saved)
-                  : null
-              })()}
-              onEdit={() => {
-                setEditing(host)
-                setFormOpen(true)
-              }}
-              onRemove={() => {
-                setRemoving(host.name)
-                setRemoveOpen(true)
-              }}
-            />
-          ))}
+          {isPending
+            ? [0, 1, 2].map((row) => (
+                <TableRow key={row}>
+                  <TableCell colSpan={7}>
+                    <Skeleton aria-label="Loading hosts" className="h-10 w-full" />
+                  </TableCell>
+                </TableRow>
+              ))
+            : hosts.map((host) => (
+                <HostRow
+                  key={host.name}
+                  host={host}
+                  onUpdate={(() => {
+                    const saved = setups.find((one) => one.name === host.name)
+                    return !setupsPending &&
+                      saved &&
+                      (saved.state === "complete" || saved.operation === "update")
+                      ? () => setUpdating(saved)
+                      : null
+                  })()}
+                  onEdit={() => {
+                    setEditing(host)
+                    setFormOpen(true)
+                  }}
+                  onRemove={() => {
+                    setRemoving(host.name)
+                    setRemoveOpen(true)
+                  }}
+                />
+              ))}
+          {!isPending && setupsPending ? (
+            <TableRow>
+              <TableCell colSpan={7}>
+                <Skeleton aria-label="Loading saved setups" className="h-10 w-full" />
+              </TableCell>
+            </TableRow>
+          ) : null}
           {setups
             .filter((one) => one.state !== "complete")
             .map((one) => (
