@@ -256,8 +256,9 @@ async fn a_replayed_stop_left_half_applied_still_moves_the_session_to_idle() {
         SessionStatus::Running
     );
 
-    // The daemon stored the stop and went down before it moved the row.
-    store
+    // The daemon stored the stop and went down before it moved the row. An
+    // advisory event follows it.
+    let (stored, _) = store
         .create_event_once(
             NewAgentEvent {
                 session_id: Some(session.id.clone()),
@@ -265,15 +266,66 @@ async fn a_replayed_stop_left_half_applied_still_moves_the_session_to_idle() {
                 kind: "stop".into(),
                 payload: json!({"session_id": "conversation"}),
             },
-            &format!("{}:launch:output:9", session.id),
+            &format!("{}:launch:output:9:0", session.id),
         )
         .await
         .unwrap();
-    ingest_relay_event(&store, &event("stop"), "output:9", 0)
+    ingest_relay_event(&store, &event("session.diagnosis"), "diagnosis", 0)
         .await
         .unwrap();
+    let replayed = ingest_relay_event(&store, &event("stop"), "output:9", 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(replayed.id, stored.id);
     assert_eq!(
         store.get_session(&session.id).await.unwrap().status(),
         SessionStatus::Idle
+    );
+}
+
+#[tokio::test]
+async fn a_replayed_completed_event_keeps_the_activity_clock() {
+    use ariadne_api::events::IngestEventRequest;
+    use ariadne_daemon::http::ingest_relay_event;
+    let home = tempfile::tempdir().unwrap();
+    let store = Store::open(home.path().join("store.db")).await.unwrap();
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    let start = IngestEventRequest {
+        session_id: session.id.clone(),
+        launch: Some("launch".into()),
+        kind: "session_start".into(),
+        payload: json!({"session_id": "conversation"}),
+    };
+    ingest_relay_event(&store, &start, "setup", 1)
+        .await
+        .unwrap();
+    let before = store
+        .get_session(&session.id)
+        .await
+        .unwrap()
+        .last_activity_at;
+    ingest_relay_event(&store, &start, "setup", 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .last_activity_at,
+        before
     );
 }

@@ -77,6 +77,18 @@ pub async fn ingest_event(
     ingest_event_inner(store, req, None).await
 }
 
+/// The event kinds that move a session's status: what a replay reads to
+/// find the one that says what the row is.
+const STATUS_KINDS: &[&str] = &[
+    "session_start",
+    "user_prompt_submit",
+    "post_tool_use",
+    "pre_tool_use",
+    "permission.replied",
+    "stop",
+    "session_end",
+];
+
 async fn ingest_event_inner(
     store: &Store,
     req: &IngestEventRequest,
@@ -126,20 +138,28 @@ async fn ingest_event_inner(
     // ingest moved the row for it. A reconnect replays the setup of its
     // launch, `session_start` among it, and read again that would put an
     // idle agent back to `running` with no turn to end it — a goal's
-    // orchestrator would then never hear what its tasks need (009). Only an
-    // event that is still the newest of its session is applied again.
+    // orchestrator would then never hear what its tasks need (009).
     let event = match relay_key {
         Some(key) => match store.create_event_once(new, key).await? {
             (event, true) => event,
             (event, false) => {
-                // The one exception is the session's newest event: a write
-                // the daemon left half done is finished by its replay, so a
-                // stored `stop` still moves the row to idle.
-                let newest = store.newest_session_event_id(&session.id, None).await?;
-                if newest.as_deref() != Some(event.id.as_str()) {
-                    return Ok(Some(event));
+                // Only the status it moves can be left undone by a write the
+                // daemon never finished, and only the newest status event of
+                // the session says what the row is: a stop whose update was
+                // lost moves the row to idle, while an older replayed setup
+                // moves nothing. The clock, the usage and the flags are
+                // never replayed (021).
+                if !superseded && let Some(status) = status_for_event(&req.kind) {
+                    let later = store
+                        .session_event_heads(&session.id, Some(&event.id), None, STATUS_KINDS)
+                        .await?;
+                    if later.iter().all(|head| head.id == event.id) {
+                        store
+                            .set_session_status_if_live(&session.id, status, req.launch.as_deref())
+                            .await?;
+                    }
                 }
-                event
+                return Ok(Some(event));
             }
         },
         None => store.create_event(new).await?,

@@ -284,9 +284,11 @@ the ACP runtime that takes a prompt (021).
   (`scheduler_attention.rs::an_orchestrator_that_outlives_a_daemon_restart_hears_every_task_is_done`).
   A replayed relay effect does not move the session status again
   (`acp_recovery.rs::a_replayed_relay_effect_does_not_move_the_session_status_again`).
-  A replayed event that is still the newest of its session finishes the
-  update a stop left half done
+  A replayed event that is the newest status event of its session finishes
+  the status a stop left half done, even when an advisory event follows it
   (`acp_recovery.rs::a_replayed_stop_left_half_applied_still_moves_the_session_to_idle`).
+  A replay never moves the activity clock
+  (`acp_recovery.rs::a_replayed_completed_event_keeps_the_activity_clock`).
 - A situation held back from a busy orchestrator is logged once with its
   reason, however many passes find it
   (`scheduler_attention.rs::a_held_back_goal_message_is_logged_once_with_its_reason`).
