@@ -22,7 +22,7 @@ Use `code-review` for a task branch without a forge request.
 2. Pin the scope to the diff. Read the diff of the request.
    On a later round, read the diff since your last reviewed revision.
    Do this only while that revision remains an ancestor of the head.
-   If the forge refuses it, review the full diff and reuse no old evidence.
+   If the incremental diff request fails, review the full diff and reuse no old evidence.
 
    Done when the diff is known.
 3. Run the tests, the lint and the format check of the files the diff changes.

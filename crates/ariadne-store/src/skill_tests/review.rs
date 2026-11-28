@@ -329,7 +329,7 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "Second rejection: escalate the thread with a one-sentence reason.",
         "On a later round, read the diff since your last reviewed revision.",
         "Do this only while that revision remains an ancestor of the head.",
-        "If the forge refuses it, review the full diff and reuse no old evidence.",
+        "If the incremental diff request fails, review the full diff and reuse no old evidence.",
     ] {
         assert!(text.contains(rule), "missing preserved rule: {rule}");
     }

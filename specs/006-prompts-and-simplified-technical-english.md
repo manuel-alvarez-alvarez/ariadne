@@ -374,8 +374,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     - Five ship, and `coding`, `documentation`, `research` and `spec-writing`
       have none, since each holds no Ariadne rule of its own: the seat text
       owns their report call and the binding of the requester. The `reviewer`
-      seat's `pr-reviewer` supplement holds the calls of the previous list
-      item, so that skill names no tool.
+      seat's `pr-reviewer` supplement holds the calls listed for `pr-reviewer` in
+      rule 5, so that skill names no tool.
       `code-review` in the `agent` seat holds the `get_diff` call
       for the whole change, and the `fail_step` and `complete_step` calls
       that return and pass the work. `code-review` in the `reviewer` seat
