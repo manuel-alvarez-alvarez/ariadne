@@ -1772,7 +1772,8 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     does not count the running subagents, and it has no bar of views: the
     console of events said `running N subagents`, and that ends here. A running
     subagent shows as its own step row, with its state and its step count
-    (rule 106). The row wraps and its height holds one line, so a fact that
+    (rule 106). The row wraps inside a clip of exactly one line, with its padding outside
+    the clip, so no part of a second line shows and a fact that
     does not fit drops out of view with every fact after it. The tokens are
     third, not at the right end
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::counts no running subagent in the status row, and draws no bar of views for one`,

@@ -242,10 +242,11 @@ it("shows the status, the tokens, the context use, the model, the mode, the opti
   expect(row.textContent).toBe("idle↑1.2k ↓340context 25%Model Opus 5.5mode CodeEffort High$0.42")
   // jsdom lays nothing out: the classes keep the row to one line of whole facts,
   // and the browser proof of spec 015 rule 99b measures them.
-  expect(row.className).toContain("whitespace-nowrap")
-  expect(row.className).toContain("overflow-hidden")
-  expect(row.className).toContain("flex-wrap")
-  expect(row.className).toContain("h-6")
+  const line = row.firstElementChild as HTMLElement
+  expect(line.className).toContain("whitespace-nowrap")
+  expect(line.className).toContain("overflow-hidden")
+  expect(line.className).toContain("flex-wrap")
+  expect(line.className).toContain("h-4")
 })
 
 it("shows the mode one time when the mode state and a mode option both name it", () => {
