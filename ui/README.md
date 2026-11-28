@@ -68,7 +68,8 @@ repositories screens read and write `local`, and show how far each host has
 taken them: in sync, pending, or failed. The AI tab also shows each host's own
 device and install. The daemon logs drawer and the dashboards screen have a
 host select of their own, defaulting to the pick. A goal lives on one host: the
-goal dialog's host select says which, and its tasks and agents run there.
+goal dialog's model picker has a host column that says which, and its tasks and
+agents run there.
 
 The sidebar's last child carries the connection state, and it has exactly one
 source: the event stream. Green while it is open and the daemon is beating,
