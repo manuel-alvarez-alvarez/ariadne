@@ -172,7 +172,12 @@ pub(crate) struct SkillSupplement {
 
 /// Every supplement Ariadne ships. A pair of skill and seat that is not here
 /// adds no text.
-pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 6] = [
+pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 8] = [
+    SkillSupplement {
+        skill: ORCHESTRATION_SKILL,
+        seat: Seat::Orchestrator,
+        text: include_str!("../supplements/orchestration/orchestrator.md"),
+    },
     SkillSupplement {
         skill: "code-review",
         seat: Seat::Agent,
@@ -182,6 +187,11 @@ pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 6] = [
         skill: "code-review",
         seat: Seat::Reviewer,
         text: include_str!("../supplements/code-review/reviewer.md"),
+    },
+    SkillSupplement {
+        skill: PR_REVIEWER_SKILL,
+        seat: Seat::Reviewer,
+        text: include_str!("../supplements/pr-reviewer/reviewer.md"),
     },
     SkillSupplement {
         skill: "pr-babysit",
@@ -446,13 +456,14 @@ pub const PULL_REQUEST_KEEPER_PLACEHOLDERS: [&str; 7] = [
 
 /// Orchestrator seat text: what the seat owes, and no step of the playbook.
 ///
-/// The playbook — the phases from reading the goal to `complete_goal`, and
-/// the one place `finalize_plan` is explained — is the
+/// The playbook — the phases from reading the goal to closing it — is the
 /// [`ORCHESTRATION_SKILL`] document, which the launcher loads for every
 /// orchestrator session the way a task agent's skills reach it: indexed
 /// beside this text, written into the run directory. So the playbook is
 /// editable and resettable like any shipped skill, and this text is
-/// Ariadne's own like the agent's.
+/// Ariadne's own like the agent's. The skill names no Ariadne word: the
+/// tool of each step, `finalize_plan` among them, and the model rules are
+/// the skill's orchestrator supplement (006 rule 21).
 ///
 /// What is owed is what no skill edit is allowed to take away: the plan is
 /// made *with* the user — the orchestrator is the one seat that talks to
@@ -975,16 +986,28 @@ pub(crate) mod tests {
     /// agent seat's `merge` supplement is 260: the
     /// step call that passes the work with its `merge_commit`, and the
     /// `fail_step` call for a failed check. Its `conflict-resolution`
-    /// supplement is 140: the one step call, for where no skill invoked it. The
-    /// total is 2,850, the six caps with a sentence of room.
+    /// supplement is 140: the one step call, for where no skill invoked it.
+    /// The reviewer seat's `pr-reviewer` supplement is 900: the calls that
+    /// read the request, the diff and the threads, the call that answers a
+    /// thread, and the one that submits the round, which the skill dropped
+    /// with every other Ariadne word. The orchestrator seat's `orchestration`
+    /// supplement is 1,800: the tool of each playbook step, from
+    /// `list_hosts` to `complete_goal`, and the model rules, which name the
+    /// column ranks, `local` and the ACP agents. The skill dropped all of it
+    /// to name no Ariadne word, and the orchestrator seat text is 200, so the
+    /// seat still pays less than the 1,750 its text once carried with the
+    /// playbook in it. The total is 5,550, the eight caps with a sentence of
+    /// room: it rose from 3,750 by those 1,800.
     /// A new pair needs a cap of its own here, argued the same way, and the
     /// total holds them all.
     #[test]
     fn supplement_size_caps_hold() {
-        const TOTAL: usize = 2_850;
+        const TOTAL: usize = 5_550;
         let cap = |skill: &str, seat: Seat| match (skill, seat) {
+            (ORCHESTRATION_SKILL, Seat::Orchestrator) => 1_800,
             ("code-review", Seat::Agent) => 300,
             ("code-review", Seat::Reviewer) => 200,
+            (PR_REVIEWER_SKILL, Seat::Reviewer) => 900,
             ("pr-babysit", Seat::Agent) => 1100,
             ("pr-babysit", Seat::Keeper) => 500,
             ("merge", Seat::Agent) => 260,
@@ -1029,6 +1052,27 @@ pub(crate) mod tests {
                 "the reviewer supplement and {call}"
             );
         }
+        let orchestrator = skill_supplement(ORCHESTRATION_SKILL, Seat::Orchestrator).unwrap();
+        for call in ["`list_hosts`", "`finalize_plan`", "`complete_goal`"] {
+            assert!(
+                orchestrator.contains(call),
+                "the orchestrator supplement and {call}"
+            );
+        }
+        assert_eq!(skill_supplement(ORCHESTRATION_SKILL, Seat::Agent), None);
+        let pr = skill_supplement(PR_REVIEWER_SKILL, Seat::Reviewer).unwrap();
+        for call in [
+            "`get_pull_request`",
+            "`get_diff`",
+            "`list_comments`",
+            "`reply_comment`",
+            "`resolve_thread`",
+            "`escalate_comment`",
+            "`submit_review`",
+        ] {
+            assert!(pr.contains(call), "the pr-reviewer supplement and {call}");
+        }
+        assert_eq!(skill_supplement(PR_REVIEWER_SKILL, Seat::Agent), None);
         assert_eq!(skill_supplement("code-review", Seat::Orchestrator), None);
         assert_eq!(skill_supplement("code-review", Seat::Keeper), None);
         assert_eq!(skill_supplement("architecture-review", Seat::Agent), None);
@@ -1328,30 +1372,64 @@ pub(crate) mod tests {
     /// and agreeing is what starts them
     /// (`plan_finalize.rs::the_tasks_of_a_plan_wait_for_the_yes_that_finalizes_it`).
     ///
-    /// The phases of the playbook, in the order the conversation runs them.
-    /// Named once, because two assertions read them: the skill document holds
-    /// all of them in this order, and the seat text holds none.
+    /// The phases of the playbook, in the order the conversation runs them,
+    /// in the plain words of the skill. Named once, because two assertions
+    /// read them: the skill document holds all of them in this order, and
+    /// the seat text holds none.
     pub(crate) const PLAYBOOK_PHASES: [&str; 11] = [
-        "Read the goal and its columns.",
+        "Read the goal and its stages.",
         "Ask the user every open point",
         "Split the goal into tracer tasks.",
         "Write each ticket in STE",
-        "Staff one agent on every column with `create_task`.",
-        "Give each agent one model from `list_models`, at one of the column's ranks.",
+        "Staff one agent on every stage.",
+        "Give each agent one model and one effort that fit its work.",
         "Show the user the tasks and the models.",
         "Revise until the user writes an explicit yes.",
-        "Call `finalize_plan`.",
+        "Start the plan after the yes, and no earlier.",
         "Stay up until the goal ends.",
+        "Close the goal when every task is done.",
+    ];
+
+    /// The call of each playbook step, in the order the steps run: the
+    /// hosts, the skills, the models, the staffing, the plan's start, the
+    /// posts, the failed tasks and the end of the goal. The skill names no
+    /// tool, so the orchestrator seat's `orchestration` supplement holds
+    /// these in this order, and the seat text holds none (006 rule 21).
+    pub(crate) const PLAYBOOK_CALLS: [&str; 9] = [
+        "Call `list_hosts` once for the goal.",
+        "Call `list_skills` once for the goal.",
+        "Call `list_models` once for the goal, with no `host`.",
+        "Staff one agent on every column with `create_task`.",
+        "Call `finalize_plan` to start the plan. Call it only after the user writes an explicit yes.",
+        "Answer an agent with `post_to_session`.",
+        "Retry a failed task with `retry_task`, rewrite it with `update_task`, or cancel it with `cancel_task`.",
+        "Move a struggling agent with `switch_session`, to a model one rank up.",
         "Call `complete_goal` when every task is done.",
     ];
 
-    /// The seat text carries no playbook step: not one of the phases, and no
-    /// numbered step at all — a step that crept back in would be a rule
-    /// stated in two layers, and the skill's copy going stale under it.
+    /// The supplement holds the call of each step in the order the skill
+    /// runs the steps. A call out of order is an orchestrator that staffs
+    /// before it knows the hosts, or starts a plan the user has not seen.
+    #[test]
+    fn the_orchestration_supplement_holds_each_steps_call_in_order() {
+        let supplement = skill_supplement(ORCHESTRATION_SKILL, Seat::Orchestrator).unwrap();
+        let mut at = 0;
+        for call in PLAYBOOK_CALLS {
+            let found = supplement[at..]
+                .find(call)
+                .unwrap_or_else(|| panic!("the supplement has no \"{call}\" after {at}"));
+            at += found + call.len();
+        }
+    }
+
+    /// The seat text carries no playbook step: not one of the phases, not
+    /// the call of one, and no numbered step at all — a step that crept back
+    /// in would be a rule stated in two layers, and the other copy going
+    /// stale under it.
     #[test]
     fn the_orchestrator_seat_text_holds_no_playbook_step() {
         let seat = default_system_prompt(Seat::Orchestrator);
-        for phase in PLAYBOOK_PHASES {
+        for phase in PLAYBOOK_PHASES.into_iter().chain(PLAYBOOK_CALLS) {
             assert!(
                 !seat.contains(phase),
                 "the seat text carries \"{phase}\", which the playbook's"
@@ -1399,18 +1477,20 @@ pub(crate) mod tests {
     }
 
     /// `finalize_plan` is what the orchestrator calls once the plan is
-    /// written, and it is the only call there is about a plan: the playbook
-    /// and the resume both name it, and a text naming any other would be
-    /// briefing an agent to make a call the daemon does not answer.
+    /// written, and it is the only call there is about a plan: the
+    /// playbook's supplement and the resume both name it, and a text naming
+    /// any other would be briefing an agent to make a call the daemon does
+    /// not answer. The skill names no tool, so it starts the plan in plain
+    /// words and the supplement names the call (006 rule 21).
     #[test]
     fn the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call() {
         for text in [
-            default_skill_document(ORCHESTRATION_SKILL).unwrap(),
+            skill_supplement(ORCHESTRATION_SKILL, Seat::Orchestrator).unwrap(),
             default_prompt_text(PromptKind::OrchestratorResume),
         ] {
             assert!(text.contains("`finalize_plan`"), "{text}");
         }
-        for (name, text) in all_defaults() {
+        for (name, text) in all_defaults().into_iter().chain(all_supplements()) {
             // The backticked names are every other span of a default: what
             // the odd ones hold is what an agent is told to call.
             for call in text
@@ -1428,14 +1508,15 @@ pub(crate) mod tests {
     /// the workflow's `pr` or `merge` column to say, and the procedure
     /// reaches that column's agent as its skill. A playbook that spelled out
     /// one of the two landings would be a second copy of those details,
-    /// going stale on its own. The orchestration skill is one of its texts,
-    /// so it is read here too.
+    /// going stale on its own. The orchestration skill and its orchestrator
+    /// supplement are two of its texts, so they are read here too.
     #[test]
     fn the_orchestrator_is_told_nothing_of_forges() {
         let orchestrator = std::iter::once(default_system_prompt(Seat::Orchestrator))
             .chain(std::iter::once(
                 default_skill_document(ORCHESTRATION_SKILL).unwrap(),
             ))
+            .chain(skill_supplement(ORCHESTRATION_SKILL, Seat::Orchestrator))
             .chain(
                 PromptKind::for_seat(Seat::Orchestrator)
                     .iter()

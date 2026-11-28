@@ -14,6 +14,7 @@ import { useSettingsStore } from "@/stores/settings"
 
 /** The hosts the picker selected, and which of them the app reads. */
 interface HostSelection {
+  isPending: boolean
   /** The hosts a screen reads: the selection's hosts that have a URL, or a picked host. */
   read: Host[]
   /** Every listed host the selection means; a saved pick that is not listed means All. */
@@ -29,15 +30,17 @@ export function useHostSelection(): HostSelection {
   const picked = pick !== "" ? hosts.find((host) => host.name === pick) : undefined
   // A pick the settings daemon has not listed yet waits for it; one it no
   // longer lists falls back to All.
-  const listed = picked ? [picked] : pick !== "" && isPending ? [] : hosts
-  const names = picked
-    ? [picked.name]
-    : listed.filter((host) => host.url !== null).map((host) => host.name)
+  const listed = isPending ? [] : picked ? [picked] : hosts
+  const names =
+    !isPending && picked
+      ? [picked.name]
+      : listed.filter((host) => host.url !== null).map((host) => host.name)
   // One array per selection, so a list over it keeps its identity.
   const key = names.join("\n")
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is `names`, spelled stably
   const read = useMemo(() => names, [key])
   return {
+    isPending,
     read,
     listed,
     absent: listed.filter((host) => !read.includes(host.name)),
@@ -70,8 +73,9 @@ export function useReachableHosts(): Host[] {
 export function usePickedHost(): Host | null {
   const pick = useSettingsStore((state) => state.hostFilter)
   const { hosts, isPending } = useHosts()
+  if (isPending) return null
   if (hosts.some((host) => host.name === pick)) return pick
-  return pick !== "" && isPending ? null : LOCAL_HOST
+  return LOCAL_HOST
 }
 
 /** Whether the settings daemon lists a host besides `local`: the host controls show only then. */

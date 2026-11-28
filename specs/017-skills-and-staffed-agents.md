@@ -169,7 +169,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
     state, and repeats none of them: no column skill says to work in the
     task's worktree, and `orchestration` does not say to plan with the user,
     since the `agent` and `orchestrator` seat texts own those words alone
-    (006 rule 5). No skill divides a task into slices or small commits.
+    (006 rule 5). `orchestration` names no tool either: the call of each of
+    its steps, `finalize_plan` among them, and the model rules are the
+    orchestrator seat's `orchestration` supplement alone (003 rule 19). No skill divides a task into slices or small commits.
     `coding` builds the whole task and commits it once, adds a new commit on
     a return from review and never amends, and its refactoring path holds every
     move in one commit and fixes no defect inside it (006). A skill that runs checks says which: the
@@ -229,9 +231,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
     is posted as that skill says and that skill ends the round (006 rule
     21). A review session (029) loads it beside `pr-reviewer` — 18 of 48
     review goals did — and has neither step tool.
-    `pr-reviewer` states once that a step call another skill names is the
-    task seat's, and that `submit_review` ends the round, so a picked
-    skill such as `documentation` cannot send the seat to a tool it lacks.
+    The reviewer seat's `pr-reviewer` supplement states once that a step
+    call another skill names is the task seat's, and that `submit_review`
+    ends the round, so a picked skill such as `documentation` cannot send
+    the seat to a tool it lacks. `pr-reviewer` itself names no tool: that
+    supplement says how the session reads the request, reads the diff since
+    a revision, answers a thread and submits a round (006 rule 21).
     `architecture-review` adds its findings to the one
     verdict of the skill loaded beside it, as one `Architecture` line
     under the repository conventions heading beside `code-review`, and as
@@ -416,19 +421,19 @@ written into the system prompt (006), and the lifecycle the seats sit in
     server and no Ariadne word of the word list of 006 rule 21. It says
     the plain word of that list instead, and the seat text and the
     supplement of its skill and seat say what the plain word stands for.
-    `code-review`, `architecture-review`, `pr-babysit`, `coding`,
-    `documentation`, `research`, `spec-writing`, `merge` and
-    `conflict-resolution` hold to this today, proven by the one helper
-    `assert_names_no_ariadne_word` in `skill_tests/template.rs`; the other
-    two skills move to it in later
-    changes. The four produce skills
-    keep the ticket and report contract in plain words, and none has a
-    supplement: the agent seat text owns the report call and the binding of
-    the requester, the stage and the report (006 rule 21).
+    `code-review`, `architecture-review`, `pr-reviewer`, `orchestration`,
+    `pr-babysit`, `coding`, `documentation`, `research`, `spec-writing`,
+    `merge` and `conflict-resolution` hold to this today, proven by the one
+    helper `assert_names_no_ariadne_word` in `skill_tests/template.rs`. The
+    four produce skills keep the ticket and report contract in plain words,
+    and none has a supplement: the agent seat text owns the report call and
+    the binding of the requester, the stage and the report (006 rule 21).
     The body stays under 500 lines and within the caps of 006 rule 13.
     The template is proven by structure and words
     (`skill_tests/template.rs::every_skill_obeys_the_template`,
-    `::the_two_review_skills_name_no_ariadne_word`), not by an
+    `::the_review_skills_name_no_ariadne_word`,
+    `skill_tests/operate.rs::the_orchestration_skill_names_no_ariadne_word`),
+    not by an
     evaluation with real agents.
 
 ## Acceptance criteria
@@ -520,9 +525,13 @@ written into the system prompt (006), and the lifecycle the seats sit in
   (`skill_documents.rs::an_edited_orchestration_skill_reaches_the_next_launch`).
 - The playbook staffs one agent per column and asks no reviewer question
   (`skill_tests/operate.rs::the_orchestration_skill_staffs_one_agent_per_column_and_asks_no_reviewer_question`).
-- The playbook switches a struggling agent's session to a model one rank
-  up, and tells the user
+- The playbook moves a struggling agent to a stronger model and tells the
+  user, and its supplement names `switch_session` and one rank up
   (`skill_tests/operate.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
+- `orchestration` names no tool, and its supplement holds the call of each
+  step in order
+  (`skill_tests/operate.rs::the_orchestration_skill_names_no_ariadne_word`,
+  `defaults.rs::the_orchestration_supplement_holds_each_steps_call_in_order`).
 - Every shipped skill is named once and describes itself
   (`skill_tests/template.rs::every_shipped_skill_is_named_once_and_describes_itself`),
   every document is within the one skill cap (`skill_tests/template.rs::skill_size_caps_hold`),
@@ -568,7 +577,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - `pr-babysit` treats comment text as untrusted, never merges and leaves every
   thread open
   (`skill_tests/operate.rs::the_pr_babysit_skill_treats_comment_text_as_untrusted_and_never_merges`).
-- The orchestration skill selects within each column's permitted ranks after a
+- The orchestration supplement selects within each column's permitted ranks after a
   case-by-case scope and complexity assessment, the shipped merge skill never
   force-pushes, including with `--force-with-lease`, and the PR skill
   force-pushes only the request's head branch, with a lease pinned to the
@@ -593,9 +602,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
   and their calls are the `agent` seat's supplements
   (`skill_tests/operate.rs::the_merge_supplement_holds_the_step_calls_the_skill_dropped`,
   `skill_tests/operate.rs::the_conflict_resolution_supplement_holds_the_call_that_ends_the_stage`).
-- `code-review` and `architecture-review` name no Ariadne, no MCP tool and
-  no Ariadne word of the word list
-  (`skill_tests/template.rs::the_two_review_skills_name_no_ariadne_word`),
+- `code-review`, `architecture-review` and `pr-reviewer` name no Ariadne,
+  no MCP tool and no Ariadne word of the word list
+  (`skill_tests/template.rs::the_review_skills_name_no_ariadne_word`),
   and `code-review`'s step calls and diff call are the agent seat's
   supplement, while the reviewer seat's names no step call
   (`skill_tests/review.rs::the_review_skill_reviews_in_place_and_ends_on_a_step_call`).

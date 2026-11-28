@@ -101,7 +101,7 @@ export function DashboardsPage() {
   const queriedRow = hosts.find((host) => host.name === queried)
   const unreachable = queriedRow?.url === null ? queriedRow.unreachable : null
   // A named pick waits for the hosts list, so no iframe opens on All first.
-  const waitingForHosts = pick !== "" && hostsPending
+  const waitingForHosts = hostsPending
   const hostItems = [
     { value: ALL_HOSTS, label: "All hosts", reason: null as string | null },
     ...hosts.map((host) => ({
@@ -171,7 +171,9 @@ export function DashboardsPage() {
         description="A Perses dashboard, read and edited from this window."
         actions={
           <>
-            {named ? (
+            {hostsPending ? (
+              <Skeleton aria-label="Loading hosts" className="h-8 w-36" />
+            ) : named ? (
               <Select
                 value={queried}
                 items={hostItems.map((item) => ({

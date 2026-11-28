@@ -26,7 +26,11 @@ export function HostLabel({
     <Badge
       variant="outline"
       data-host-color={hue}
-      className={cn("shrink-0 border-transparent font-mono", HOST_HUE_CLASSES[hue].pill, className)}
+      className={cn(
+        "shrink-0 border-transparent font-mono",
+        hue === null ? "animate-pulse bg-muted" : HOST_HUE_CLASSES[hue].pill,
+        className,
+      )}
       title={title}
     >
       {host}

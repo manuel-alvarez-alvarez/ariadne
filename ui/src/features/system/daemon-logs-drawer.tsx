@@ -37,6 +37,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useHasNamedHosts, usePickedHost } from "@/hooks/use-host-filter"
 import { cn } from "@/lib/format"
 
@@ -83,7 +84,7 @@ export function DaemonLogsDrawer({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const { hosts } = useHosts()
+  const { hosts, isPending } = useHosts()
   // The picker's host, or `local` under All, until the user picks another here.
   const picked = usePickedHost()
   const [choice, setChoice] = useState<Host | null>(null)
@@ -161,7 +162,9 @@ export function DaemonLogsDrawer({
               </SheetDescription>
             </div>
             <div className="flex items-center gap-2">
-              {named ? (
+              {isPending ? (
+                <Skeleton aria-label="Loading hosts" className="h-8 w-32" />
+              ) : named ? (
                 <Select
                   value={host}
                   onValueChange={(value) => setChoice(value ?? LOCAL_HOST)}

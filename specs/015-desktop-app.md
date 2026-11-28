@@ -2128,13 +2128,21 @@ view.
        (`::shows the author of each turn part as an icon, its word as the name`,
        `ui/src/features/sessions/console/blocks.test.tsx::renders developer prompts as full Markdown without a fold`).
 
-113. Display untrusted prose between `<<<untrusted>>>` and `<<<end untrusted>>>`
+113. A block that depends on remote data shows a Skeleton until the data resolves.
+     It never presents a local default as the remote answer.
+     This includes host controls, sync blocks, table cells, forms, labels and colours.
+
+114. Display untrusted prose between `<<<untrusted>>>` and `<<<end untrusted>>>`
      with a highlight and a tooltip on hover and keyboard focus. Hide the markers.
      Preserve Markdown formatting and literal markers in code. An open marker
      highlights through the current end of streamed text. Folded prompt previews
      retain the highlight. Stored text, input, copy, export and raw data stay unchanged.
 
 ## Acceptance criteria
+
+- Remote loading follows rule 113
+  (`ui/src/hooks/hosts-loading.test.tsx::keeps All unresolved until the hosts answer`,
+  `::shows skeletons for the host picker and catalog sync until hosts answer`).
 
 - Untrusted prose hides its markers and retains Markdown formatting and literal inline code
   (`ui/src/components/markdown.test.tsx::marks untrusted prose while preserving Markdown and code examples`).

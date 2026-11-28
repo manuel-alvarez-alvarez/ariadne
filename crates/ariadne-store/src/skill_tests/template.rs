@@ -337,8 +337,8 @@ fn every_skill_obeys_the_template() {
 #[test]
 fn each_rule_is_stated_in_exactly_one_briefing() {
     // The step calls, the hook rule and the stop rule belong to the
-    // agent seat text. `finalize_plan` belongs to the orchestration
-    // skill. The worktree scope and the plan-with-the-user rule belong
+    // agent seat text. `finalize_plan` belongs to the orchestrator
+    // seat's orchestration supplement. The worktree scope and the plan-with-the-user rule belong
     // to the agent and orchestrator seat texts: a skill that repeated
     // either, as `merge` and `orchestration` once did, is the mistake
     // this guards against.
@@ -347,7 +347,7 @@ fn each_rule_is_stated_in_exactly_one_briefing() {
         "Call `fail_step` when",
         "Never pass `--no-verify` or `-n` to git",
         "After three failed attempts at one fix, stop.",
-        "Call it no earlier.",
+        "Call it only after the user writes an explicit yes.",
         "Work only in the task's worktree",
         "Plan the goal with the user",
         "return the work with `fail_step`",
@@ -475,13 +475,13 @@ pub(super) fn assert_names_no_ariadne_word(name: &str, document: &str) {
     );
 }
 
-/// `code-review` and `architecture-review` read the same in any harness:
+/// `code-review`, `architecture-review` and `pr-reviewer` read the same in any harness:
 /// they name no Ariadne, no MCP tool and no Ariadne word, and the agent seat
 /// text and the supplements say what their plain words stand for (006
 /// rule 21). The helper finds each kind of word it is there to catch.
 #[test]
-fn the_two_review_skills_name_no_ariadne_word() {
-    for name in ["code-review", "architecture-review"] {
+fn the_review_skills_name_no_ariadne_word() {
+    for name in ["code-review", "architecture-review", PR_REVIEWER_SKILL] {
         assert_names_no_ariadne_word(name, default_skill_document(name).unwrap());
     }
     for (sample, word) in [
