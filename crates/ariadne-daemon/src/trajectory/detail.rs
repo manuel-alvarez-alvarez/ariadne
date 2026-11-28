@@ -54,6 +54,20 @@ pub(crate) fn detail_kinds() -> Vec<&'static str> {
 /// stores of one content block.
 const OUTPUT_BYTES: usize = 1024 * 1024;
 
+/// Whether the turn of the call that opens at `heads[at]` still runs there:
+/// `heads` start at the turn's prompt, and no end of a turn comes before the
+/// call (rule 12).
+pub(crate) fn turn_runs_at(heads: &[EventHead], at: usize) -> bool {
+    heads
+        .first()
+        .is_some_and(|head| head.kind == "user_prompt_submit")
+        && heads.get(1..at).is_some_and(|between| {
+            between
+                .iter()
+                .all(|head| !TURN_ENDS.contains(&head.kind.as_str()))
+        })
+}
+
 /// The events of one call, by their heads.
 #[derive(Debug, PartialEq)]
 pub(crate) struct CallEvents {
@@ -76,7 +90,12 @@ pub(crate) struct CallEvents {
 /// and its tool call id, up to the event that closes it, the next opener of
 /// that id, or the end of its turn — as the fold joins them (rule 21). None
 /// where `item_id` opens no call.
-pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> Option<CallEvents> {
+pub(crate) fn call_events(
+    heads: &[EventHead],
+    item_id: &str,
+    budget: usize,
+    turn_runs: bool,
+) -> Option<CallEvents> {
     let (opener, rest) = heads.split_first()?;
     if opener.id != item_id || !CALL_KINDS.contains(&opener.kind.as_str()) {
         return None;
@@ -139,6 +158,7 @@ pub(crate) fn call_events(heads: &[EventHead], item_id: &str, budget: usize) -> 
         ids
     };
     let executing = open
+        && turn_runs
         && !status.is_some_and(is_terminal)
         && first.call.is_some()
         && !asked.contains(&first.call);
@@ -681,7 +701,7 @@ mod tests {
     };
     use ariadne_store::EventHead;
 
-    use super::{CallEvents, call_events, detail_of, opens_a_step};
+    use super::{CallEvents, call_events, detail_of, opens_a_step, turn_runs_at};
     use crate::trajectory::Fold;
 
     fn event(id: &str, kind: &str, payload: Value) -> AgentEventDto {
@@ -878,7 +898,7 @@ mod tests {
             ),
         ];
 
-        let call = call_events(&heads, "0001", 500).unwrap();
+        let call = call_events(&heads, "0001", 500, true).unwrap();
 
         assert_eq!(
             call,
@@ -890,7 +910,7 @@ mod tests {
             }
         );
         assert_eq!(
-            call_events(&heads, "0004", 500),
+            call_events(&heads, "0004", 500, true),
             None,
             "a prompt is no call"
         );
@@ -909,12 +929,23 @@ mod tests {
         let ask = head("0002", "permission_request", json!({"call": "c-1"}));
         let reply = head("0003", "permission.replied", json!({}));
         let stop = head("0004", "stop", json!({}));
-        let run = |heads: Vec<EventHead>| call_events(&heads, "0001", 500).unwrap().executing;
+        let run = |heads: Vec<EventHead>| call_events(&heads, "0001", 500, true).unwrap().executing;
 
         assert!(run(vec![opener.clone()]));
         assert!(!run(vec![opener.clone(), ask.clone()]));
         assert!(run(vec![opener.clone(), ask.clone(), reply]));
-        assert!(!run(vec![opener, stop]));
+        assert!(!run(vec![opener.clone(), stop]));
+        assert!(
+            !call_events(std::slice::from_ref(&opener), "0001", 500, false)
+                .unwrap()
+                .executing,
+            "a call that opens after its turn ended runs no more"
+        );
+        let prompt = head("0000", "user_prompt_submit", json!({}));
+        let ended = head("0000b", "stop", json!({}));
+        assert!(turn_runs_at(&[prompt.clone(), opener.clone()], 1));
+        assert!(!turn_runs_at(&[prompt, ended, opener.clone()], 2));
+        assert!(!turn_runs_at(&[opener], 0));
     }
 
     /// A call of more updates than the budget loads its opener and its
@@ -930,7 +961,7 @@ mod tests {
             ));
         }
 
-        let call = call_events(&heads, "0000", 3).unwrap();
+        let call = call_events(&heads, "0000", 3, true).unwrap();
 
         assert_eq!(call.load, ["0000", "0008", "0009"]);
         assert_eq!(call.updates, 9);

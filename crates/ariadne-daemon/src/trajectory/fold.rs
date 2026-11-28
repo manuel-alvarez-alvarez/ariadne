@@ -320,6 +320,22 @@ fn head_facts(head: &EventHead) -> EventFacts {
 }
 
 impl Fold {
+    /// Hold the lifecycle events that came before the first prompt, for the
+    /// prompt to take as notes (rule 22).
+    pub(crate) fn seed_lifecycle(&mut self, heads: &[EventHead]) {
+        for head in heads {
+            self.lifecycle.push(AgentEventDto {
+                id: head.id.clone(),
+                session_id: None,
+                task_id: None,
+                kind: head.kind.clone(),
+                payload: Value::Null,
+                summary: String::new(),
+                created_at: head.created_at.clone(),
+            });
+        }
+    }
+
     pub(crate) fn set_cwd(&mut self, cwd: Option<String>) {
         self.cwd = cwd;
     }

@@ -407,7 +407,8 @@ Out:
     newest. `detail_rev` counts every update, and one more where the end of
     the turn closed the call: the `detail_rev` of the call's step. A call
     that is `pending` with its turn running, and with no unanswered
-    permission request for it, reads `running` in the detail as in its row.
+    permission request for it, reads `running` in the detail as in its row;
+    a call that opens after its turn ended stays `pending`.
     The ACP runtime stores
     each update with the whole call so far (021), so the newest holds it.
 50. `detail` is tagged by `type`, by the call's kind. A later field of the
@@ -775,9 +776,13 @@ Out:
     prompt's turn on a steps page and on a cold read, and a warning before
     the first prompt opens a turn with a steps page (rule 22):
     `read.rs::a_lifecycle_note_before_a_prompt_reads_with_that_turn` and
-    `read.rs::a_warning_before_the_first_prompt_has_a_steps_page`.
+    `read.rs::a_warning_before_the_first_prompt_has_a_steps_page`. Only an
+    event that opens a turn starts the turn before the first prompt, and a
+    fold built before it holds the lifecycle notes for it:
+    `read.rs::a_quiet_event_opens_no_turn_and_a_cold_fold_keeps_the_startup_note`.
 88. The detail of a pending call reads `running` or `pending` as its row
-    does (rules 21, 49):
+    does, and a call that opens after its turn ended stays `pending`
+    (rules 21, 49):
     `detail.rs::a_pending_call_executes_unless_it_waits_for_a_permission`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in

@@ -32,7 +32,9 @@ use super::console::Merge;
 use super::convert::session_dto_of;
 use super::error::{ApiError, ApiResult, Json};
 use super::sse;
-use crate::trajectory::detail::{blob_of, call_events, detail_kinds, detail_of, opens_a_step};
+use crate::trajectory::detail::{
+    blob_of, call_events, detail_kinds, detail_of, opens_a_step, turn_runs_at,
+};
 use crate::trajectory::read::{READ_EVENTS, Read, read_page, read_steps, read_turns};
 use crate::trajectory::{Fold, session_state, step_id};
 
@@ -630,7 +632,8 @@ pub(super) async fn item(
     ) {
         return Err(not_found());
     }
-    let call = call_events(&heads[at..], &item_id, READ_EVENTS).ok_or_else(not_found)?;
+    let runs = turn_runs_at(&heads, at);
+    let call = call_events(&heads[at..], &item_id, READ_EVENTS, runs).ok_or_else(not_found)?;
     let events: Vec<AgentEventDto> = state
         .store
         .events_by_ids(&call.load)

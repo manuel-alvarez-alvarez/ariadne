@@ -345,6 +345,36 @@ impl Store {
         Ok(q.fetch_all(self.r()).await?)
     }
 
+    /// The first event of a session of one of `kinds`, below `before` when
+    /// it is set and up to `upto`, payload unread.
+    pub async fn first_session_event_head(
+        &self,
+        session_id: &str,
+        before: Option<&str>,
+        upto: &str,
+        kinds: &[&str],
+    ) -> Result<Option<EventHead>> {
+        let mut sql = String::from(
+            "SELECT id, kind, lane, COALESCE(facts, '{}') AS facts, created_at FROM agent_events
+               WHERE session_id = ? AND (? IS NULL OR id < ?) AND id <= ?",
+        );
+        if !kinds.is_empty() {
+            sql.push_str(" AND kind IN (");
+            sql.push_str(&vec!["?"; kinds.len()].join(", "));
+            sql.push(')');
+        }
+        sql.push_str(" ORDER BY id LIMIT 1");
+        let mut q = sqlx::query_as::<_, EventHead>(sqlx::AssertSqlSafe(sql))
+            .bind(session_id)
+            .bind(before)
+            .bind(before)
+            .bind(upto);
+        for kind in kinds {
+            q = q.bind(*kind);
+        }
+        Ok(q.fetch_optional(self.r()).await?)
+    }
+
     /// The first event of each subagent of a session up to `upto`, as the
     /// subagent's id and the event's id, by subagent id: the first event in
     /// its lane, or the first `subagent_update` about it, whichever is first.

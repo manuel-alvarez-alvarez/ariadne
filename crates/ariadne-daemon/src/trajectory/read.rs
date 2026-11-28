@@ -98,6 +98,9 @@ pub(crate) struct Read {
     /// The first event of each subagent, by its id: an event of a later
     /// turn finds the subagent and opens no step of its own.
     pub(crate) subagent_firsts: Vec<(String, String)>,
+    /// The lifecycle events that wait for the first prompt, where the read
+    /// holds no turn.
+    pub(crate) lifecycle: Vec<EventHead>,
 }
 
 impl Read {
@@ -118,6 +121,7 @@ impl Read {
         }
         seed_compactions(fold, &self.compaction_firsts);
         seed_subagents(fold, &self.subagent_firsts);
+        fold.seed_lifecycle(&self.lifecycle);
         let mut live = live.into_iter().peekable();
         for item in self.items {
             while let Some(event) = live.next_if(|event| event.id.as_str() < item.id()) {
@@ -169,14 +173,24 @@ fn scratch(session_id: &str) -> Fold {
     )
 }
 
-/// The kinds a turn takes no start from: the lifecycle notes wait for the
-/// next prompt (rule 22), and the others open no turn.
-const NO_START: &[&str] = &[
-    "session_start",
-    "session_end",
-    "stop",
-    "available_commands_update",
-    "display_state_update",
+/// The kinds that open a turn of their own where none exists (rule 22).
+const OPENS_TURN: &[&str] = &[
+    "agent_message_chunk",
+    "agent_thought_chunk",
+    "agent_message",
+    "agent_thought",
+    "pre_tool_use",
+    "tool_call_update",
+    "post_tool_use",
+    "tool_call_abandoned",
+    "permission_request",
+    "question",
+    "agent_request",
+    "session.error",
+    "session.switched",
+    "session.pin_fallback",
+    "notice",
+    "compaction_update",
 ];
 
 /// The starts of a session's turns up to `upper`: each prompt, and the
@@ -190,14 +204,10 @@ async fn turn_starts(
         .session_event_heads(session_id, None, Some(upper), &[PROMPT])
         .await?;
     let before = starts.first().map(|first| first.id.clone());
-    let early = store
-        .session_event_heads(session_id, None, Some(upper), &[])
-        .await?;
-    let opener = early
-        .into_iter()
-        .take_while(|head| before.as_ref().is_none_or(|first| head.id < *first))
-        .find(|head| !NO_START.contains(&head.kind.as_str()));
-    if let Some(opener) = opener {
+    if let Some(opener) = store
+        .first_session_event_head(session_id, before.as_deref(), upper, OPENS_TURN)
+        .await?
+    {
         starts.insert(0, opener);
     }
     Ok(starts)
@@ -209,7 +219,7 @@ async fn queued_lifecycle(
     store: &Store,
     session_id: &str,
     upper: &str,
-) -> Result<BTreeMap<String, Vec<EventHead>>, StoreError> {
+) -> Result<(BTreeMap<String, Vec<EventHead>>, Vec<EventHead>), StoreError> {
     let heads = store
         .session_event_heads(
             session_id,
@@ -238,7 +248,7 @@ async fn queued_lifecycle(
             _ => waiting.push(head),
         }
     }
-    Ok(queued)
+    Ok((queued, waiting))
 }
 
 /// The ids a read loads, under one budget.
@@ -405,7 +415,14 @@ async fn read_turns_within(
 ) -> Result<Read, StoreError> {
     let starts = turn_starts(store, session_id, upper).await?;
     if starts.is_empty() {
-        return Ok(Read::default());
+        // No turn yet: the lifecycle notes wait for the first prompt, and a
+        // fold built now holds them for it.
+        let (_, waiting) = queued_lifecycle(store, session_id, upper).await?;
+        return Ok(Read {
+            upper: Some(upper.to_string()),
+            lifecycle: waiting,
+            ..Read::default()
+        });
     }
     let pairs = store
         .session_event_heads(session_id, None, Some(upper), PAIR_KINDS)
@@ -431,7 +448,7 @@ async fn read_turns_within(
     let shown = &candidates[candidates.len() - candidates.len().min(turns.max(1))..];
     let mut held: BTreeSet<usize> = shown.iter().copied().collect();
     held.extend(attention_turns(&starts, &pairs, shown.first().copied()));
-    let queued = queued_lifecycle(store, session_id, upper).await?;
+    let (queued, _) = queued_lifecycle(store, session_id, upper).await?;
     let mut heads = Vec::new();
     for (first, last) in runs(&held) {
         heads.extend(queued.get(&starts[first].id).cloned().unwrap_or_default());
@@ -553,6 +570,7 @@ async fn read_turns_within(
         plan_firsts,
         compaction_firsts,
         subagent_firsts,
+        lifecycle: Vec::new(),
     })
 }
 
@@ -620,6 +638,7 @@ pub(crate) async fn read_steps(
     };
     let mut heads = queued_lifecycle(store, session_id, &newest)
         .await?
+        .0
         .remove(turn_id)
         .unwrap_or_default();
     heads.extend(
@@ -702,6 +721,7 @@ pub(crate) async fn read_steps(
             plan_firsts: Vec::new(),
             compaction_firsts,
             subagent_firsts,
+            lifecycle: Vec::new(),
         },
         page,
         earlier: (end - kept) as u64,
@@ -2133,6 +2153,42 @@ mod tests {
             .unwrap();
         let held = folded(&session, page.read).held_steps(&turn, MAIN_LANE);
         assert_eq!(held.len(), 1, "the prompt's turn holds the start: {held:?}");
+    }
+
+    /// A mode update between a startup note and a warning opens no turn, and
+    /// a fold built before the first prompt still holds the startup note for
+    /// it (rule 22).
+    #[tokio::test]
+    async fn a_quiet_event_opens_no_turn_and_a_cold_fold_keeps_the_startup_note() {
+        let (store, first, _dir) = session().await;
+        commit(&store, &first, "session_start", json!({})).await;
+        commit(&store, &first, "mode_update", json!({})).await;
+        let warning = commit(
+            &store,
+            &first,
+            "notice",
+            json!({"severity": "warning", "title": "Slow"}),
+        )
+        .await;
+        let page = read_steps(&store, &first, &warning, MAIN_LANE, None, 10, 500)
+            .await
+            .unwrap();
+        assert!(page.is_some(), "the warning's turn has a page");
+
+        let (store, id, _dir) = session().await;
+        commit(&store, &id, "session_start", json!({})).await;
+        let read = read_turns(&store, &id, None, 5, None, 500).await.unwrap();
+        let mut fold = folded(&id, read);
+        let turn = prompt(&store, &id).await;
+        for event in store
+            .events_by_ids(std::slice::from_ref(&turn))
+            .await
+            .unwrap()
+        {
+            fold.apply(&crate::http::convert::event_dto(event), false);
+        }
+        let quiet = fold.held_steps(&turn, MAIN_LANE).len();
+        assert_eq!(quiet, 1, "the prompt takes the startup note");
     }
 
     /// The newest turn's step window comes before the subagents of the
