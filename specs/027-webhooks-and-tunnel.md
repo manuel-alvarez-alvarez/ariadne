@@ -89,6 +89,7 @@ The session task's tests prove that rule for a prompt.
 8. A creation refusal enters `polling` and preserves the forge's message in `webhook_error`, with the secret redacted.
    A creation refusal is a rights refusal when the forge answers 404 or names a missing scope or admin rights.
    `gh` gives "Not Found (HTTP 404)" with a hint about the `admin:repo_hook` scope.
+   A scope the request gets wrong, such as "invalid scope", is no rights refusal.
    A rights refusal also sets `webhook_rights_refused`, and every other reconcile result clears it.
    While it holds with the integration enabled and its switch on (rule 22),
    each timer fetch first retries the registration through the same reconcile.
@@ -246,7 +247,7 @@ A disabled integration has no worker, regardless of its retained hook status.
   `webhooks.rs::url_changes_update_hooks_withdrawal_restores_timer_and_disable_deletes`.
 - A refusal that names no rights retains the forge's message, timer fetches, and gets no retry:
   `webhooks.rs::a_refused_hook_keeps_the_forge_message_and_timer_fetches`.
-- A create refusal is a rights refusal on 404, the hook scope or admin rights, and on nothing else:
+- A create refusal is a rights refusal on 404, a missing scope or admin rights, and not on an invalid scope:
   `hooks.rs::tests::a_create_refusal_for_rights_names_404_the_hook_scope_or_admin_rights`.
 - A rights refusal polls with the redacted message and `rights_refused`, each timer fetch retries it,
   and a retry that works goes `live` and `WakeOnly` with no restart:

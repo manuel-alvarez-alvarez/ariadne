@@ -62,19 +62,23 @@ pub(super) fn missing(error: &str) -> bool {
 }
 /// Whether a refused hook create is a refusal for rights. GitHub answers 404
 /// to an account without admin rights, and `gh` adds a hint where its token
-/// lacks the `admin:repo_hook` scope. Other answers name the missing scope or
-/// the admin rights.
+/// lacks the `admin:repo_hook` scope. Other answers name a scope the token
+/// lacks, or the admin rights. A scope the request itself gets wrong, such as
+/// "invalid scope", is no rights refusal.
 pub(super) fn rights_refusal(error: &str) -> bool {
     let error = error.to_lowercase();
-    [
-        "http 404",
-        "404 not found",
-        "admin:repo_hook",
-        "scope",
-        "admin rights",
-    ]
-    .iter()
-    .any(|word| error.contains(word))
+    let missing_scope = error.contains("required scope")
+        || error.contains("missing scope")
+        || (error.contains("needs the") && error.contains("scope"));
+    missing_scope
+        || [
+            "http 404",
+            "404 not found",
+            "admin:repo_hook",
+            "admin rights",
+        ]
+        .iter()
+        .any(|word| error.contains(word))
 }
 
 impl ForgeClient {
@@ -246,11 +250,14 @@ mod tests {
             "404 Not Found",
             "HTTP 403: Must have admin rights to Repository.",
             "your token has not been granted the required scopes",
+            "HTTP 403: missing scope repo",
+            "This API operation needs the \"repo\" scope.",
         ] {
             assert!(rights_refusal(error), "{error}");
         }
         for error in [
             "HTTP 422: Validation Failed",
+            "HTTP 422: invalid scope for this URL",
             "HTTP 502: Bad Gateway",
             "the forge returned no hook id",
         ] {
