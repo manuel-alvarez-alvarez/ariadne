@@ -119,6 +119,7 @@ type BoardGroup =
 export function GoalBoard({
   hosts,
   goals,
+  pending = false,
   activeOnly = false,
   query = "",
   showHost = false,
@@ -127,6 +128,7 @@ export function GoalBoard({
   /** The hosts the board reads; each goal's tasks are read on its own host. */
   hosts: readonly Host[]
   goals: HostRow<GoalDto>[]
+  pending?: boolean
   activeOnly?: boolean
   /** The title search, which narrows the tasks with no goal too. */
   query?: string
@@ -160,9 +162,19 @@ export function GoalBoard({
   // A far task with no goal is listed by its source and by its worker, both
   // with no goal: the board shows the source's copy alone.
   const daemonIds = useDaemonIdentities(true)
+  const identitiesLoading = daemonIds.isPending
+  const identitiesPending = identitiesLoading && tasks.rows.some((row) => !!row.execution_context)
   const noGoal = useMemo(
-    () => goallessTasks(withoutWorkerCopies(tasks.rows, daemonIds), activeOnly, query),
-    [tasks.rows, daemonIds, activeOnly, query],
+    () =>
+      goallessTasks(
+        withoutWorkerCopies(
+          tasks.rows.filter((row) => !row.execution_context || !identitiesLoading),
+          daemonIds,
+        ),
+        activeOnly,
+        query,
+      ),
+    [tasks.rows, daemonIds, identitiesLoading, activeOnly, query],
   )
   // Active work first: what is asking for a person, then what is still
   // running, then what is done with — goals and goal-less tasks by one rule.
@@ -213,7 +225,7 @@ export function GoalBoard({
   // a failed one keeps its warning and its Retry instead.
   if (groups.length === 0 && empty) {
     if (tasks.errors.length > 0) return warnings
-    return tasks.isSettled ? <>{empty}</> : null
+    return tasks.isSettled && !pending && !identitiesPending ? empty : <BoardSkeleton />
   }
 
   // A host whose tasks failed or are still loading keeps its goals and says
@@ -244,7 +256,11 @@ export function GoalBoard({
               {"Tasks "}
               <span className="sr-only">(</span>
               <Badge variant="secondary" className="tabular-nums">
-                {total}
+                {pending || tasks.pending.length > 0 || identitiesPending ? (
+                  <Skeleton aria-label="Loading task count" className="h-4 w-6" />
+                ) : (
+                  total
+                )}
               </Badge>
               <span className="sr-only">)</span>
             </h2>
@@ -296,6 +312,11 @@ export function GoalBoard({
                 />
               )
             })}
+            {pending || tasks.pending.length > 0 || identitiesPending ? (
+              <div role="status" aria-label="Loading goals">
+                <BoardSkeleton />
+              </div>
+            ) : null}
           </div>
         </section>
       </div>
@@ -528,7 +549,7 @@ function placeholderText(goal: GoalDto, tasks: TaskDto[], unread: boolean): stri
 }
 
 /** The loading board follows the shape of its rows. */
-export function BoardSkeleton() {
+function BoardSkeleton() {
   return (
     <div className={BOARD_FRAME} aria-hidden>
       <div className={cn(BOARD_BOX, "overflow-hidden")}>

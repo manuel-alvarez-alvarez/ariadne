@@ -31,6 +31,13 @@ function Harness({ allowInherit }: { allowInherit?: boolean }) {
 }
 
 describe("WorkflowSelect", () => {
+  it("shows a skeleton until workflows answer", () => {
+    daemonFetch.mockImplementation(() => new Promise(() => {}))
+    renderScreen(<Harness allowInherit />)
+    expect(screen.getByLabelText("Loading workflows").getAttribute("data-slot")).toBe("skeleton")
+    expect(screen.queryByRole("combobox")).toBeNull()
+  })
+
   it("offers only named workflows by default, as a repository's own picker does", async () => {
     const user = userEvent.setup()
     daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
@@ -41,7 +48,7 @@ describe("WorkflowSelect", () => {
     })
     renderScreen(<Harness />)
 
-    await user.click(screen.getByRole("combobox"))
+    await user.click(await screen.findByRole("combobox"))
 
     expect(await screen.findByRole("option", { name: "build" })).toBeDefined()
     expect(screen.queryByRole("option", { name: /repository default/i })).toBeNull()
@@ -58,7 +65,7 @@ describe("WorkflowSelect", () => {
     })
     renderScreen(<Harness allowInherit />)
 
-    await user.click(screen.getByRole("combobox"))
+    await user.click(await screen.findByRole("combobox"))
 
     expect(await screen.findByRole("option", { name: "build" })).toBeDefined()
     expect(screen.getByRole("option", { name: "Repository default" })).toBeDefined()

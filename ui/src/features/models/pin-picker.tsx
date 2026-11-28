@@ -59,6 +59,7 @@ import { HostDot } from "@/components/host-dot"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { AgentIcon } from "@/features/agents/agent-icon"
 import { acpAgentsQueryOptions } from "@/features/agents/queries"
@@ -412,8 +413,13 @@ export function PinPicker({
                   heading="Model"
                   columnRef={modelsRef}
                   className="col-span-2"
-                  empty={results.length === 0 ? "Nothing in the catalog matches." : undefined}
+                  empty={
+                    models && results.length === 0 ? "Nothing in the catalog matches." : undefined
+                  }
                 >
+                  {!models ? (
+                    <Skeleton aria-label="Loading catalog" className="m-2 h-24 w-32" />
+                  ) : null}
                   <OptionList
                     label="Models"
                     rows={results.map((entry) => modelRow(entry, true))}
@@ -430,9 +436,12 @@ export function PinPicker({
                         ? undefined
                         : models
                           ? "No agent has a model to show."
-                          : "Loading the catalog…"
+                          : undefined
                     }
                   >
+                    {!models ? (
+                      <Skeleton aria-label="Loading catalog" className="m-2 h-24 w-32" />
+                    ) : null}
                     <OptionList
                       label="Agents"
                       rows={agentRows}

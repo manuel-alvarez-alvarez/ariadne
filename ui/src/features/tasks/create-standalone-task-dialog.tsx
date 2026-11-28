@@ -146,39 +146,47 @@ export function CreateStandaloneTaskDialog({
           />
           <Field data-invalid={errors.repo_id ? "" : undefined}>
             <FieldLabel htmlFor="standalone-repo">Repository</FieldLabel>
-            <Controller
-              control={form.control}
-              name="repo_id"
-              render={({ field }) => (
-                <RepositoryCombobox
-                  id="standalone-repo"
-                  repositories={repositories.data ?? []}
-                  value={field.value ? [field.value] : []}
-                  onChange={(ids) => field.onChange(ids[0] ?? "")}
-                  invalid={errors.repo_id ? true : undefined}
-                  single
-                />
-              )}
-            />
+            {repositories.isPending ? (
+              <Skeleton aria-label="Loading repositories" className="h-9 w-full" />
+            ) : (
+              <Controller
+                control={form.control}
+                name="repo_id"
+                render={({ field }) => (
+                  <RepositoryCombobox
+                    id="standalone-repo"
+                    repositories={repositories.data ?? []}
+                    value={field.value ? [field.value] : []}
+                    onChange={(ids) => field.onChange(ids[0] ?? "")}
+                    invalid={errors.repo_id ? true : undefined}
+                    single
+                  />
+                )}
+              />
+            )}
             <FieldError>{errors.repo_id?.message}</FieldError>
           </Field>
           <Field>
             <FieldLabel htmlFor="standalone-workflow">Workflow</FieldLabel>
-            <FormSelect
-              control={form.control}
-              name="workflow"
-              id="standalone-workflow"
-              options={[
-                { value: NO_WORKFLOW, label: "No workflow" },
-                ...catalog.map((one) => ({ value: one.name, label: one.name })),
-              ]}
-              onValueChange={(value) => {
-                const picked = catalog.find((one) => one.name === value)
-                form.setValue("agents", staffingRows(picked?.steps ?? null), {
-                  shouldDirty: true,
-                })
-              }}
-            />
+            {workflows.isPending ? (
+              <Skeleton aria-label="Loading workflows" className="h-9 w-full" />
+            ) : (
+              <FormSelect
+                control={form.control}
+                name="workflow"
+                id="standalone-workflow"
+                options={[
+                  { value: NO_WORKFLOW, label: "No workflow" },
+                  ...catalog.map((one) => ({ value: one.name, label: one.name })),
+                ]}
+                onValueChange={(value) => {
+                  const picked = catalog.find((one) => one.name === value)
+                  form.setValue("agents", staffingRows(picked?.steps ?? null), {
+                    shouldDirty: true,
+                  })
+                }}
+              />
+            )}
             <FieldDescription>
               The columns the task moves through, one agent each. With no workflow, one agent does
               the whole task.

@@ -173,6 +173,38 @@ describe("RepositoriesPage", () => {
     expect(await screen.findByText("Webhook: HTTP 403: needs admin rights")).toBeDefined()
   })
 
+  it("ends the webhook skeleton when the tunnel cannot be read", async () => {
+    stubDaemon([{ ...ARIADNE, forge: aForge({ enabled: true }) }])
+    const answer = daemonFetch.getMockImplementation()
+    daemonFetch.mockImplementation(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      if (new URL(request.url).pathname === "/v1/forge/tunnel") {
+        return errorResponse(500, "internal", "no tunnel")
+      }
+      return (answer as NonNullable<typeof answer>)(input, init)
+    })
+    renderScreen(<RepositoriesPage />)
+
+    expect(await screen.findByTitle("The tunnel could not be read")).toBeDefined()
+    expect(screen.queryByLabelText("Loading webhook mode")).toBeNull()
+  })
+
+  it("shows polling at once for a repository whose webhook is off, whatever the tunnel does", async () => {
+    stubDaemon([{ ...ARIADNE, forge: aForge({ enabled: true, webhook_enabled: false }) }])
+    const answer = daemonFetch.getMockImplementation()
+    daemonFetch.mockImplementation(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      if (new URL(request.url).pathname === "/v1/forge/tunnel") {
+        return errorResponse(500, "internal", "no tunnel")
+      }
+      return (answer as NonNullable<typeof answer>)(input, init)
+    })
+    renderScreen(<RepositoriesPage />)
+
+    expect(await screen.findByRole("img", { name: "polling: working" })).toBeDefined()
+    expect(screen.queryByTitle("The tunnel could not be read")).toBeNull()
+  })
+
   it("shows polling with the tunnel off: green with how to turn it on, red with the fetch error", async () => {
     const user = userEvent.setup()
     stubDaemon([

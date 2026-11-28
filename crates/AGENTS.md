@@ -249,6 +249,12 @@ Other branch pushes retain scoped checks. Only those pushes omit the slow test s
 Require GitHub CI on the current PR head before GitHub squash merges.
 
 For a shipped skill document change, follow the template in [spec 017, rule 16](../specs/017-skills-and-staffed-agents.md).
+A shipped skill holds craft only and names no Ariadne word; the test
+`skill_tests/template.rs::no_shipped_skill_names_an_ariadne_word` checks every
+skill in the catalog. Put an Ariadne tool, call or rule of a skill in its
+supplement, `crates/ariadne-store/supplements/<skill>/<seat>.md` ([spec 006,
+rule 21](../specs/006-prompts-and-simplified-technical-english.md)). Use the
+plain word of its word list in the skill.
 
 Shipped migrations never change, and no squash is permitted. Every schema
 change adds a migration.
