@@ -1081,6 +1081,32 @@ pub(super) async fn submit_review(
             ),
         });
     }
+    // An empty body with no finding is a quiet round: it has nothing new to
+    // say, so it records the reviewed revision and posts nothing (029). It
+    // reads nothing from the forge, so a forge that fails or a cold cache
+    // cannot keep the revision from being stored.
+    if req.body.is_empty() && comments.is_empty() && !asked {
+        // A session with no worktree left reviewed the head it was told of.
+        let reviewed_sha = match session_worktree(&session) {
+            Some(worktree) => Some(
+                state
+                    .launcher
+                    .git
+                    .checkout_head(&worktree)
+                    .await
+                    .map_err(|e| ApiError::conflict(format!("{e:#}")))?,
+            ),
+            None => row.told_head_sha.clone(),
+        };
+        if let Some(reviewed_sha) = reviewed_sha {
+            state
+                .store
+                .set_pull_request_reviewed(&row.id, &reviewed_sha)
+                .await?;
+        }
+        state.notify_scheduler_pull_request(&row.id);
+        return Ok((StatusCode::CREATED, Json(serde_json::json!([]))));
+    }
     let pull = read_held(&state, row).await?;
     // A finding sits on a line the change shows, on its new side: a forge
     // takes an inline comment nowhere else — GitHub refuses it on a

@@ -1205,6 +1205,9 @@ async fn a_quiet_submit_stores_the_checkout_head_and_calls_no_forge() {
     ask_review(&h, &id, &repo, 1, PIN).await;
     let session = idle_session(&h, &id).await;
     let posts = review_posts(&stub).len();
+    // Every forge call fails from here: a quiet submit reads nothing from
+    // the forge, so it still stores the head.
+    stub.reprogram(json!([]));
     let answered: Value = h
         .json(
             as_session(
