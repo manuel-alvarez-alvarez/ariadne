@@ -26,8 +26,7 @@ import { toast } from "sonner"
 
 import type { TaskDto } from "@/api"
 import { ConfirmDialog, isSettling } from "@/components/confirm-dialog"
-import { Button } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { IconButton } from "@/components/icon-button"
 import { describeError } from "@/lib/format"
 import { usePanelHost } from "@/routes/paths"
 import { useCancelTask, useRetryTask } from "./queries"
@@ -72,58 +71,50 @@ export function TaskActions({ task }: { task: TaskDto }) {
   return (
     <div className="flex items-center gap-2">
       {showEdit && (
-        <Button variant="outline" size="sm" onClick={() => setOpen("edit")}>
-          <PencilIcon />
-          Edit task
-        </Button>
+        <IconButton icon={<PencilIcon />} label="Edit task" onClick={() => setOpen("edit")} />
       )}
       {showRetry && (
-        // A real tooltip rather than a `title=`: this is the only explanation
-        // retry has anywhere, and a title attribute never reaches a keyboard.
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="outline"
-                size="sm"
-                pending={retry.isPending}
-                onClick={() => {
-                  retry.mutate(undefined, {
-                    onSuccess: (result) =>
-                      toast.success(
-                        result.status === "failed" ? "Retry requested" : "Task retried",
-                        {
-                          description:
-                            result.status === "failed"
-                              ? "The task remains failed until the worker acknowledges recovery."
-                              : result.status === "pending"
-                                ? "Pending: waiting for dependencies or authorization."
-                                : result.status === "ready"
-                                  ? "Ready to start, with the same branch and worktree."
-                                  : result.status === "in_progress"
-                                    ? "In progress, with the same branch and worktree."
-                                    : `Status: ${TASK_STATUS_META[result.status].label}`,
-                        },
-                      ),
-                    onError: (error) =>
-                      toast.error("Could not retry", { description: describeError(error) }),
-                  })
-                }}
-              />
-            }
-          >
-            <RotateCcwIcon />
-            Retry task
-          </TooltipTrigger>
-          <TooltipContent>{retryHint}</TooltipContent>
-        </Tooltip>
+        // The tooltip is the only explanation retry has anywhere, and it opens
+        // on focus, which a `title=` never does.
+        <IconButton
+          icon={<RotateCcwIcon />}
+          label="Retry task"
+          tooltip={
+            <>
+              Retry task
+              <span className="text-background/70">{retryHint}</span>
+            </>
+          }
+          pending={retry.isPending}
+          onClick={() => {
+            retry.mutate(undefined, {
+              onSuccess: (result) =>
+                toast.success(result.status === "failed" ? "Retry requested" : "Task retried", {
+                  description:
+                    result.status === "failed"
+                      ? "The task remains failed until the worker acknowledges recovery."
+                      : result.status === "pending"
+                        ? "Pending: waiting for dependencies or authorization."
+                        : result.status === "ready"
+                          ? "Ready to start, with the same branch and worktree."
+                          : result.status === "in_progress"
+                            ? "In progress, with the same branch and worktree."
+                            : `Status: ${TASK_STATUS_META[result.status].label}`,
+                }),
+              onError: (error) =>
+                toast.error("Could not retry", { description: describeError(error) }),
+            })
+          }}
+        />
       )}
       {showCancel && (
         // Only opens the confirm; the solid red is on the click inside it.
-        <Button variant="destructive-ghost" size="sm" onClick={() => setOpen("cancel")}>
-          <BanIcon />
-          Cancel task
-        </Button>
+        <IconButton
+          variant="destructive-ghost"
+          icon={<BanIcon />}
+          label="Cancel task"
+          onClick={() => setOpen("cancel")}
+        />
       )}
 
       {/* The form resets itself from the task each time it opens, so it never

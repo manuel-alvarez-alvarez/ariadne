@@ -13,7 +13,7 @@ use ariadne_core::SessionStatus;
 use ariadne_store::{AgentSession, EventFilter, SessionCost, SessionDisplayState};
 
 use common::acp::{StubAcpAgent, discovery_settled, registry_home, script, stub_acp_agent};
-use common::{Harness, TIMEOUT, eventually, expect_sse, get, harness, post_json};
+use common::{Harness, TIMEOUT, eventually, harness, post_json};
 
 /// The ACP session modes the stub offers in these tests.
 fn modes() -> Value {
@@ -190,57 +190,6 @@ async fn a_whole_compaction_summary_replaces_its_chunks() {
                  "status": "failed", "summary": [text("Final")],
                  "error": "context still full"})
         ]
-    );
-}
-
-/// Summary chunks and display state changes go out live to the console
-/// stream while the turn runs.
-#[tokio::test]
-async fn summary_chunks_and_display_changes_go_out_live() {
-    let first = script()["prompts"][0].clone();
-    let (_dir, _stub, h, session) = started(json!([
-        first,
-        turn(json!([
-            {"sessionUpdate": "compaction_summary_chunk", "compactionId": "c-3",
-             "content": text("Kept this.")},
-            {"sessionUpdate": "session_info_update", "title": "Fix the parser"},
-            {"sessionUpdate": "compaction_update", "compactionId": "c-3", "status": "completed"},
-        ]))
-    ]))
-    .await;
-    let mut body = h
-        .stream(get(&format!("/v1/sessions/{}/console/stream", session.id)))
-        .await;
-    expect_sse(&mut body, "snapshot").await;
-    let (status, _) = h
-        .send(post_json(
-            &format!("/v1/sessions/{}/console/input", session.id),
-            json!({"text": "go on"}),
-        ))
-        .await;
-    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
-
-    let mut seen: Vec<Value> = Vec::new();
-    while seen
-        .last()
-        .is_none_or(|e: &Value| e["kind"] != "compaction_update")
-    {
-        seen.push(expect_sse(&mut body, "event").await);
-    }
-    let live = |kind: &str| -> Vec<Value> {
-        seen.iter()
-            .filter(|e| e["kind"] == kind)
-            .map(|e| e["payload"].clone())
-            .collect()
-    };
-    assert_eq!(
-        live("compaction_summary_chunk"),
-        [json!({"session_id": "stub-session", "compaction_id": "c-3",
-                "content": text("Kept this.")})]
-    );
-    assert_eq!(
-        live("display_state_update"),
-        [json!({"session_id": "stub-session", "title": "Fix the parser"})]
     );
 }
 

@@ -6,10 +6,12 @@
  * that daemon is configured with live on the Hosts screen.
  */
 
+import { RotateCcwIcon, Undo2Icon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
 import { DEFAULT_BASE_URL, normalizeBaseUrl } from "@/api"
+import { IconButton } from "@/components/icon-button"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -101,9 +103,12 @@ export function SettingsDialog({
                 </p>
                 <p>Open daemon logs from the connection status at the bottom of the sidebar.</p>
               </details>
-              <Button type="button" variant="outline" size="sm" onClick={retry}>
-                Retry connection
-              </Button>
+              <IconButton
+                type="button"
+                icon={<RotateCcwIcon />}
+                label="Retry connection"
+                onClick={retry}
+              />
             </section>
             <Field data-invalid={error ? "" : undefined}>
               <FieldLabel htmlFor="daemon-base-url">Daemon URL</FieldLabel>
@@ -156,16 +161,17 @@ export function SettingsDialog({
             </div>
           </div>
           <DialogFooter>
-            <Button
+            <IconButton
               type="button"
               variant="ghost"
+              size="icon"
+              icon={<Undo2Icon />}
+              label="Reset to default"
               onClick={() => {
                 setDraft(DEFAULT_BASE_URL)
                 setError(null)
               }}
-            >
-              Reset to default
-            </Button>
+            />
             <DialogClose render={<Button type="button" variant="outline" />}>Close</DialogClose>
           </DialogFooter>
         </form>

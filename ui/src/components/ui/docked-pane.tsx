@@ -272,7 +272,7 @@ export function PaneTitle({ className, ...props }: ComponentProps<"h2">) {
 /** The child owns its layout; in particular, a session fills this height. */
 export function PaneBody({ children }: { children: React.ReactNode }) {
   return (
-    <div data-slot="pane-body" className="min-h-0 flex-1 overflow-y-auto">
+    <div data-slot="pane-body" className="@container/pane min-h-0 flex-1 overflow-y-auto">
       <div className="flex h-full flex-col gap-4">{children}</div>
     </div>
   )

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it } from "vitest"
 
 import type { AttentionListDto, GoalDto, SessionDto, TaskDto, WorkflowStepDto } from "@/api"
@@ -102,7 +103,7 @@ it("makes a row one link to the task panel with one tab stop, its pull request o
   const links = within(row).getAllByRole("link")
   const own = links.find((link) => link.contains(title))
   expect(own?.getAttribute("href")).toContain("task=t1")
-  expect(within(own as HTMLElement).getByText("Failed")).toBeTruthy()
+  expect(within(own as HTMLElement).getByRole("img", { name: "Failed" })).toBeTruthy()
   const pr = within(row).getByRole("link", { name: /Pull request #412/ })
   expect(own?.contains(pr)).toBe(false)
   const stops = [...row.querySelectorAll<HTMLElement>("a, button, [tabindex]")].filter(
@@ -323,7 +324,7 @@ it("puts one goal line over the rows of its goal, shown at rest: toggle, title l
   expect(link.getAttribute("href")).toContain(`goal=${goal.id}`)
   const line = link.closest("[data-goal-line]") as HTMLElement
   expect(within(line).getByRole("button", { name: `Collapse ${GOAL_TITLE}` })).toBeTruthy()
-  expect(within(line).getByText("Active")).toBeTruthy()
+  expect(within(line).getByRole("img", { name: "Active" })).toBeTruthy()
   expect(await within(line).findByText("1/2")).toBeTruthy()
   expect(within(line).getByText(/out/)).toBeTruthy()
   expect(line.querySelector("[data-task-row]")).toBeNull()
@@ -381,7 +382,7 @@ it("folds a finished goal to its goal line with the summary, and no border", asy
   expect(row.className).not.toMatch(BOX)
   expect(within(row).getByRole("button", { name: `Expand ${GOAL_TITLE}` })).toBeTruthy()
   expect(within(row).getByRole("link", { name: GOAL_TITLE })).toBeTruthy()
-  expect(within(row).getByText("Completed")).toBeTruthy()
+  expect(within(row).getByRole("img", { name: "Completed" })).toBeTruthy()
   expect(within(row).getByText(/out/)).toBeTruthy()
   expect(screen.queryByText("Done work")).toBeNull()
 })
@@ -400,7 +401,7 @@ it("draws a goal with no shown task as its goal line, then one muted line with t
   expect(screen.getByRole("link", { name: GOAL_TITLE }).getAttribute("href")).toContain(
     `goal=${goal.id}`,
   )
-  expect(within(line as HTMLElement).getByText("Planning")).toBeTruthy()
+  expect(within(line as HTMLElement).getByRole("img", { name: "Planning" })).toBeTruthy()
   expect(screen.getByRole("heading", { name: "Tasks (0)" })).toBeTruthy()
 })
 
@@ -606,4 +607,129 @@ it("hands the keyboard to the fold button when unfolding leaves a goal with no s
   const collapse = await screen.findByRole("button", { name: `Collapse ${GOAL_TITLE}` })
   expect(screen.getByText("No active tasks").closest("[data-goal-placeholder]")).toBeTruthy()
   expect(document.activeElement).toBe(collapse)
+})
+
+/** The shape of an icon, so two states with one shape are told apart by colour alone. */
+function shape(icon: HTMLElement): string {
+  return [...icon.querySelectorAll("path, circle, rect, line, polyline")]
+    .map((node) => node.outerHTML)
+    .join("")
+}
+
+it("shows each task state as its own coloured icon with the word as its name and tooltip", async () => {
+  const goal = aGoal({ id: "g-icons", title: GOAL_TITLE })
+  const statuses = ["pending", "ready", "in_progress", "finished", "cancelled", "failed"] as const
+  stubDaemon(
+    statuses.map((status) => aTask({ id: `t-${status}`, goal_id: goal.id, title: status, status })),
+  )
+  board([goal])
+
+  const words = ["Pending", "Ready", "In progress", "Finished", "Cancelled", "Failed"]
+  const colours = [
+    "text-status-pending",
+    "text-status-ready",
+    "text-status-active",
+    "text-status-done",
+    "text-muted-foreground",
+    "text-status-danger",
+  ]
+  const shapes = new Set<string>()
+  for (const [at, status] of statuses.entries()) {
+    const row = (await screen.findByText(status)).closest("[data-task-row]") as HTMLElement
+    const state = row.querySelector("[data-column=state]") as HTMLElement
+    const icon = within(state).getByRole("img", { name: words[at] })
+    expect(icon.className).toContain(colours[at] ?? "")
+    expect(icon.querySelector("svg")).toBeTruthy()
+    // The pill and its word are gone from the row.
+    expect(state.textContent).toBe("")
+    shapes.add(shape(icon))
+  }
+  expect(shapes.size).toBe(statuses.length)
+})
+
+it("shows a stalled task as a warning icon", async () => {
+  const goal = aGoal({ id: "g-warn", title: GOAL_TITLE })
+  stubDaemon([
+    aTask({ id: "t1", goal_id: goal.id, title: "Idle", status: "in_progress", stalled: true }),
+  ])
+  board([goal])
+
+  const row = (await screen.findByText("Idle")).closest("[data-task-row]") as HTMLElement
+  const icon = within(row).getByRole("img", { name: "Stalled" })
+  expect(icon.className).toContain("text-status-warn-fg")
+})
+
+it("shows each goal state as its own coloured icon", async () => {
+  const goals = (["planning", "active", "completed", "cancelled"] as const).map((status) =>
+    aGoal({ id: `g-${status}`, title: `Goal ${status}`, status }),
+  )
+  stubDaemon([])
+  board(goals)
+
+  const words = ["Planning", "Active", "Completed", "Cancelled"]
+  const colours = [
+    "text-status-review",
+    "text-status-active",
+    "text-status-done",
+    "text-muted-foreground",
+  ]
+  const shapes = new Set<string>()
+  for (const [at, status] of ["planning", "active", "completed", "cancelled"].entries()) {
+    const line = (await screen.findByText(`Goal ${status}`)).closest(
+      "[data-goal-line]",
+    ) as HTMLElement
+    const icon = within(line).getByRole("img", { name: words[at] })
+    expect(icon.className).toContain(colours[at] ?? "")
+    expect(line.textContent).not.toContain(words[at] ?? "")
+    shapes.add(shape(icon))
+  }
+  expect(shapes.size).toBe(4)
+})
+
+it("shows an unresolved execution owner on a row as a warning icon", async () => {
+  const goal = aGoal({ id: "g-owner", title: GOAL_TITLE })
+  stubDaemon([
+    aTask({
+      id: "t1",
+      goal_id: goal.id,
+      title: "Remote",
+      host: "gpu",
+      execution_context: {
+        source_goal: { daemon_id: "source", goal_id: "goal", title: "Source", description: "" },
+        execution_owner: "unknown-worker",
+        workflow: { name: "saved", steps: [] },
+        revision: 1,
+        authorized: true,
+        authorized_revision: 1,
+      },
+    }),
+  ])
+  board([goal])
+
+  const row = (await screen.findByText("Remote")).closest("[data-task-row]") as HTMLElement
+  const icon = within(row).getByRole("img", { name: "Unconfigured worker" })
+  expect(icon.className).toContain("text-status-warn-fg")
+  expect(within(row).queryByText("Unconfigured worker")).toBeNull()
+})
+
+it("names a waiting task's icon by its state word and keeps the dependencies in the tooltip", async () => {
+  const goal = aGoal({ id: "g-wait", title: GOAL_TITLE })
+  stubDaemon([
+    aTask({ id: "t0", goal_id: goal.id, title: "First", status: "in_progress" }),
+    aTask({
+      id: "t1",
+      goal_id: goal.id,
+      title: "Second",
+      status: "pending",
+      depends_on: ["t0"],
+    }),
+  ])
+  board([goal])
+
+  const row = (await screen.findByText("Second")).closest("[data-task-row]") as HTMLElement
+  const icon = within(row).getByRole("img", { name: "Pending" })
+  await userEvent.hover(icon)
+  expect(
+    (await screen.findAllByText("Pending — Waits for 1 task to merge")).length,
+  ).toBeGreaterThan(0)
 })

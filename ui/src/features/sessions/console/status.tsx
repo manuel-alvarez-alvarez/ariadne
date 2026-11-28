@@ -1,8 +1,7 @@
-import { CircleHelpIcon, Loader2Icon, PlugZapIcon } from "lucide-react"
-import type { ReactNode } from "react"
+import { CircleHelpIcon, Loader2Icon, PencilIcon, PlugZapIcon, RotateCcwIcon } from "lucide-react"
 
 import type { SessionStatus } from "@/api"
-import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/icon-button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatTokens } from "@/lib/format"
 
@@ -31,12 +30,8 @@ export function FailedMessage({
       <p className="text-status-danger-fg">{one.message}</p>
       <p className="whitespace-pre-wrap break-words text-sm">{one.text}</p>
       <div className="flex gap-1.5">
-        <Button size="xs" variant="outline" onClick={onRetry}>
-          Retry
-        </Button>
-        <Button size="xs" variant="outline" onClick={onEdit}>
-          Edit
-        </Button>
+        <IconButton size="icon-xs" icon={<RotateCcwIcon />} label="Retry" onClick={onRetry} />
+        <IconButton size="icon-xs" icon={<PencilIcon />} label="Edit" onClick={onEdit} />
       </div>
     </div>
   )
@@ -61,9 +56,7 @@ export function HistoryLine({ history, onRetry }: { history: History; onRetry: (
         className="flex items-center gap-2 border-b px-3 py-1 font-mono text-xs text-status-danger-fg"
       >
         Could not load older events: {history.message}
-        <Button size="xs" variant="outline" onClick={onRetry}>
-          Retry
-        </Button>
+        <IconButton size="icon-xs" icon={<RotateCcwIcon />} label="Retry" onClick={onRetry} />
       </div>
     )
   }
@@ -82,58 +75,76 @@ function clock(seconds: number): string {
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`
 }
 
+/** One fact of the row: whole or not shown, never cut. */
+export interface StatusFact {
+  key: string
+  text: string
+  hint?: string
+}
+
+/**
+ * The status row: one line of whole facts, highest rank first. The state, the
+ * turn activity, the tokens, then `facts`, which the caller gives in rank order.
+ * The line wraps inside a clip of exactly one line, so a fact that does not fit
+ * drops out of sight with every fact after it: the lowest rank goes first and
+ * no fact is cut to a part of its words. The turn activity is cut with an
+ * ellipsis at half of the row.
+ */
 export function StatusRow({
   status,
   turn,
   waiting = false,
   tokens,
-  facts,
+  facts = [],
 }: {
   status: SessionStatus
   turn?: { tool?: string; seconds?: number }
   /** A question of the agent waits for the user. */
   waiting?: boolean
   tokens: TokenTotals
-  /** More of the session's state, before the token totals. They give way first on a narrow row. */
-  facts?: ReactNode
+  /** The rest of the session's state, highest rank first. */
+  facts?: StatusFact[]
 }) {
   const firstLine = turn?.tool?.split("\n")[0] ?? ""
   const spent = tokens.input > 0 || tokens.output > 0
   return (
-    <section
-      aria-label="Session status"
-      className="flex items-center gap-3 overflow-hidden whitespace-nowrap border-t px-3 py-1 font-mono text-xs text-muted-foreground"
-    >
-      <span className="shrink-0">{status}</span>
-      {waiting ? (
-        <span className="flex min-w-0 items-center gap-1.5">
-          <CircleHelpIcon className="size-3 shrink-0" aria-hidden />
-          waiting for you
-        </span>
-      ) : turn ? (
-        <span className="flex min-w-0 items-center gap-1.5">
-          <Loader2Icon className="size-3 shrink-0 animate-spin" aria-hidden />
-          {turn.tool === undefined ? (
-            "thinking"
-          ) : (
-            <Tooltip>
-              <TooltipTrigger render={<span className="min-w-0 truncate" />}>
-                running {firstLine}
-              </TooltipTrigger>
-              <TooltipContent className="break-words">{turn.tool}</TooltipContent>
-            </Tooltip>
-          )}
-          {turn.seconds === undefined ? null : (
-            <span className="shrink-0">{clock(turn.seconds)}</span>
-          )}
-        </span>
-      ) : null}
-      {facts}
-      {spent ? (
-        <span className="ml-auto shrink-0">
-          ↑{formatTokens(tokens.input)} ↓{formatTokens(tokens.output)}
-        </span>
-      ) : null}
+    <section aria-label="Session status" className="border-t px-3 py-1">
+      <div className="flex h-4 flex-wrap items-center gap-x-3 overflow-hidden whitespace-nowrap font-mono text-xs leading-4 text-muted-foreground *:h-4">
+        <span>{status}</span>
+        {waiting ? (
+          <span className="flex max-w-[50%] min-w-0 items-center gap-1.5">
+            <CircleHelpIcon className="size-3 shrink-0" aria-hidden />
+            waiting for you
+          </span>
+        ) : turn ? (
+          <span className="flex max-w-[50%] min-w-0 items-center gap-1.5">
+            <Loader2Icon className="size-3 shrink-0 animate-spin" aria-hidden />
+            {turn.tool === undefined ? (
+              "thinking"
+            ) : (
+              <Tooltip>
+                <TooltipTrigger render={<span className="min-w-0 truncate" />}>
+                  running {firstLine}
+                </TooltipTrigger>
+                <TooltipContent className="break-words">{turn.tool}</TooltipContent>
+              </Tooltip>
+            )}
+            {turn.seconds === undefined ? null : (
+              <span className="shrink-0">{clock(turn.seconds)}</span>
+            )}
+          </span>
+        ) : null}
+        {spent ? (
+          <span>
+            ↑{formatTokens(tokens.input)} ↓{formatTokens(tokens.output)}
+          </span>
+        ) : null}
+        {facts.map((fact) => (
+          <span key={fact.key} title={fact.hint}>
+            {fact.text}
+          </span>
+        ))}
+      </div>
     </section>
   )
 }

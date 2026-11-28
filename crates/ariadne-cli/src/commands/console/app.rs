@@ -1,4 +1,4 @@
-//! `ariadne attach --full-screen` on a terminal: the full-screen console of
+//! `ariadne attach` on a terminal: the full-screen console of
 //! [`ariadne_console::app`] on the process terminal, driven from the
 //! daemon's trajectory stream (040).
 //!
@@ -25,23 +25,38 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::time::{Instant, sleep_until};
 
-use ariadne_api::events::AgentEventDto;
-use ariadne_api::sessions::{AnswerQuestionRequest, ConsoleInputRequest, QuestionDto};
-use ariadne_api::trajectory::{StepDto, TrajectoryStreamQuery};
+use ariadne_api::goals::GoalDto;
+use ariadne_api::pull_requests::PullRequestDto;
+use ariadne_api::sessions::{AnswerQuestionRequest, ConsoleInputRequest, QuestionDto, SessionDto};
+use ariadne_api::tasks::TaskDto;
+use ariadne_api::trajectory::{
+    StepDto, ToolCallDetailDto, TrajectoryItemQuery, TrajectoryQuery, TrajectorySnapshotDto,
+    TrajectoryStreamQuery,
+};
 use ariadne_client::{Client, SseStream};
-use ariadne_console::app::{App, Frame, Host, drive};
+use ariadne_console::ansi::{TITLE_RESTORE, title};
+use ariadne_console::app::{App, Frame, HISTORY_PAGE, Host, drive, reach_back, session_name};
 use ariadne_console::trajectory::Printer;
 
-use super::tui::{Held, Terminals};
+use super::terminal::{Held, Terminals};
 use crate::commands::{follow, transcript};
 use crate::output::note;
 
 /// Open the full-screen console on the process terminal.
 pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     let mut app = App::new(id);
+    let row = session_row(client, id).await;
+    if let Some(model) = row.as_ref().map(|row| row.model.as_str()) {
+        app.stored_model(model);
+    }
+    let name = match &row {
+        Some(row) => session_name_of(client, row).await,
+        None => String::new(),
+    };
+    app.named(&name);
     // The terminal is held before the screen is drawn, so a terminal that
     // cannot be drawn on at all is still given back.
-    let held = Held::take(Screen::default())?;
+    let held = Held::take(Screen::default().titled(&name))?;
     let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
     let outcome = drive(
         &mut terminal,
@@ -62,13 +77,68 @@ pub(super) async fn attach(client: &Client, id: &str) -> Result<()> {
     outcome
 }
 
+/// The session row. Its model is what the bottom row names where the agent
+/// reports no model option. A session the daemon will not describe costs the
+/// bottom row its model and its name, and nothing else.
+async fn session_row(client: &Client, id: &str) -> Option<SessionDto> {
+    client
+        .get_json::<SessionDto>(&format!("/v1/sessions/{id}"))
+        .await
+        .ok()
+}
+
+/// The name of the session, as `ariadne session ls` shows it: the title of
+/// the task, the goal or the pull request behind it, then its seat and step.
+async fn session_name_of(client: &Client, row: &SessionDto) -> String {
+    let title = session_title(client, row).await;
+    session_name(title.as_deref(), row.seat, row.step.as_deref())
+}
+
+/// The title `ariadne session ls` shows, found as the daemon finds it: the
+/// pull request's title with its URL where the session has a pull request
+/// the daemon can read, else the task's title, else the goal's.
+async fn session_title(client: &Client, row: &SessionDto) -> Option<String> {
+    if let Some(id) = &row.pull_request_id
+        && let Some(pull) = pull_of(client, id).await
+    {
+        return Some(format!("{} ({})", pull.title, pull.url));
+    }
+    if let Some(id) = &row.task_id
+        && let Some(title) = titled::<TaskDto>(client, "tasks", id, |task| task.title).await
+    {
+        return Some(title);
+    }
+    let id = row.goal_id.as_ref()?;
+    titled::<GoalDto>(client, "goals", id, |goal| goal.title).await
+}
+
+async fn pull_of(client: &Client, id: &str) -> Option<PullRequestDto> {
+    client
+        .get_json(&format!("/v1/pull-requests/{id}"))
+        .await
+        .ok()
+}
+
+async fn titled<T: serde::de::DeserializeOwned>(
+    client: &Client,
+    route: &str,
+    id: &str,
+    title: fn(T) -> String,
+) -> Option<String> {
+    client
+        .get_json::<T>(&format!("/v1/{route}/{id}"))
+        .await
+        .ok()
+        .map(title)
+}
+
 /// What is said as the console closes: that the session is still running,
 /// or that it has ended.
 fn farewell(app: &App, id: &str) -> String {
     match app.has_ended() {
         true => format!("the session has ended; revive it with: ariadne session resume {id}"),
         false => format!(
-            "left the console — the session is still running; attach again with: ariadne attach {id} --full-screen"
+            "left the console — the session is still running; attach again with: ariadne attach {id}"
         ),
     }
 }
@@ -118,7 +188,7 @@ async fn step(client: &Client, id: &str, mut link: Link) -> Option<(Result<Frame
                     Ok(super::Frame::Snapshot(snapshot)) => {
                         let rev = Some(snapshot.rev);
                         let history = if snapshot.has_older {
-                            prompt_history(client, id).await
+                            Some(prompt_history(client, id, &snapshot).await)
                         } else {
                             None
                         };
@@ -155,20 +225,22 @@ async fn step(client: &Client, id: &str, mut link: Link) -> Option<(Result<Frame
     }
 }
 
-/// Use the inline console's event window when the trajectory omits older turns.
-async fn prompt_history(client: &Client, id: &str) -> Option<Vec<String>> {
-    let events: Vec<AgentEventDto> = client
-        .get_json(&format!("/v1/sessions/{id}/console"))
-        .await
-        .ok()?;
-    Some(
-        events
-            .into_iter()
-            .filter(|event| event.kind == "user_prompt_submit")
-            .filter(|event| event.payload["source"].as_str() == Some("console"))
-            .filter_map(|event| event.payload["text"].as_str().map(str::to_owned))
-            .collect(),
-    )
+/// The prompts typed at the console, read back through the pages of turns
+/// older than the snapshot's.
+async fn prompt_history(
+    client: &Client,
+    id: &str,
+    snapshot: &TrajectorySnapshotDto,
+) -> Vec<String> {
+    reach_back(snapshot, |before| async move {
+        let query = TrajectoryQuery {
+            before: Some(before),
+            limit: Some(HISTORY_PAGE),
+            subagent: None,
+        };
+        client.trajectory(id, &query).await.ok()
+    })
+    .await
 }
 
 /// The session's routes as the console's host.
@@ -223,6 +295,23 @@ impl Host for Posts<'_> {
             .map_err(|e| format!("the steps of the turn could not be read: {e}"))
     }
 
+    async fn subagent_steps(
+        &mut self,
+        turn_id: &str,
+        subagent_id: &str,
+    ) -> Result<Vec<StepDto>, String> {
+        transcript::all_steps_of(self.client, self.id, turn_id, Some(subagent_id))
+            .await
+            .map_err(|e| format!("the steps of the subagent could not be read: {e}"))
+    }
+
+    async fn detail(&mut self, step_id: &str, raw: bool) -> Result<ToolCallDetailDto, String> {
+        self.client
+            .trajectory_item(self.id, step_id, &TrajectoryItemQuery { raw })
+            .await
+            .map_err(|e| format!("the detail of the step could not be read: {}", e.human()))
+    }
+
     async fn questions(&mut self) -> Result<Vec<QuestionDto>, String> {
         self.client
             .get_json(&format!("/v1/sessions/{}/questions", self.id))
@@ -255,6 +344,9 @@ fn osc52(text: &str) -> String {
 pub(super) struct Screen<W: Write = std::io::Stdout> {
     out: W,
     enhanced: bool,
+    /// The window title the console set, which it puts back on leaving.
+    titled: bool,
+    name: String,
 }
 
 impl Default for Screen {
@@ -268,7 +360,15 @@ impl<W: Write> Screen<W> {
         Self {
             out,
             enhanced: false,
+            titled: false,
+            name: String::new(),
         }
+    }
+
+    /// The console names the terminal window `name` while it is open.
+    fn titled(mut self, name: &str) -> Self {
+        self.name = name.to_string();
+        self
     }
 
     /// Write the modes the console needs, raw mode aside.
@@ -278,7 +378,12 @@ impl<W: Write> Screen<W> {
             EnterAlternateScreen,
             EnableMouseCapture,
             EnableBracketedPaste
-        )
+        )?;
+        if !self.name.is_empty() {
+            self.out.write_all(&title(&self.name))?;
+            self.titled = true;
+        }
+        Ok(())
     }
 }
 
@@ -296,6 +401,9 @@ impl<W: Write> Terminals for Screen<W> {
     }
 
     fn leave(&mut self) {
+        if self.titled {
+            let _ = self.out.write_all(TITLE_RESTORE);
+        }
         if self.enhanced {
             let _ = crossterm::execute!(self.out, PopKeyboardEnhancementFlags);
         }
@@ -519,24 +627,30 @@ mod tests {
         assert!(holds(&screen.out.0, ALTERNATE_OFF));
     }
 
+    /// A closed turn whose prompt `prompt n` was typed at a console.
+    fn typed_turn(n: u32) -> serde_json::Value {
+        json!({
+            "id": format!("t{n}"), "lane": "main",
+            "prompt": {"id": format!("t{n}"), "source": "console", "prompt_kind": null,
+                       "text": format!("prompt {n}"), "content": []},
+            "state": "completed", "stop_reason": "end_turn",
+            "started_at": "2026-11-27T10:00:00Z", "ended_at": "2026-11-27T10:00:01Z",
+            "activity": {"steps": 0, "tool_calls": 0, "files_changed": 0, "failed": 0,
+                         "cancelled": 0, "thoughts": 0, "subagents": 0},
+            "steps": [], "earlier_steps": 0, "attention": [], "attention_more": 0,
+            "notices": [], "notices_more": 0, "answer": []
+        })
+    }
+
     #[tokio::test]
     async fn prompt_history_reaches_past_the_trajectory_page() {
-        let history = (1..=51)
-            .map(|n| {
-                json!({
-                    "id": n.to_string(),
-                    "kind": "user_prompt_submit",
-                    "payload": {"source": "console", "text": format!("prompt {n}")},
-                    "summary": "", "created_at": ""
-                })
-            })
-            .collect::<Vec<_>>();
         let router = Router::new()
             .route(
                 "/v1/sessions/s1/trajectory/stream",
                 get(|| async {
                     let mut first = snapshot(1);
                     first["has_older"] = json!(true);
+                    first["turns"] = json!([typed_turn(52)]);
                     Sse::new(stream::iter([Ok::<_, Infallible>(
                         SseFrame::default()
                             .event("snapshot")
@@ -545,8 +659,14 @@ mod tests {
                 }),
             )
             .route(
-                "/v1/sessions/s1/console",
-                get(move || async { axum::Json(history) }),
+                "/v1/sessions/s1/trajectory",
+                get(|request: axum::extract::Request| async move {
+                    let query = request.uri().query().unwrap_or_default().to_string();
+                    assert!(query.contains("before=t52"), "{query}");
+                    let mut older = snapshot(0);
+                    older["turns"] = json!((1..=51).map(typed_turn).collect::<Vec<_>>());
+                    axum::Json(older)
+                }),
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -557,13 +677,184 @@ mod tests {
         console.frame(source.next().await.unwrap().unwrap());
         server.abort();
 
-        for _ in 0..51 {
+        for _ in 0..52 {
             console.key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         }
         assert!(matches!(
             console.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             ariadne_console::app::Action::Send(text) if text == "prompt 1"
         ));
+    }
+
+    /// The host reads a step's detail from the detail route, raw where the
+    /// console asks for it, and a subagent's steps from the steps route of
+    /// its turn, by its lane.
+    #[tokio::test]
+    async fn the_host_reads_a_detail_and_the_steps_of_a_subagent_from_their_routes() {
+        let asked: Arc<Mutex<Vec<String>>> = Arc::default();
+        let seen = asked.clone();
+        let router = Router::new()
+            .route(
+                "/v1/sessions/s1/trajectory/items/c1",
+                get(move |request: axum::extract::Request| async move {
+                    seen.lock()
+                        .unwrap()
+                        .push(request.uri().query().unwrap_or_default().to_string());
+                    axum::Json(json!({
+                        "id": "c1", "tool_call_id": "c1", "title": "Run", "kind": "execute",
+                        "status": "completed", "detail_rev": 2,
+                        "detail": {"type": "command", "command": "ls", "cwd": null,
+                                   "output": "a", "exit_code": 0, "truncated": false}
+                    }))
+                }),
+            )
+            .route(
+                "/v1/sessions/s1/trajectory/turns/t1/steps",
+                get(|request: axum::extract::Request| async move {
+                    let query = request.uri().query().unwrap_or_default().to_string();
+                    let steps = match query.contains("subagent=sub1") {
+                        true => vec![json!({
+                            "type": "note", "id": "n1", "turn_id": "t1", "lane": "sub1",
+                            "created_at": "2026-11-27T10:00:00Z", "origin": "x",
+                            "severity": "info", "text": "inside"
+                        })],
+                        false => vec![],
+                    };
+                    axum::Json(json!({"steps": steps, "earlier_steps": 0}))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+        let mut host = Posts {
+            client: &client,
+            id: "s1",
+        };
+
+        let detail = host.detail("c1", true).await.unwrap();
+        let steps = host.subagent_steps("t1", "sub1").await.unwrap();
+        server.abort();
+
+        assert_eq!(detail.detail_rev, 2);
+        assert_eq!(*asked.lock().unwrap(), vec!["raw=true".to_string()]);
+        assert_eq!(steps.len(), 1);
+    }
+
+    /// The stored model is the session row's, and a session the daemon does
+    /// not describe has none.
+    #[tokio::test]
+    async fn the_stored_model_is_read_from_the_session_row() {
+        let router = Router::new().route(
+            "/v1/sessions/s1",
+            get(|| async {
+                axum::Json(json!({
+                    "id": "s1", "goal_id": null, "task_id": null, "seat": "agent",
+                    "worktree": "/w", "model": "claude-acp:opus", "effort": null,
+                    "agent_session_id": null, "status": "running",
+                    "created_at": "2026-11-27T10:00:00Z", "updated_at": "2026-11-27T10:00:00Z",
+                    "usage": {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+
+        let known = session_row(&client, "s1").await;
+        let unknown = session_row(&client, "s2").await;
+        server.abort();
+
+        assert_eq!(
+            known.map(|row| row.model).as_deref(),
+            Some("claude-acp:opus")
+        );
+        assert!(unknown.is_none());
+    }
+
+    /// The name is what `ariadne session ls` shows: the title of the task
+    /// behind the session, then its seat and its column.
+    #[tokio::test]
+    async fn the_session_is_named_by_its_task_title_seat_and_step() {
+        let router = Router::new().route(
+            "/v1/tasks/t1",
+            get(|| async { axum::Json(crate::commands::fixtures::task("t1", "g1")) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+        let row = crate::commands::fixtures::session("s1", "g1", Some("t1"));
+
+        let name = session_name_of(&client, &row).await;
+        server.abort();
+
+        assert_eq!(name, "task t1 · agent · develop");
+    }
+
+    /// A pull request session reads as `ariadne session ls` titles it: the
+    /// request's title with its URL, ahead of the task's. A task the daemon
+    /// cannot read falls back to the goal, as the daemon's own lookup does.
+    #[tokio::test]
+    async fn a_pull_request_session_is_named_with_its_url_and_a_lost_task_falls_back_to_its_goal() {
+        let pull = json!({
+            "id": "p1", "repository_id": "r1", "number": 7,
+            "url": "https://forge.test/r/pull/7", "title": "Fix the lint",
+            "author_login": "me", "state": "open", "draft": false,
+            "head_branch": "fix", "head_sha": "abc", "head_repo": null,
+            "base_branch": "main", "checks": "passing", "review_decision": "",
+            "opened_at": "2026-11-27T10:00:00Z", "updated_at": "2026-11-27T10:00:00Z",
+            "role": "author", "dependency_updates": [], "reviews": [], "comments": []
+        });
+        let goal = crate::commands::fixtures::goal("g1", "Ship the UI");
+        let router = Router::new()
+            .route(
+                "/v1/pull-requests/p1",
+                get(move || async move { axum::Json(pull) }),
+            )
+            .route("/v1/goals/g1", get(move || async move { axum::Json(goal) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = Client::tcp(format!("http://{address}"));
+        let mut pulled = crate::commands::fixtures::session("s1", "g1", Some("t1"));
+        pulled.pull_request_id = Some("p1".into());
+        pulled.seat = Some(ariadne_core::Seat::Keeper);
+        pulled.step = None;
+        let lost = crate::commands::fixtures::session("s2", "g1", Some("gone"));
+
+        let pulled = session_name_of(&client, &pulled).await;
+        let lost = session_name_of(&client, &lost).await;
+        server.abort();
+
+        assert_eq!(
+            pulled,
+            "Fix the lint (https://forge.test/r/pull/7) · keeper"
+        );
+        assert_eq!(lost, "Ship the UI · agent · develop");
+    }
+
+    #[test]
+    fn the_window_is_titled_with_the_session_name_and_the_title_is_put_back() {
+        let mut screen = Screen::on(Vec::new()).titled("task t1 · agent · develop");
+        screen.modes().unwrap();
+        assert!(
+            holds(
+                &screen.out,
+                "\x1b]0;task t1 · agent · develop\x07".as_bytes()
+            ),
+            "{:?}",
+            String::from_utf8_lossy(&screen.out)
+        );
+        let set = screen.out.len();
+        screen.leave();
+        assert!(holds(&screen.out[set..], b"\x1b[23;0t"));
+
+        let mut unnamed = Screen::on(Vec::new());
+        unnamed.modes().unwrap();
+        unnamed.leave();
+        assert!(!holds(&unnamed.out, b"\x1b]0;") && !holds(&unnamed.out, b"\x1b[23;0t"));
     }
 
     #[test]
@@ -608,8 +899,8 @@ mod tests {
     }
 
     /// An update that skips a revision drops the stream, and the stream is
-    /// dialled again after the backoff. Real time, as the inline console's
-    /// test of its own redial.
+    /// dialled again after the backoff. Real time, as the redial it
+    /// tests.
     #[tokio::test]
     async fn an_update_that_skips_a_revision_dials_the_stream_again() {
         let stub = Stub {

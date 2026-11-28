@@ -6,6 +6,9 @@
  * status in the daemon fails to compile here until it is named and coloured.
  */
 
+import type { LucideIcon } from "lucide-react"
+import { BanIcon, CircleCheckIcon, CompassIcon, LoaderCircleIcon } from "lucide-react"
+
 import type { GoalStatus } from "@/api"
 
 /** The goal statuses, in lifecycle order — also the order of the filter. */
@@ -30,6 +33,10 @@ interface GoalStatusMeta {
   badge: string
   /** Solid dot classes, from the same ramp. */
   dot: string
+  /** The board's icon: one shape for each status, so colour is not the only carrier. */
+  icon: LucideIcon
+  /** The icon's text colour, from the same ramp as the dot. */
+  text: string
 }
 
 export const GOAL_STATUS_META: Record<GoalStatus, GoalStatusMeta> = {
@@ -37,21 +44,29 @@ export const GOAL_STATUS_META: Record<GoalStatus, GoalStatusMeta> = {
     label: "Planning",
     badge: "bg-status-review-soft text-status-review-fg",
     dot: "bg-status-review",
+    icon: CompassIcon,
+    text: "text-status-review",
   },
   active: {
     label: "Active",
     badge: "bg-status-active-soft text-status-active-fg",
     dot: "bg-status-active",
+    icon: LoaderCircleIcon,
+    text: "text-status-active",
   },
   completed: {
     label: "Completed",
     badge: "bg-status-done-soft text-status-done-fg",
     dot: "bg-status-done",
+    icon: CircleCheckIcon,
+    text: "text-status-done",
   },
   cancelled: {
     label: "Cancelled",
     badge: "bg-muted text-muted-foreground",
     dot: "bg-muted-foreground/60",
+    icon: BanIcon,
+    text: "text-muted-foreground",
   },
 }
 

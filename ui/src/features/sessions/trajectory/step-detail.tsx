@@ -25,12 +25,13 @@
  */
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query"
-import { CopyIcon } from "lucide-react"
+import { BracesIcon, CopyIcon, Maximize2Icon } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import { api, type Host, qk, type StepDto, unwrap } from "@/api"
 import { CodeBlock } from "@/components/code-block"
+import { IconButton } from "@/components/icon-button"
 import { Markdown } from "@/components/markdown"
 import { Button } from "@/components/ui/button"
 import { copyText } from "@/lib/clipboard"
@@ -138,23 +139,22 @@ function Controls({
   return (
     <div className="flex items-center gap-1">
       {open ? (
-        <Button
-          size="xs"
-          variant="outline"
+        <IconButton
+          size="icon-xs"
+          icon={<Maximize2Icon />}
+          label="Open"
           onClick={(event) => view.show(step, event.currentTarget)}
-        >
-          Open
-        </Button>
+        />
       ) : null}
       {onRaw ? (
-        <Button
-          size="xs"
+        <IconButton
+          size="icon-xs"
           variant={raw ? "secondary" : "outline"}
+          icon={<BracesIcon />}
+          label="Raw"
           aria-pressed={raw}
           onClick={onRaw}
-        >
-          Raw
-        </Button>
+        />
       ) : null}
     </div>
   )

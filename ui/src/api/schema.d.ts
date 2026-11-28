@@ -2470,29 +2470,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/sessions/{id}/console": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The session's newest events, in order: the transcript a console opens on.
-         *     It is a page of at most two hundred, the recent past rather than every
-         *     turn a session ever ran; `GET /v1/events` walks back from it. While a
-         *     turn runs, one `agent_thought_chunk` or `agent_message_chunk` holding the
-         *     text so far follows the stored events.
-         */
-        get: operations["sessions_snapshot"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/sessions/{id}/console/cancel": {
         parameters: {
             query?: never;
@@ -2550,36 +2527,6 @@ export interface paths {
          *     the quiet clock and the stream follow.
          */
         post: operations["sessions_console_input"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sessions/{id}/console/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Follow a session's console.
-         * @description Opens with a `snapshot` event carrying what `GET /console` would return —
-         *     the newest page of stored events, oldest first, then the running turn's
-         *     text so far — then an `event` per later one, each an `AgentEventDto`.
-         *     Subscribing happens before the snapshot is read and every later stored
-         *     event is compared against the snapshot's last id, so nothing committed in
-         *     between is ever missed or delivered twice; the live events are read under
-         *     the runtime's own turn lock for the same guarantee.
-         *
-         *     There is no replay and no `Last-Event-ID`: reconnecting starts again from a
-         *     fresh snapshot. A client that falls too far behind gets a final `resync`
-         *     event and the connection closes, exactly as `/v1/events/stream` does.
-         */
-        get: operations["sessions_stream"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3348,7 +3295,7 @@ export interface components {
         /**
          * @description An agent event as the domain stream carries it: everything of
          *     [`AgentEventDto`] but the payload, which reaches 1 MB. A client that wants
-         *     the payload reads `GET /v1/events`, or the console stream.
+         *     the payload reads `GET /v1/events`.
          */
         AgentEventSummaryDto: {
             created_at: string;
@@ -5154,6 +5101,8 @@ export interface components {
         RawToolDto: {
             input?: unknown;
             output?: unknown;
+            /** @description The original tool name supplied by the agent. */
+            title?: string | null;
         };
         /**
          * @description One learned permission to write whole, as another daemon pushes it (037).
@@ -6159,6 +6108,8 @@ export interface components {
             activity: components["schemas"]["ActivityDto"];
             /** @description The last message of the session's own agent in the turn. */
             answer: components["schemas"]["ContentBlockDto"][];
+            /** @description The message step that supplies the answer. */
+            answer_step_id: string | null;
             /**
              * @description What waits on a person, and the errors, whatever the state of the
              *     turn: the pending permissions and open questions the read loaded,
@@ -9309,41 +9260,6 @@ export interface operations {
             };
         };
     };
-    sessions_snapshot: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description session id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentEventDto"][];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description the console streamed faster than a snapshot could be read, every time it was tried; ask again */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     sessions_console_cancel: {
         parameters: {
             query?: never;
@@ -9412,35 +9328,6 @@ export interface operations {
                 content?: never;
             };
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    sessions_stream: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description session id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description SSE stream of console events (text/event-stream). A `snapshot` event carrying the newest page of recorded events (`[AgentEventDto]`) and the running turn's text so far, then an `event` per new one (`AgentEventDto`) — message and thought chunks, tool call progress, tool calls, plans, permission requests and turn status all arrive this way, in the vocabulary the ACP runtime reports them in. Chunks are live only: they are never stored and never reach `/v1/events`. Tool call progress is stored at most once in each interval, and `/v1/events` lists what is stored; the rest is live only. A client that falls behind gets a `resync` event (ResyncDto) and the connection closes. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": components["schemas"]["AgentEventDto"];
-                };
-            };
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };

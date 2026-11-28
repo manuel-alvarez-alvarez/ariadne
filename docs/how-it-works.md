@@ -51,8 +51,8 @@ A session is the conversation an ACP agent holds for the orchestrator, for
 one column's agent, or a PR reviewer or keeper. `ariadne session ls` lists every one of them, newest activity
 first, and `ariadne attention` shows those waiting for a person. Connect
 with `ariadne attach <id>` to read events and send a prompt: in a terminal
-it is an inline pane with the transcript above and a status line and input
-box pinned under it. Escape cancels the running turn, and Ctrl-C twice
+it is a full-screen console, with the turns of the session above and the
+input box and one bottom row under them. Escape cancels the running turn, and Ctrl-C twice
 disconnects your console without stopping the agent.
 
 `GET /v1/attention` is the one list both the CLI and Ariadne Desktop read

@@ -17,7 +17,6 @@ tests:
   - crates/ariadne-daemon/src/attention/mod.rs
   - crates/ariadne-daemon/src/acp.rs
   - crates/ariadne-daemon/src/http/classify.rs
-  - crates/ariadne-console/src/transcript.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-store/tests/request_migration.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
@@ -29,6 +28,7 @@ tests:
   - crates/ariadne-daemon/src/scheduler/goals.rs
   - crates/ariadne-daemon/src/scheduler/pull_requests.rs
   - crates/ariadne-daemon/src/scheduler/quiet.rs
+  - ui/src/features/goals/attention-permissions.test.tsx
   - crates/ariadne-daemon/src/scheduler/tasks.rs
   - crates/ariadne-daemon/src/forge/mod.rs
   - crates/ariadne-daemon/src/forge/poll.rs
@@ -83,9 +83,12 @@ the forge, never Ariadne's to surface a count of (026 rule 9).
    no polling or subscription. The shell header remains available while page
    content scrolls.
 
+4. The Goals board draws the shared items as blocks. Spec 015 rule 39 holds
+   that rule.
+
 Acceptance criteria: `ui/src/features/goals/attention-header.test.tsx` proves
 loading, unavailable, empty, partial and populated states, item navigation,
-Escape dismissal, and rendering outside the Goals route. The header is outside
+Escape dismissal, and rendering outside the Goals route. `ui/src/features/goals/attention-blocks.test.tsx` proves the blocks of rule 4: their placement under tasks and goal lines, their content, the single-select answer, and the incomplete read. The header is outside
 the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
 
 
@@ -472,6 +475,21 @@ the scrolling `<main>` in `ui/src/components/app-shell.tsx`.
     option) or cancelled (`option_id` null), since the call then fails and
     the answer is the one line that says why — the AI's reason under the
     question, which 022 promises.
+11a. A client answers the pending permission of such an item in place. The
+    item's id is `agent_request:waiting_permission:<session id>`, and its
+    target is the session's console. The client reads the oldest pending
+    permission of the session from `GET /v1/sessions/{id}/trajectory` on
+    the host of the item. It shows the tool, its subject, the question and
+    one button for each option, and names the subagent that asked. A click
+    posts the option id as `text` to `POST /v1/sessions/{id}/console/input`
+    on that host. A session with no pending permission in its trajectory
+    shows no button. The client reads the trajectory again after each change
+    of the attention list of the host, and polls nothing
+    (`ui/src/features/goals/attention-permissions.test.tsx::shows the oldest pending permission of the session with one button per option`,
+    `ui/src/features/goals/attention-permissions.test.tsx::posts the option id as text to the console input of the session`,
+    `ui/src/features/goals/attention-permissions.test.tsx::names the subagent that asked`,
+    `ui/src/features/goals/attention-permissions.test.tsx::shows no option button and keeps the console link when nothing is pending`,
+    `ui/src/features/goals/attention-permissions.test.tsx::shows the permission now pending after the attention list changes`).
 12. Ariadne holds no `wait_for_user` request. An agent asks the user with
     its own question tool (rule 18, 021 rule 21). No route lives under
     `/v1/sessions/{id}/agent-requests`. Migration
@@ -650,10 +668,6 @@ Proof: `crates/ariadne-cli/src/main.rs::tests::dismisses_a_quota_item_whose_mode
   (`attention.rs::an_idle_turn_raises_no_attention_item`).
 - A live session that reported an error is one item on its console
   (`attention.rs::an_agent_error_is_one_item_for_its_console`).
-- A permission on an Ariadne tool allowed by the daemon itself leaves no
-  block while one a person answered, one the daemon denied or cancelled, or
-  one on any other tool, keeps its
-  (`ariadne-console::transcript::tests::an_automatic_permission_on_an_ariadne_tool_leaves_no_block`).
 - No MCP tool raises a request (013 rule 3): the seats ask with the question
   tool of their own client
   (`mcp.rs::no_session_text_names_a_tool_that_left_and_a_call_to_it_is_refused`,
@@ -667,9 +681,7 @@ Proof: `crates/ariadne-cli/src/main.rs::tests::dismisses_a_quota_item_whose_mode
 - A relay turn file of the last release still loads
   (`acp::tests::a_turn_file_of_the_last_release_still_loads`).
 - An old `agent_request` event and its close move neither status nor
-  attention (`classify.rs::an_old_agent_request_event_moves_nothing`), and
-  the terminal console draws no block for them
-  (`ariadne-console::transcript::tests::an_old_agent_request_draws_no_block`).
+  attention (`classify.rs::an_old_agent_request_event_moves_nothing`).
 - A waiting permission targets its session console, while an automatic
   permission creates no item
   (`attention.rs::permission_events_only_create_items_while_waiting_for_a_person`,

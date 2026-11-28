@@ -26,13 +26,13 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState, hostTitle, RefreshWarning } from "@/components/error-state"
 import { Fact, FactList } from "@/components/fact-list"
 import { HostLabel } from "@/components/host-label"
+import { IconButton } from "@/components/icon-button"
 import { Markdown } from "@/components/markdown"
 import { PanelHeader } from "@/components/panel-header"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
 import { TabCount } from "@/components/tab-count"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
-import { Button } from "@/components/ui/button"
 import { PaneBody, PaneHeader, PaneTitle } from "@/components/ui/docked-pane"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -46,6 +46,7 @@ import { useFocusReturn } from "@/hooks/use-focus-return"
 import { usePanelShowsHost } from "@/hooks/use-host-label"
 import { goalCopyEntries } from "@/lib/clipboard"
 import { folderName } from "@/lib/format"
+import { TAB_ICONS } from "@/lib/tab-icons"
 import { paths, taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
@@ -189,10 +190,11 @@ function GoalView({
         actions={
           <div className="flex items-center gap-2">
             {canCreateTask ? (
-              <Button variant="outline" size="sm" onClick={() => setNewTaskOpen(true)}>
-                <PlusIcon />
-                New task
-              </Button>
+              <IconButton
+                icon={<PlusIcon />}
+                label="New task"
+                onClick={() => setNewTaskOpen(true)}
+              />
             ) : null}
             {/* Deleting takes the goal out from under this panel, so the
                 panel's own close is what the action ends on. */}
@@ -246,16 +248,14 @@ function GoalView({
 
         <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
           <TabsList>
-            <TabsTrigger value="description">Description</TabsTrigger>
-            <TabsTrigger value="tasks">
-              Tasks
+            <TabsTrigger value="description" icon={<TAB_ICONS.description />} label="Description" />
+            <TabsTrigger value="tasks" icon={<TAB_ICONS.tasks />} label="Tasks">
               <TabCount count={tasks.data?.length} noun="task" />
             </TabsTrigger>
             {/* The goal's own sessions: its orchestrator, once per resume or
               restart. The sessions its tasks have run are each task panel's,
               which is why the count here is a small number. */}
-            <TabsTrigger value="sessions">
-              Sessions
+            <TabsTrigger value="sessions" icon={<TAB_ICONS.sessions />} label="Sessions">
               <TabCount count={sessions.data?.length} noun="session" />
             </TabsTrigger>
           </TabsList>

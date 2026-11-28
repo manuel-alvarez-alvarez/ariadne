@@ -73,6 +73,12 @@ fn kind(method: &axum::http::Method, path: &str) -> &'static str {
         ("GET", "/v1/tasks") => "find task",
         ("GET", path) if path.starts_with("/v1/tasks/") => "read task",
         ("GET", "/v1/health") => "health",
+        ("GET", path)
+            if path.starts_with("/v1/sessions/")
+                && (path.ends_with("/console") || path.ends_with("/console/stream")) =>
+        {
+            "retired console route"
+        }
         _ => "other",
     }
 }

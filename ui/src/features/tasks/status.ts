@@ -11,6 +11,16 @@
  * than not offering it at all.
  */
 
+import type { LucideIcon } from "lucide-react"
+import {
+  BanIcon,
+  CircleCheckIcon,
+  CirclePlayIcon,
+  CircleXIcon,
+  ClockIcon,
+  LoaderCircleIcon,
+} from "lucide-react"
+
 import type { TaskDto, TaskStatus } from "@/api"
 
 /** Pipeline columns, in the order a task moves through them. */
@@ -23,6 +33,10 @@ interface StatusMeta {
   badge: string
   /** Solid dot classes, for the board column headers. */
   dot: string
+  /** The board's icon: one shape for each status, so colour is not the only carrier. */
+  icon: LucideIcon
+  /** The icon's text colour, from the same ramp as the dot. */
+  text: string
   /** Status-colored card border, when applicable. */
   border?: string
 }
@@ -37,24 +51,32 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
     hint: "Waiting for its dependencies or workflow.",
     badge: "bg-status-pending-soft text-status-pending-fg",
     dot: "bg-status-pending",
+    icon: ClockIcon,
+    text: "text-status-pending",
   },
   ready: {
     label: "Ready",
     hint: "Ready for its workflow to start.",
     badge: "bg-status-ready-soft text-status-ready-fg",
     dot: "bg-status-ready",
+    icon: CirclePlayIcon,
+    text: "text-status-ready",
   },
   in_progress: {
     label: "In progress",
     hint: "A workflow column is running.",
     badge: "bg-status-active-soft text-status-active-fg",
     dot: "bg-status-active",
+    icon: LoaderCircleIcon,
+    text: "text-status-active",
   },
   finished: {
     label: "Finished",
     hint: "The workflow completed.",
     badge: "bg-status-done-soft text-status-done-fg",
     dot: "bg-status-done",
+    icon: CircleCheckIcon,
+    text: "text-status-done",
     border: "border-status-done/40",
   },
   cancelled: {
@@ -62,6 +84,8 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
     hint: "Cancelled by the user.",
     badge: "bg-muted text-muted-foreground",
     dot: "bg-muted-foreground/60",
+    icon: BanIcon,
+    text: "text-muted-foreground",
     border: "border-muted-foreground/40",
   },
   failed: {
@@ -69,6 +93,8 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
     hint: "Unrecoverable failure; the user can retry it.",
     badge: "bg-status-danger-soft text-status-danger-fg",
     dot: "bg-status-danger",
+    icon: CircleXIcon,
+    text: "text-status-danger",
     border: "border-status-danger/40",
   },
 }

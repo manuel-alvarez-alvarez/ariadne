@@ -19,6 +19,7 @@ import { Markdown } from "@/components/markdown"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import { TAB_ICONS } from "@/lib/tab-icons"
 
 type Mode = "write" | "preview"
 
@@ -60,8 +61,8 @@ export function MarkdownField({
         <div className="flex items-center justify-between gap-2">
           <FieldLabel htmlFor={id}>{label}</FieldLabel>
           <TabsList>
-            <TabsTrigger value="write">Write</TabsTrigger>
-            <TabsTrigger value="preview">Preview</TabsTrigger>
+            <TabsTrigger value="write" icon={<TAB_ICONS.write />} label="Write" />
+            <TabsTrigger value="preview" icon={<TAB_ICONS.preview />} label="Preview" />
           </TabsList>
         </div>
         <TabsContent value="write">

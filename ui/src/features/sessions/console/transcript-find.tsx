@@ -1,3 +1,4 @@
+import { SearchIcon } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 
@@ -74,9 +75,17 @@ export function TranscriptFind({
     if (active && !matches.some((match) => match.key === selected)) setSelected(active.key)
   }, [active, matches, selected])
   return (
-    <div ref={root} className="relative border-b px-3 py-1">
-      <Button ref={trigger} size="xs" variant="ghost" onClick={() => show(trigger.current)}>
-        Find in transcript
+    // The icon takes its place in the console's header row, and the pane
+    // opens under that row: the header is the positioned ancestor.
+    <span ref={root} className="contents">
+      <Button
+        ref={trigger}
+        size="icon-xs"
+        variant="ghost"
+        aria-label="Find in transcript"
+        onClick={() => show(trigger.current)}
+      >
+        <SearchIcon />
       </Button>
       {open ? (
         <search
@@ -149,6 +158,6 @@ export function TranscriptFind({
           ) : null}
         </search>
       ) : null}
-    </div>
+    </span>
   )
 }

@@ -35,9 +35,7 @@ import {
   ChartColumnIcon,
   CpuIcon,
   FolderGit2Icon,
-  GitPullRequestIcon,
   type LucideIcon,
-  RadioTowerIcon,
   ServerIcon,
   ShieldIcon,
   TargetIcon,
@@ -48,6 +46,7 @@ import { NavLink } from "react-router-dom"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { AttentionBadge } from "@/features/goals/attention-alerts"
 import { cn } from "@/lib/format"
+import { TAB_ICONS } from "@/lib/tab-icons"
 import { paths } from "@/routes/paths"
 
 /**
@@ -64,8 +63,8 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: paths.goals(), label: "Goals", icon: TargetIcon, counts: true },
-  { to: paths.sessions(), label: "Sessions", icon: RadioTowerIcon },
-  { to: paths.forge(), label: "Forge", icon: GitPullRequestIcon },
+  { to: paths.sessions(), label: "Sessions", icon: TAB_ICONS.sessions },
+  { to: paths.forge(), label: "Forge", icon: TAB_ICONS.pullRequests },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
   { to: paths.workflows(), label: "Workflows", icon: WorkflowIcon },
   { to: paths.agents(), label: "Agents", icon: BotIcon },

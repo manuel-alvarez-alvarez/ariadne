@@ -530,7 +530,10 @@ async fn a_call_detail_gives_its_command_its_progress_and_raw_data_on_demand() {
         "no raw data refused: {refused}"
     );
     let raw: Value = h.get(&format!("{path}?raw=true")).await;
-    assert_eq!(raw["raw"], json!({"input": input, "output": raw_output}));
+    assert_eq!(
+        raw["raw"],
+        json!({"title": "Bash", "input": input, "output": raw_output})
+    );
     let (status, _) = h
         .send(get(&format!(
             "/v1/sessions/{}/trajectory/items/{}",

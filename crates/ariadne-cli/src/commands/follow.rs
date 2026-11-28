@@ -42,7 +42,7 @@ const RETRY: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(15);
 
 /// How long to wait before the next redial, given the wait before it — the
-/// backoff every reconnecting follow shares, the inline console included.
+/// backoff every reconnecting follow shares, the full-screen console included.
 ///
 /// `None` is the first try after a drop: the daemon that is coming right back
 /// is picked up in a beat.

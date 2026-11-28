@@ -180,6 +180,10 @@ pub struct TurnDto {
     /// How many warning notes and compactions of the turn `notices` does
     /// not hold. The steps route of the turn returns each of them.
     pub notices_more: u64,
+    /// The message step that supplies the answer.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub answer_step_id: Option<String>,
     /// The last message of the session's own agent in the turn.
     pub answer: Vec<ContentBlockDto>,
 }
@@ -707,6 +711,8 @@ pub struct GenericDetailDto {
 /// A call's raw input and raw output, as the agent sent them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct RawToolDto {
+    /// The original tool name supplied by the agent.
+    pub title: Option<String>,
     pub input: Option<serde_json::Value>,
     pub output: Option<serde_json::Value>,
 }

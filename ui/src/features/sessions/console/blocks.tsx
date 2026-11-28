@@ -2,11 +2,15 @@ import { CodeIcon, Loader2Icon, UserIcon } from "lucide-react"
 import type { KeyboardEvent } from "react"
 
 import { Markdown } from "@/components/markdown"
+import { NamedIcon } from "@/components/named-icon"
 import { cn } from "@/lib/format"
 
 import type { PermissionOption } from "./transcript"
 
-/** What a person typed is a message: set apart and full size, with the time it was sent. */
+/**
+ * What a person typed is a message: set apart and full size, with the time it
+ * was sent. An icon names who typed it, with the role as its name and tooltip.
+ */
 export function PromptBox({
   text,
   queued,
@@ -26,11 +30,12 @@ export function PromptBox({
         role === "You" && "bg-primary/12 ring-1 ring-inset ring-border/50",
       )}
     >
-      <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-foreground">
-        {role === "Developer" ? <CodeIcon aria-hidden className="size-3.5 shrink-0" /> : null}
-        {role === "You" ? <UserIcon aria-hidden className="size-3.5 shrink-0" /> : null}
-        {role}
-      </div>
+      <NamedIcon
+        icon={role === "Developer" ? CodeIcon : UserIcon}
+        label={role}
+        focusable
+        className="mb-1 text-foreground"
+      />
       <div className="min-w-0 flex-1">
         {queued ? (
           <span className="mb-1 inline-block rounded bg-muted px-1 font-mono text-[11px] text-muted-foreground">

@@ -41,6 +41,24 @@ export function PanelSheet({
     ;(first ?? panel.current)?.focus()
   }, [panel])
 
+  // An icon button the pane opened on shows its tooltip on focus, and the
+  // tooltip takes that first Escape for itself, so the pane would stay open
+  // for one more. The tooltip is a hint, not an answer: Escape still closes.
+  const close = useRef(onClose)
+  close.current = onClose
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target
+      if (event.key !== "Escape" || !(target instanceof Element)) return
+      if (!target.closest('[data-slot="tooltip-trigger"]')) return
+      if (!panel.current?.contains(target)) return
+      event.stopPropagation()
+      close.current()
+    }
+    document.addEventListener("keydown", onKeyDown, true)
+    return () => document.removeEventListener("keydown", onKeyDown, true)
+  }, [panel])
+
   useEffect(
     () => () => {
       // The opener is on the screen behind the pane's scrim, which goes away
