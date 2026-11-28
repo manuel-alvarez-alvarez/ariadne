@@ -1171,17 +1171,18 @@ fn allowed(permission: &PermissionStepDto) -> bool {
     let Some(answer) = permission.answer.as_ref() else {
         return false;
     };
-    // Learn mode answers with an id of the agent, not one of the options
-    // shown, so the label the answer carries is the second way to find it.
+    // The label is the name of the option chosen, so it finds the option
+    // first. Learn mode answers with an id of the agent, which can equal the
+    // id of another option shown, so the id is the second way to find it.
     let chosen = permission
         .options
         .iter()
-        .find(|option| Some(&option.id) == answer.option_id.as_ref())
+        .find(|option| option.name == answer.label)
         .or_else(|| {
             permission
                 .options
                 .iter()
-                .find(|option| option.name == answer.label)
+                .find(|option| Some(&option.id) == answer.option_id.as_ref())
         });
     chosen
         .and_then(|option| option.kind.as_deref())

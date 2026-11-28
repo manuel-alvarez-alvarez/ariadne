@@ -2165,7 +2165,8 @@ fn tail_mark_style(app: &App, width: u16) -> ratatui::style::Style {
 
 /// A turn whose one call carries a permission answered as given.
 async fn answered_call(decided_by: &str, option: &str, open_detail: bool) -> (App, Vec<String>) {
-    answered_call_as(decided_by, option, "Allow", open_detail).await
+    let label = if option == "no" { "Reject" } else { "Allow" };
+    answered_call_as(decided_by, option, label, open_detail).await
 }
 
 /// The same, with the label the answer carries.
@@ -2252,6 +2253,16 @@ async fn an_answered_permission_is_a_mark_on_the_row_of_its_call() {
 
 #[tokio::test]
 async fn a_learn_mode_rejection_with_an_id_of_the_agent_is_still_a_red_mark() {
+    // An id of the agent that equals the id of the Allow option shown.
+    let (mut app, _) = answered_call_as("console", "yes", "Reject", false).await;
+    app.event(key(KeyCode::Esc));
+    let screen = draw(&app, 80, HEIGHT);
+    assert!(
+        screen
+            .iter()
+            .any(|row| *row == flush_at("    ✓ $ Bash · Bash subject", "✗ 2s", 80)),
+        "{screen:#?}"
+    );
     let (mut app, _) = answered_call_as("console", "agent-reject-once", "Reject", false).await;
     app.event(key(KeyCode::Esc));
     let screen = draw(&app, 80, HEIGHT);
