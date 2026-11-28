@@ -20,7 +20,8 @@
  * a goal with no workflow ends its tasks the way its repository's default
  * landing says.
  *
- * The goal lives on one host, picked here where the app has more than one:
+ * The goal lives on one host, picked in the model picker's host column where
+ * the app has more than one:
  * its tasks and its agents run there. It starts on the header's pick, or on
  * `local` under All. The repositories, the workflows and the models offered
  * are that host's, so a change of host reloads them and clears the
@@ -59,8 +60,6 @@ import {
   useClearErrorOnEdit,
   useResetOnOpen,
 } from "@/components/form-dialog"
-import { FormSelect } from "@/components/form-select"
-import { HostDot } from "@/components/host-dot"
 import { HostLabel } from "@/components/host-label"
 import { MarkdownField } from "@/components/markdown-field"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -149,6 +148,11 @@ export function CreateGoalDialog({
   const chosen = form.watch("host")
   const host = chosen || LOCAL_HOST
   const ready = open && chosen !== ""
+  // One host is no choice: the picker offers hosts once there are two.
+  const hostChoices =
+    hosts.length > 1 || host !== LOCAL_HOST
+      ? hosts.map((one) => ({ host: one.name, reason: one.unreachable }))
+      : undefined
   const sync = hosts.find((one) => one.name === host)?.sync
 
   const repositories = useQuery({ ...repositoriesQueryOptions(host), enabled: ready })
@@ -282,52 +286,6 @@ export function CreateGoalDialog({
             )}
           />
 
-          {/* One host is no choice: the select shows once there are two. */}
-          {hosts.length > 1 || host !== LOCAL_HOST ? (
-            <Field>
-              <FieldLabel htmlFor="goal-host">Host</FieldLabel>
-              <FormSelect
-                control={form.control}
-                name="host"
-                id="goal-host"
-                empty={LOCAL_HOST}
-                renderOption={(option) => (
-                  <span className="flex items-center gap-2">
-                    <HostDot host={option.value} />
-                    {option.label}
-                  </span>
-                )}
-                options={hosts.map((one) => ({
-                  value: one.name,
-                  label: one.unreachable === null ? one.name : `${one.name} — ${one.unreachable}`,
-                  disabled: one.unreachable !== null,
-                }))}
-                onValueChange={() => {
-                  // Repository ids, workflows and models are the old host's own.
-                  form.setValue("model", "", { shouldDirty: true })
-                  form.setValue("effort", "", { shouldDirty: true })
-                  form.setValue("repository_ids", [], { shouldDirty: true })
-                  form.setValue("workflow", "", { shouldDirty: true })
-                  workflowPicked.current = false
-                }}
-              />
-              <FieldDescription>
-                Where the goal lives: its tasks and its agents run on this host.
-              </FieldDescription>
-              {sync && sync.state !== "in_sync" ? (
-                <Alert>
-                  <AlertTitle>
-                    <HostLabel host={host} /> has not taken your catalogs and settings: sync{" "}
-                    {sync.state}
-                  </AlertTitle>
-                  <AlertDescription>
-                    {sync.error ? `${sync.error} ` : ""}You can still create the goal.
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-            </Field>
-          ) : null}
-
           <Controller
             control={form.control}
             name="repository_ids"
@@ -392,11 +350,19 @@ export function CreateGoalDialog({
               render={({ field }) => (
                 <PinPicker
                   host={host}
+                  hosts={hostChoices}
                   id="goal-pin"
                   label="Orchestrator runs on"
                   model={field.value}
                   effort={chosenEffort}
                   onChange={(pin) => {
+                    if (pin.host !== host) {
+                      // Repository ids and workflows are the old host's own.
+                      form.setValue("host", pin.host, { shouldDirty: true })
+                      form.setValue("repository_ids", [], { shouldDirty: true })
+                      form.setValue("workflow", "", { shouldDirty: true })
+                      workflowPicked.current = false
+                    }
                     field.onChange(pin.model)
                     form.setValue("effort", pin.effort, { shouldDirty: true })
                   }}
@@ -412,9 +378,21 @@ export function CreateGoalDialog({
               <FieldError>{errors.model.message}</FieldError>
             ) : (
               <FieldDescription>
-                The agent and, after a <code>:</code>, the model of it.
+                The host the goal lives on, then the agent and, after a <code>:</code>, the model of
+                it. The goal's tasks and agents run on that host.
               </FieldDescription>
             )}
+            {sync && sync.state !== "in_sync" ? (
+              <Alert>
+                <AlertTitle>
+                  <HostLabel host={host} /> has not taken your catalogs and settings: sync{" "}
+                  {sync.state}
+                </AlertTitle>
+                <AlertDescription>
+                  {sync.error ? `${sync.error} ` : ""}You can still create the goal.
+                </AlertDescription>
+              </Alert>
+            ) : null}
           </Field>
         </FormDialogBody>
       </FormDialogContent>

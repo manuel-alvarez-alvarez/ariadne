@@ -41,22 +41,23 @@ it("opens the goal dialog on local when the picked host cannot be reached", asyn
   stubHosts({ local: dialogAnswers }, [LOCAL, DOWN])
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
 
-  const host = await screen.findByRole("combobox", { name: "Host" })
-  await waitFor(() => expect(host.textContent).toContain("local"))
-  expect(host.textContent).not.toContain("box")
+  const pin = await screen.findByRole("button", { name: "Orchestrator runs on" })
+  await waitFor(() => expect(pin.textContent).toContain("local"))
+  expect(pin.textContent).not.toContain("box")
 })
 
-it("lists an unreachable host in the goal dialog as a disabled option with its reason", async () => {
+it("lists an unreachable host in the goal dialog's model picker as a disabled row with its reason", async () => {
   const user = userEvent.setup()
   stubHosts({ local: dialogAnswers }, [LOCAL, DOWN])
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
 
-  await user.click(await screen.findByRole("combobox", { name: "Host" }))
-  const option = await screen.findByRole("option", { name: new RegExp(`^box.*${REASON}`) })
+  await user.click(await screen.findByRole("button", { name: "Orchestrator runs on" }))
+  const hosts = await screen.findByRole("listbox", { name: "Hosts" })
+  const option = within(hosts).getByRole("option", { name: new RegExp(`^box.*${REASON}`) })
   expect(option.getAttribute("aria-disabled")).toBe("true")
-  expect(screen.getByRole("option", { name: "local" }).getAttribute("aria-disabled")).not.toBe(
-    "true",
-  )
+  expect(
+    within(hosts).getByRole("option", { name: "local" }).getAttribute("aria-disabled"),
+  ).not.toBe("true")
 })
 
 it("shows the reason of an unreachable host on the AI tab, with no skeleton", async () => {

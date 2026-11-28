@@ -227,20 +227,28 @@ it("defaults the goal dialog to the picked host, and reloads its lists when the 
   })
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
 
-  const host = await screen.findByRole("combobox", { name: "Host" })
-  await waitFor(() => expect(host.textContent).toContain("box"))
+  const pin = await screen.findByRole("button", { name: "Orchestrator runs on" })
+  await waitFor(() => expect(pin.textContent).toContain("box"))
   await waitFor(() =>
     expect(reads(seen, "box")).toEqual(["/v1/models", "/v1/repositories", "/v1/workflows"]),
   )
   expect(reads(seen, "local")).toEqual([])
 
-  await user.click(host)
-  await user.click(await screen.findByRole("option", { name: "local" }))
+  await pickHost(user, "local")
 
   await waitFor(() =>
     expect(reads(seen, "local")).toEqual(["/v1/models", "/v1/repositories", "/v1/workflows"]),
   )
 })
+
+/** Pick `name` in the host column of the open goal dialog's pin picker. */
+async function pickHost(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const dialog = await screen.findByRole("dialog", { name: "New goal" })
+  await user.click(within(dialog).getByRole("button", { name: "Orchestrator runs on" }))
+  const hostsColumn = await screen.findByRole("listbox", { name: "Hosts" })
+  await user.click(within(hostsColumn).getByText(name))
+  await user.keyboard("{Escape}")
+}
 
 /** Pick `model` in the open goal dialog's pin picker. */
 async function pickModel(user: ReturnType<typeof userEvent.setup>, id: string) {
@@ -282,8 +290,7 @@ it("clears the model and the effort when the goal dialog's host changes", async 
   await waitFor(() => expect(pin.textContent).toContain("high"))
   if (screen.queryByRole("listbox", { name: "Efforts" })) await user.keyboard("{Escape}")
 
-  await user.click(await within(dialog).findByRole("combobox", { name: "Host" }))
-  await user.click(await screen.findByRole("option", { name: "box" }))
+  await pickHost(user, "box")
 
   await waitFor(() => expect(pin.textContent).not.toContain("claude-sonnet-5"))
   expect(pin.textContent).not.toContain("high")
@@ -366,8 +373,7 @@ it("names the host in the toast of a goal created on a named host, and offers al
   })
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
   const dialog = await screen.findByRole("dialog", { name: "New goal" })
-  await user.click(await within(dialog).findByRole("combobox", { name: "Host" }))
-  await user.click(await screen.findByRole("option", { name: "box" }))
+  await pickHost(user, "box")
   await user.click(await within(dialog).findByRole("combobox", { name: "Repositories" }))
   await user.click(await screen.findByText(/box-repo/))
   await user.keyboard("{Escape}")
@@ -384,12 +390,37 @@ it("names the host in the toast of a goal created on a named host, and offers al
   expect(useSettingsStore.getState().hostFilter).toBe("")
 })
 
+it("clears the repositories and the workflow when the picker's host changes, and keeps the picker last", async () => {
+  const user = userEvent.setup()
+  const answers = {
+    "/v1/repositories": [aRepository({ id: "r-one", path: "/src/one-repo" })],
+    "/v1/models": [aModel()],
+    "/v1/workflows": [],
+  }
+  const seen = stubHosts({ local: answers, box: answers })
+  renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
+  const dialog = await screen.findByRole("dialog", { name: "New goal" })
+  const repositories = await within(dialog).findByRole("combobox", { name: "Repositories" })
+  await user.click(repositories)
+  await user.click(await screen.findByText(/one-repo/))
+  await user.keyboard("{Escape}")
+  expect(await within(dialog).findByText(/one-repo/)).toBeDefined()
+
+  await pickHost(user, "box")
+
+  await waitFor(() => expect(within(dialog).queryByText(/one-repo/)).toBeNull())
+  await waitFor(() => expect(reads(seen, "box")).toContain("/v1/repositories"))
+  const fields = [...dialog.querySelectorAll("label")].map((label) => label.textContent)
+  expect(fields.at(-1)).toBe("Orchestrator runs on")
+})
+
 it("opens the goal dialog on local under All", async () => {
   stubHosts({ box: {} })
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
 
-  const host = await screen.findByRole("combobox", { name: "Host" })
-  await waitFor(() => expect(host.textContent).toContain("local"))
+  const pin = await screen.findByRole("button", { name: "Orchestrator runs on" })
+  await waitFor(() => expect(pin.textContent).toContain("local"))
+  expect(screen.queryByRole("combobox", { name: "Host" })).toBeNull()
 })
 
 it("shows a question a remote host's stream delivers, and answers it on that host", async () => {
