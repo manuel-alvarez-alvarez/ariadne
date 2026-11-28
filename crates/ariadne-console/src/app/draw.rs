@@ -367,17 +367,8 @@ impl App {
             Span::styled(format!("{mark} "), style),
         ];
         let took = took(&turn.started_at, turn.ended_at.as_deref());
-        let said = match turn.state {
-            // The mark says a completed turn is completed.
-            TurnState::Completed => crate::trajectory::counts_line(turn, took),
-            _ => {
-                let mut said = crate::trajectory::activity(turn);
-                if let Some(took) = took {
-                    said.push_str(&format!("{}{took}", theme::SEPARATOR));
-                }
-                said
-            }
-        };
+        // The mark says the state of the turn, so its line has no state word.
+        let said = crate::trajectory::counts_line(turn, took);
         parts.push(Span::styled(
             wrap::clip(&said, width.saturating_sub(6)),
             DIM,

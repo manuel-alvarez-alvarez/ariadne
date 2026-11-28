@@ -115,7 +115,7 @@ scrollback stay as they were. The screen has these parts, from the top:
   All 345 tests pass.
 
 ❯ Fix the lint
-  ▸ ⠹ running · 2 steps · 4s
+  ▸ ⠹ 4s · 2 steps
     ◐ $ cargo clippy                                       2s
 ▸ plan 1/3 · Fix the lint
 ──────────────────────────────────────────────────────────────
@@ -127,8 +127,8 @@ scrollback stay as they were. The screen has these parts, from the top:
 ### Turns
 
 A turn shows your prompt after `❯`, one activity line, and the answer of the
-agent. The activity line has a fold mark (`▸` closed, `▾` open), the state of
-the turn, how long it took, then its counts: steps first, then changed files,
+agent. The activity line has a fold mark (`▸` closed, `▾` open), the state mark
+of the turn, how long it took, then its counts: steps first, then changed files,
 failed, cancelled and subagents, each only above zero. A prompt the daemon sent
 shows its first line with text after `» daemon`, without its Markdown mark.
 Move the cursor to that line and press Enter to read the whole prompt as

@@ -3381,3 +3381,32 @@ async fn an_open_command_shows_the_command_only_when_its_row_cut_it() {
         "{screen:#?}"
     );
 }
+
+#[test]
+fn a_turn_line_of_any_state_shows_the_duration_first_and_only_it_when_it_has_no_steps() {
+    let empty = |state: &str| {
+        turn(
+            "t1",
+            state,
+            json!({"prompt": {"id": "t1", "source": "console", "prompt_kind": null,
+                              "content": [{"type": "text", "text": "Go"}]},
+                   "ended_at": "2026-11-27T10:00:05Z"}),
+        )
+    };
+    let stepped = |state: &str| {
+        let mut value = empty(state);
+        value["activity"] = json!({"steps": 3, "tool_calls": 3, "files_changed": 0, "failed": 1,
+                                   "cancelled": 0, "thoughts": 0, "subagents": 0});
+        value
+    };
+    for (state, mark) in [("failed", "✗"), ("cancelled", "⊘"), ("interrupted", "⊘")] {
+        let screen = draw(&app_with(vec![stepped(state)]), WIDTH, HEIGHT);
+        assert_eq!(
+            screen[1],
+            format!("  ▸ {mark} 5s · 3 steps · 1 failed"),
+            "{state}"
+        );
+        let screen = draw(&app_with(vec![empty(state)]), WIDTH, HEIGHT);
+        assert_eq!(screen[1], format!("  ▸ {mark} 5s"), "{state}");
+    }
+}
