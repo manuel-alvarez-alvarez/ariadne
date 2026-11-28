@@ -114,16 +114,37 @@ struct Handoff {
     hook_locks: Arc<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 impl Handoff {
-    /// Wait for the turn of a repository's hook registration.
-    async fn hook_turn(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
-        let lock = self
-            .hook_locks
+    fn hook_lock(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.hook_locks
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .entry(id.into())
             .or_default()
-            .clone();
-        lock.lock_owned().await
+            .clone()
+    }
+    /// Wait for the turn of a repository's hook registration. Only a
+    /// repository's own worker waits: the shared loop never does.
+    async fn hook_turn(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        self.hook_lock(id).lock_owned().await
+    }
+    /// Take the turn at once, or none. Where a retry holds it, a task waits
+    /// for it and asks the loop to sync the repository again, so the loop
+    /// answers every other repository meanwhile.
+    fn hook_turn_now(&self, id: &str) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let lock = self.hook_lock(id);
+        if let Ok(turn) = lock.clone().try_lock_owned() {
+            return Some(turn);
+        }
+        let commands = self.commands.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            drop(lock.lock_owned().await);
+            if let Some(commands) = commands.upgrade() {
+                let (done, _) = oneshot::channel();
+                let _ = commands.send(Command::Changed(id, done));
+            }
+        });
+        None
     }
 }
 struct Worker {
@@ -339,7 +360,9 @@ async fn sync(
         if let Some(row) = row
             && row.webhook_id.is_some()
         {
-            let _turn = handoff.hook_turn(id).await;
+            let Some(_turn) = handoff.hook_turn_now(id) else {
+                return;
+            };
             if let Err(error) = super::hooks::reconcile(store, cfg, row, &Public::default()).await {
                 warn!(%error, repository = id, "cannot remove forge hook");
             }
@@ -396,7 +419,9 @@ async fn sync(
     let interval = poll_interval(&row, &timeouts);
     let webhook_enabled = row.webhook_enabled;
     if reconcile_hook {
-        let _turn = handoff.hook_turn(id).await;
+        let Some(_turn) = handoff.hook_turn_now(id) else {
+            return;
+        };
         match super::hooks::reconcile(store, cfg, row, public_url).await {
             Ok(current) => row = current,
             Err(error) => {
