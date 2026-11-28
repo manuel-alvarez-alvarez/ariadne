@@ -150,8 +150,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    - the column report a column ends on, and the return report a column is
      sent back with: the `complete_step` and `fail_step` descriptions
      alone (013 rule 4). No skill restates a field of either; `coding` and
-     `merge` name their own report only as "the report", and `pr-babysit` as
-     "the column report";
+     `merge` name their own report only as "the report", and `pr-babysit`
+     names no report;
    - stopping a fix loop: the agent seat text alone, which stops an agent
      after three failed attempts at one fix;
    - what a plain word of a shipped skill stands for in Ariadne — the
@@ -385,30 +385,38 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     - Each supplement has a cap of its own and obeys the STE rules of rule
       11, the same as a default text (rule 13).
     - Eight ship, and `coding`, `documentation`, `research` and `spec-writing`
-      have none, since each holds no Ariadne rule of its own: the seat text
-      owns their report call and the binding of the requester. The `reviewer`
-      seat's `pr-reviewer` supplement holds the calls listed for `pr-reviewer` in
-      rule 5, so that skill names no tool. `code-review`
-      in the `agent` seat holds the `get_diff` call
-      for the whole change, and the `fail_step` and `complete_step` calls
-      that return and pass the work. `code-review` in the `reviewer` seat
-      hands the round to `pr-reviewer` and names no step call.
-      `orchestration` in the `orchestrator` seat holds the call of each
-      playbook step in order, and the model rules (003 rule 19). It names
-      the column where the skill says stage, so no binding line is repeated.
-      `merge` in the `agent` seat holds the `complete_step` call with its
-      `merge_commit` and the `fail_step` call for a failed check.
-      `conflict-resolution` in the `agent` seat holds the `complete_step`
-      call for where no skill invoked it. `architecture-review` has none:
-      the seat text binds its plain words.
-      `pr-babysit` in the `agent` seat holds the open of the request (the push,
-      `open_pull_request`, the title and the body), the read, reply and
-      `escalate_comment` calls, the update of the base in the primary checkout
-      on a merge, and the ends, `complete_step` on a merge and `fail_task` on a
-      close. `pr-babysit` in the `keeper` seat holds the same read, reply and
-      `escalate_comment` calls, the user as the requester, the push command of
-      the briefing and the end of turn, and names no task tool. The cap of each
-      is argued in `defaults.rs::supplement_size_caps_hold`.
+      have none, since each skill holds no Ariadne rule of its own: the seat
+      text owns their report call and the binding of the requester. No skill
+      holds a call below. Each call is in the supplement named, and the skill
+      says its plain word.
+      - The `pr-reviewer` supplement of the `reviewer` seat holds the calls
+        listed for `pr-reviewer` in rule 5.
+      - The `code-review` supplement of the `agent` seat holds the `get_diff`
+        call for the whole change, and the `fail_step` and `complete_step`
+        calls that return and pass the work. The `code-review` supplement of
+        the `reviewer` seat hands the round to `pr-reviewer` and names no
+        step call.
+      - The `orchestration` supplement of the `orchestrator` seat holds the
+        call of each playbook step in order, and the model rules (003 rule
+        19). It names the column where the skill says stage, so no binding
+        line is repeated.
+      - The `merge` supplement of the `agent` seat holds the `complete_step`
+        call with its `merge_commit` and the `fail_step` call for a failed
+        check.
+      - The `conflict-resolution` supplement of the `agent` seat holds the
+        `complete_step` call for where no skill invoked it.
+      - `architecture-review` has none: the seat text binds its plain words.
+      - The `pr-babysit` supplement of the `agent` seat holds the open of the
+        request (the push, `open_pull_request`, the title and the body), the
+        read, reply and `escalate_comment` calls, the update of the base in
+        the primary checkout on a merge, and the ends, `complete_step` on a
+        merge and `fail_task` on a close.
+      - The `pr-babysit` supplement of the `keeper` seat holds the same read,
+        reply and `escalate_comment` calls, the user as the requester, the
+        push command of the briefing and the end of turn, and names no task
+        tool.
+
+      The cap of each is argued in `defaults.rs::supplement_size_caps_hold`.
 
 ## Acceptance criteria
 
