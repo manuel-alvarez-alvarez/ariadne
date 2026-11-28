@@ -317,8 +317,34 @@ Each enabled integration's webhook sits in one of three states:
 | Webhook state | What it means | Fetch mode |
 | --- | --- | --- |
 | `live` | the hook is registered and reachable | `WakeOnly`: a delivery wakes the next fetch, no timer |
-| `polling` | no live hook yet — nothing gives the forge a URL to register against (no `webhook_public_url`, and the tunnel down or switched off), or the forge refused the last registration | `Timer`: an immediate fetch, then one every 5 minutes |
+| `polling` | no live hook yet — nothing gives the forge a URL to register against (no `webhook_public_url`, and the tunnel down or switched off), or the forge refused the last registration | `Timer`: an immediate fetch, then one every poll interval (5 minutes unless the repository sets one) |
 | `failed` | a hook that was `live` broke on a later update or deletion the forge refused, while its URL still reached it | `Timer`, same as `polling` |
+
+### Turn the webhook off, or change the poll interval, for one repository
+
+Each repository has its own webhook switch and poll interval. The switch is
+on by default. Turn it off where you do not want a hook on that repository:
+Ariadne registers none, deletes one it registered before, and the
+integration reads `polling` with no error. It polls on its timer, whatever
+the tunnel does. Turn it on again and Ariadne registers the hook as for a new
+enable.
+
+The interval is the wait between timer fetches, in whole minutes from 1 to 60.
+Empty means 5. It applies while the integration is `polling` or `failed`; a
+`live` hook has no timer. A change takes effect at once, with no daemon
+restart.
+
+```sh
+ariadne repo update <repo-id> --webhook off
+ariadne repo update <repo-id> --poll-interval 15
+ariadne repo update <repo-id> --reset-poll-interval
+```
+
+In the desktop app, the repository form shows the **Webhook** switch and the
+**Poll interval** field for an enabled integration. With the switch off the
+Webhook pill reads green `polling` while the last fetch works, and its
+tooltip says the webhook is off for this repository and gives the interval.
+`ariadne repo inspect` prints `webhook` and `poll interval`.
 
 A hook that is `live` has no timer: a delivery that never arrives there
 waits on the next wake, whatever triggers it — another delivery, or

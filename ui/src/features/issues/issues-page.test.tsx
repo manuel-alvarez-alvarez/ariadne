@@ -23,6 +23,8 @@ it("lists forge issues and fills the goal dialog from a chosen issue", async () 
       remote: "origin",
       enabled: true,
       login: "octocat",
+      webhook_enabled: true,
+      poll_interval_minutes: null,
     },
   })
   const url = "https://github.com/acme/widgets/issues/12"

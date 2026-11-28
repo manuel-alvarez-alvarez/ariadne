@@ -8830,7 +8830,8 @@
           "owner",
           "name",
           "remote",
-          "enabled"
+          "enabled",
+          "webhook_enabled"
         ],
         "properties": {
           "enabled": {
@@ -8857,12 +8858,25 @@
           "owner": {
             "type": "string"
           },
+          "poll_interval_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Whole minutes between timer fetches, 1 to 60. Null means 5.",
+            "minimum": 0
+          },
           "remote": {
             "type": "string",
             "description": "The remote it was read off, `origin` where there is one."
           },
           "webhook": {
             "$ref": "#/components/schemas/WebhookDto"
+          },
+          "webhook_enabled": {
+            "type": "boolean",
+            "description": "Whether Ariadne registers a webhook for this repository. Off, the\nrepository polls on its timer."
           }
         }
       },
@@ -8926,6 +8940,22 @@
               "boolean",
               "null"
             ]
+          },
+          "poll_interval_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Whole minutes between timer fetches, 1 to 60; null resets to the\ndefault. Absent = unchanged.",
+            "minimum": 0
+          },
+          "webhook": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Turn the webhook of this repository on or off."
           }
         },
         "additionalProperties": false

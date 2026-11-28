@@ -739,8 +739,12 @@ impl Pusher<'_> {
                 permission_mode: Some(local.permission_mode),
                 // Sent only where it moves: turning the integration on asks
                 // the host's forge CLI who is signed in.
-                forge: (enabled != remote.forge.as_ref().map(|forge| forge.enabled))
-                    .then_some(ForgeUpdate { enabled }),
+                forge: (enabled != remote.forge.as_ref().map(|forge| forge.enabled)).then_some(
+                    ForgeUpdate {
+                        enabled,
+                        ..Default::default()
+                    },
+                ),
             };
             if let Err(error) = self
                 .client
@@ -983,6 +987,8 @@ mod tests {
                 remote: "origin".into(),
                 enabled: false,
                 login: None,
+                webhook_enabled: true,
+                poll_interval_minutes: None,
             }),
             created_at: String::new(),
             updated_at: String::new(),

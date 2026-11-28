@@ -354,6 +354,11 @@ async fn an_agent_that_cancels_its_request_closes_the_question() {
             .await
             .is_empty()
     );
+    // The withdrawal is recorded before the agent reads its reply.
+    eventually(TIMEOUT, "the cancel to reach the agent", || async {
+        reply_of(&h).is_some()
+    })
+    .await;
     assert_eq!(reply_of(&h).unwrap(), json!({"action": "cancel"}));
 }
 

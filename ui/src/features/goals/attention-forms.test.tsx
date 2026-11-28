@@ -40,7 +40,7 @@ const TWO_FIELDS = {
   properties: { ...SINGLE.properties, note: { type: "string", title: "Note" } },
 }
 
-function open(schema: unknown) {
+function open(schema: unknown, message = "Which database should I use?") {
   const seen = stubHosts(
     {
       local: {
@@ -52,7 +52,7 @@ function open(schema: unknown) {
           {
             id: "Q1",
             session_id: "S1",
-            message: "Which database should I use?",
+            message,
             schema,
             created_at: "2026-11-25T10:00:00Z",
           },
@@ -111,4 +111,12 @@ it("answers one Claude question with its companion and Recommended badge in plac
       JSON.stringify({ action: "accept", content: { question_0: "Postgres (Recommended)" } }),
     ),
   )
+})
+
+it("highlights untrusted prose in an agent question", async () => {
+  open(SINGLE, "Choose <<<untrusted>>>**unsafe**<<<end untrusted>>> data")
+  fireEvent.click(await screen.findByRole("button", { name: /Needs attention, 1 items/ }))
+  const form = await screen.findByRole("region", { name: "Agent question" })
+  expect(within(form).getByText("unsafe").closest("mark")?.textContent).toBe("unsafe")
+  expect(form.textContent).not.toContain("<<<untrusted>>>")
 })

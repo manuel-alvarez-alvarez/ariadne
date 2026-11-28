@@ -401,6 +401,8 @@ async fn a_request_of_mine_has_a_row_once_a_task_opened_it_and_not_before() {
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();

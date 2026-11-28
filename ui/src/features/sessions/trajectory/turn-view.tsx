@@ -157,7 +157,11 @@ export const TurnView = memo(function TurnView({
     >
       {turn.prompt ? (
         <PromptBox
-          text={promptText(turn.prompt)}
+          text={
+            turn.prompt.source === "daemon"
+              ? (turn.prompt.text ?? contentText(turn.prompt.content))
+              : promptText(turn.prompt)
+          }
           time={formatClock(turn.started_at)}
           role={turn.prompt.source === "daemon" ? "Developer" : "You"}
           fold={

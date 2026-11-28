@@ -250,6 +250,8 @@ export function aForge(overrides: Partial<ForgeDto> = {}): ForgeDto {
     remote: "origin",
     enabled: false,
     login: null,
+    webhook_enabled: true,
+    poll_interval_minutes: null,
     ...overrides,
   }
 }

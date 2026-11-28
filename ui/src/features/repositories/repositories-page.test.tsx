@@ -205,6 +205,24 @@ describe("RepositoriesPage", () => {
     expect(screen.queryByRole("img", { name: /smee/ })).toBeNull()
   })
 
+  it("shows green polling with the webhook off, and says so with the interval", async () => {
+    const user = userEvent.setup()
+    stubDaemon([
+      {
+        ...ARIADNE,
+        forge: aForge({ enabled: true, webhook_enabled: false, poll_interval_minutes: 15 }),
+      },
+    ])
+    // The tunnel is up, yet this repository registers no hook.
+    renderScreen(<RepositoriesPage />)
+
+    const pill = await screen.findByRole("img", { name: "polling: working" })
+    expect(pill.className).toContain("bg-status-done-soft")
+    await user.hover(pill)
+    expect(await screen.findByText("The webhook is off for this repository.")).toBeDefined()
+    expect(await screen.findByText(/every 15 minutes/)).toBeDefined()
+  })
+
   it("shows the forge each remote is on over two lines, and whether it is enabled", async () => {
     stubDaemon([
       { ...ARIADNE, forge: aForge({ enabled: true, login: "octocat" }) },

@@ -103,7 +103,7 @@ pub(crate) async fn reconcile(
     let client = ForgeClient::for_repository(cfg, &row);
     let desired = public
         .hook(&row.kind, &row.repository_id)
-        .filter(|_| row.enabled);
+        .filter(|_| row.enabled && row.webhook_enabled);
     row.webhook_error = None;
     if let Some(url) = desired {
         if row.webhook_secret.is_none() {
@@ -144,7 +144,7 @@ pub(crate) async fn reconcile(
         }
     } else {
         row.webhook_state = "polling".into();
-        if row.enabled {
+        if row.enabled && row.webhook_enabled {
             // Keep the registered ID for a later URL, but expose no current public address.
             row.webhook_url = None;
             row.webhook_error = public.why.clone();
@@ -173,6 +173,7 @@ pub(crate) async fn reconcile(
         .map_err(|e| e.to_string())?;
     if current.as_ref().is_none_or(|r| {
         r.enabled != row.enabled
+            || r.webhook_enabled != row.webhook_enabled
             || r.kind != row.kind
             || r.host != row.host
             || r.owner != row.owner
