@@ -60,8 +60,9 @@ the daemon adds that supplement to the system prompt. It goes after the seat
 text and before the skill index. The supplement names the tools and calls
 that the plain words of the skill stand for in Ariadne. You cannot edit a
 supplement: `ariadne skill set` and `ariadne skill reset` change the skill
-only, and an edited shipped skill still gets the supplement of its name. Spec
-006, rule 21, has the rule and its limits.
+only, and an edited shipped skill still gets the supplement of its name.
+[Spec 006, rule 21](../specs/006-prompts-and-simplified-technical-english.md)
+has the rule and its limits.
 
 A skill you make needs no Ariadne word. It gets the rules of the seat and no
 supplement, whatever its name. Write it in plain words, as for any harness.
