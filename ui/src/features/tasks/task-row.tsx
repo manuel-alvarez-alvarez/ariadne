@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/ui/skeleton"
 /**
  * One task as one line of the goals board: the facts of the {@link TaskCard}
  * — title, attention badge, state icon, host, step track, tokens, pull
@@ -110,7 +111,9 @@ export function TaskRow({
    */
   showHost?: boolean
 }) {
-  const executionHost = useSourceHost(task.execution_context?.execution_owner)
+  const { host: executionHost, isPending: executionPending } = useSourceHost(
+    task.execution_context?.execution_owner,
+  )
   const runsHere = !task.host || task.host === "local"
   const displayedHost = task.execution_context
     ? (executionHost ?? "Unconfigured worker")
@@ -186,7 +189,9 @@ export function TaskRow({
           />
         </span>
         <span data-column="host" className={cn(HOST_CELL, "min-w-0")}>
-          {task.execution_context && !executionHost ? (
+          {task.execution_context && executionPending ? (
+            <Skeleton aria-label="Loading worker" className="h-3 w-24" />
+          ) : task.execution_context && !executionHost ? (
             <StatusIcon
               icon={TriangleAlertIcon}
               label="Unconfigured worker"

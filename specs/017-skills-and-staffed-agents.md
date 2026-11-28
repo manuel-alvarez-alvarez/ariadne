@@ -274,8 +274,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
     reproduce each finding before it posts it, keeps the priority of a
     finding whose reproduction failed and marks its proof `Unverified:`
     rather than downgrade it to P2, and names no approval (029 rule 17).
-    `pr-babysit` names its own report only as "the column report", never a
-    field of it (006 rule 5), on a merge; `coding`, `merge` and
+    `pr-babysit` names no report of its own and its supplement holds its
+    ends (006 rule 21); `coding`, `merge` and
     `conflict-resolution` name it as "the report", and the
     `agent` seat's supplement of `merge` and of `conflict-resolution` holds
     its call: `merge` passes the
@@ -424,7 +424,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `code-review`, `architecture-review`, `pr-reviewer`, `orchestration`,
     `pr-babysit`, `coding`, `documentation`, `research`, `spec-writing`,
     `merge` and `conflict-resolution` hold to this today, proven by the one
-    helper `assert_names_no_ariadne_word` in `skill_tests/template.rs`. The
+    helper `assert_names_no_ariadne_word` in `skill_tests/template.rs`, run
+    on every shipped skill by
+    `skill_tests/template.rs::no_shipped_skill_names_an_ariadne_word` with
+    no exception. The
     four produce skills keep the ticket and report contract in plain words,
     and none has a supplement: the agent seat text owns the report call and
     the binding of the requester, the stage and the report (006 rule 21).

@@ -2148,7 +2148,7 @@ view.
      Preserve Markdown formatting and literal markers in code. An open marker
      highlights through the current end of streamed text. Folded prompt previews
      retain the highlight. Stored text, input, copy, export and raw data stay unchanged.
-115. Multi-host lists follow rule 113 until the hosts list and every read host answer or fail.
+116. Multi-host lists follow rule 113 until the hosts list and every read host answer or fail.
      They retain arrived rows and append skeleton rows while other hosts load.
      Empty states and counts wait for all answers. The board keeps its task count unresolved.
      It withholds far task copies until daemon identities resolve.
@@ -2156,9 +2156,22 @@ view.
      Agents retain skeleton tabs for pending hosts and hide unresolved model counts in Refresh.
      Issues wait for every host's repositories. The host coverage line from rule 80 stays.
 
+115. Source-host resolution distinguishes pending identities from an unknown source, following rule 113.
+     Task panels, rows and cards show a Skeleton while hosts or identities load.
+     Session details show a Skeleton while the source loads.
+     Unknown-source messages appear only after resolution.
+     Task breadcrumbs show a Skeleton while the goal loads.
+
 ## Acceptance criteria
 
-- Multi-host loading follows rules 113 and 115
+- Source loading follows rule 115
+  (`ui/src/features/tasks/source-loading.test.tsx::shows a skeleton while the task goal loads`,
+  `::shows a skeleton while the worker identity loads: %s`,
+  `::shows a skeleton while the source loads in the %s`,
+  `ui/src/features/tasks/source-host.test.tsx::keeps source resolution pending while the hosts load`,
+  `::resolves an unknown source only after all identities answer`).
+
+- Multi-host loading follows rules 113 and 116
   (`ui/src/hooks/multi-host-loading.test.tsx`,
   `ui/src/features/goals/hosts.test.tsx::keeps skeleton rows below answered goals until every host answers`,
   `ui/src/features/goals/goal-board.test.tsx::withholds far copies and the task count until daemon identities arrive`).

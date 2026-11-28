@@ -207,8 +207,12 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
     enabled: !task.execution_context && !!task.goal_id,
   })
   const goalId = task.goal_id
-  const sourceHost = useSourceHost(task.execution_context?.source_goal?.daemon_id)
-  const executionHost = useSourceHost(task.execution_context?.execution_owner)
+  const { host: sourceHost, isPending: sourcePending } = useSourceHost(
+    task.execution_context?.source_goal?.daemon_id,
+  )
+  const { host: executionHost, isPending: executionPending } = useSourceHost(
+    task.execution_context?.execution_owner,
+  )
   const navigate = useNavigate()
   const status = TASK_STATUS_META[task.status]
   const showHost = usePanelShowsHost()
@@ -218,7 +222,12 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
         !goalId || (task.execution_context?.source_goal && !sourceHost)
           ? undefined
           : {
-              label: task.execution_context?.source_goal?.title ?? goal.data?.title ?? "Goal",
+              label:
+                !task.execution_context && goal.isPending ? (
+                  <Skeleton aria-label="Loading goal" className="h-3 w-24" />
+                ) : (
+                  (task.execution_context?.source_goal?.title ?? goal.data?.title ?? "Goal")
+                ),
               // Replaces rather than pushes: the goal panel takes this one's place
               // in the pane, not a step stacked over it.
               onClick: () => navigate(paths.goal(goalId, sourceHost ?? host), { replace: true }),
@@ -229,7 +238,9 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
       status={
         <>
           <StatusBadge label={status.label} tone={status.badge} hint={status.hint} />
-          {task.execution_context?.source_goal && !sourceHost ? (
+          {task.execution_context?.source_goal && sourcePending ? (
+            <Skeleton aria-label="Loading source" className="h-3 w-24" />
+          ) : task.execution_context?.source_goal && !sourceHost ? (
             <span>
               {task.execution_context.source_goal?.title} (source{" "}
               {task.execution_context.source_goal?.daemon_id} unavailable)
@@ -238,7 +249,9 @@ function TaskHeader({ host, task }: { host: Host; task: TaskDto }) {
           {task.stalled && <StalledBadge />}
           {showHost ? <HostLabel host={host} /> : null}
           {task.execution_context ? (
-            executionHost ? (
+            executionPending ? (
+              <Skeleton aria-label="Loading worker" className="h-3 w-24" />
+            ) : executionHost ? (
               <HostLabel host={executionHost} />
             ) : (
               <span>Unconfigured worker</span>

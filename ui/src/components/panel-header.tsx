@@ -34,7 +34,7 @@ export function PanelHeader({
   /** The entity this panel is drilled into; omitted where the panel is top-level. */
   breadcrumb?: {
     /** What the ancestor is called. */
-    label: string
+    label: ReactNode
     /** Opens the ancestor in this panel's place. */
     onClick: () => void
   }

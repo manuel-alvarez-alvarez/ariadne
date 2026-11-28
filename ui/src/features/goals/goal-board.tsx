@@ -60,7 +60,6 @@ import {
 import { AttentionBlock } from "./attention-block"
 import { useCollapsedLanes } from "./collapsed-lanes"
 import { type GroupOrder, goalCounts, goallessTasks, goalSummary, orderGroups } from "./groups"
-import { useIdentitiesPending } from "./identities-pending"
 import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 
 /**
@@ -163,7 +162,7 @@ export function GoalBoard({
   // A far task with no goal is listed by its source and by its worker, both
   // with no goal: the board shows the source's copy alone.
   const daemonIds = useDaemonIdentities(true)
-  const identitiesLoading = useIdentitiesPending(true)
+  const identitiesLoading = daemonIds.isPending
   const identitiesPending = identitiesLoading && tasks.rows.some((row) => !!row.execution_context)
   const noGoal = useMemo(
     () =>
