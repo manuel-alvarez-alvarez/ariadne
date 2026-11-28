@@ -371,12 +371,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       supplement repeats the binding.
     - Each supplement has a cap of its own and obeys the STE rules of rule
       11, the same as a default text (rule 13).
-    - Five ship, and `coding`, `documentation`, `research` and `spec-writing`
+    - Seven ship, and `coding`, `documentation`, `research` and `spec-writing`
       have none, since each holds no Ariadne rule of its own: the seat text
       owns their report call and the binding of the requester. The `reviewer`
       seat's `pr-reviewer` supplement holds the calls listed for `pr-reviewer` in
-      rule 5, so that skill names no tool.
-      `code-review` in the `agent` seat holds the `get_diff` call
+      rule 5, so that skill names no tool. `code-review`
+      in the `agent` seat holds the `get_diff` call
       for the whole change, and the `fail_step` and `complete_step` calls
       that return and pass the work. `code-review` in the `reviewer` seat
       hands the round to `pr-reviewer` and names no step call.
@@ -385,6 +385,14 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       `conflict-resolution` in the `agent` seat holds the `complete_step`
       call for where no skill invoked it. `architecture-review` has none:
       the seat text binds its plain words.
+      `pr-babysit` in the `agent` seat holds the open of the request (the push,
+      `open_pull_request`, the title and the body), the read, reply and
+      `escalate_comment` calls, the update of the base in the primary checkout
+      on a merge, and the ends, `complete_step` on a merge and `fail_task` on a
+      close. `pr-babysit` in the `keeper` seat holds the same read, reply and
+      `escalate_comment` calls, the user as the requester, the push command of
+      the briefing and the end of turn, and names no task tool. The cap of each
+      is argued in `defaults.rs::supplement_size_caps_hold`.
 
 ## Acceptance criteria
 
