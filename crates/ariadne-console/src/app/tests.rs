@@ -3231,32 +3231,56 @@ fn streamed_untrusted_answers_keep_the_highlight_until_the_close_arrives() {
 }
 
 #[tokio::test]
-async fn an_open_text_detail_hides_markers_and_keeps_markdown_highlighted() {
-    let mut stub = Stub {
-        details: vec![detail_of(
-            "c1",
-            "fetch",
-            json!({"type": "fetch", "url": "https://example.com", "text": "<<<untrusted>>>**detail data**<<<end untrusted>>> safe"}),
-        )],
-        ..Stub::default()
-    };
-    let (app, screen) = opened(
-        &mut stub,
-        vec![call("c1", "t1", "Fetch", "completed")],
-        vec![key(KeyCode::Enter)],
-    )
-    .await;
-    assert!(!screen.join("\n").contains("<<<"));
-    let drawn = buffer(&app, WIDTH, HEIGHT);
-    assert_eq!(
-        style_of(&drawn, "detail data").bg,
-        Some(ratatui::style::Color::DarkGray)
-    );
-    assert!(
-        style_of(&drawn, "detail data")
-            .add_modifier
-            .contains(ratatui::style::Modifier::BOLD)
-    );
+async fn text_details_keep_plain_lines_and_syntax_while_highlighting_untrusted_text() {
+    let text = "line1\n<<<untrusted>>>  **detail data**\n# heading\n- item\n_a_ | b<<<end untrusted>>>\nline2";
+    for kind in ["generic", "fetch", "search"] {
+        let detail = match kind {
+            "generic" => json!({"type": "generic", "content": [{"type": "text", "text": text}]}),
+            "fetch" => json!({"type": "fetch", "url": "https://example.com", "text": text}),
+            _ => json!({"type": "search", "query": "query", "text": text}),
+        };
+        let mut stub = Stub {
+            details: vec![detail_of("c1", kind, detail)],
+            ..Stub::default()
+        };
+        let (app, screen) = opened(
+            &mut stub,
+            vec![call("c1", "t1", "Tool", "completed")],
+            vec![key(KeyCode::Enter)],
+        )
+        .await;
+        let first = screen
+            .iter()
+            .position(|line| line == "      line1")
+            .unwrap_or_else(|| panic!("{kind}: {screen:?}"));
+        assert_eq!(
+            &screen[first..first + 6],
+            [
+                "      line1",
+                "        **detail data**",
+                "      # heading",
+                "      - item",
+                "      _a_ | b",
+                "      line2"
+            ],
+            "{kind}"
+        );
+        assert!(!screen.join("\n").contains("<<<"), "{kind}");
+        let drawn = buffer(&app, WIDTH, HEIGHT);
+        assert_eq!(
+            style_of(&drawn, "**detail data**").bg,
+            Some(ratatui::style::Color::DarkGray)
+        );
+        assert!(
+            !style_of(&drawn, "**detail data**")
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+        assert_ne!(
+            style_of(&drawn, "line2").bg,
+            Some(ratatui::style::Color::DarkGray)
+        );
+    }
 }
 
 #[tokio::test]

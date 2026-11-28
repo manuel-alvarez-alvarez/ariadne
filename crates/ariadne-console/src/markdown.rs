@@ -37,32 +37,78 @@ pub(crate) fn plain(text: &str, width: usize, style: Style) -> Vec<Line<'static>
             .map(|line| Line::styled(line, style))
             .collect();
     }
-    let mut writer = Writer::new(width.max(1));
-    let mut offset = 0;
-    for line in text.split('\n') {
-        let end = offset + line.len();
-        let mut cuts = vec![offset, end];
-        for region in &regions {
-            cuts.extend(
-                [region.start, region.end]
-                    .into_iter()
-                    .filter(|at| offset < *at && *at < end),
-            );
+    // Expand tabs before wrapping, as wrap::wrap does. Keep source trust
+    // offsets aligned with the expanded text, including indentation.
+    let mut expanded = String::new();
+    let mut expanded_regions: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut column = 0;
+    for (at, grapheme) in text.grapheme_indices(true) {
+        let start = expanded.len();
+        if grapheme == "\t" {
+            let spaces = 8 - column % 8;
+            expanded.push_str(&" ".repeat(spaces));
+            column += spaces;
+        } else {
+            expanded.push_str(grapheme);
+            if grapheme.contains('\n') {
+                column = 0;
+            } else {
+                column += grapheme.width();
+            }
         }
-        cuts.sort_unstable();
-        cuts.dedup();
-        for pair in cuts.windows(2) {
-            writer.untrusted = regions.iter().any(|region| region.contains(&pair[0]));
-            writer.push(&text[pair[0]..pair[1]], style);
+        if regions
+            .iter()
+            .any(|region| region.start < at + grapheme.len() && at < region.end)
+        {
+            if let Some(previous) = expanded_regions
+                .last_mut()
+                .filter(|region| region.end == start)
+            {
+                previous.end = expanded.len();
+            } else {
+                expanded_regions.push(start..expanded.len());
+            }
         }
-        let before = writer.lines.len();
-        writer.flush();
-        if writer.lines.len() == before {
-            writer.lines.push(Line::default());
-        }
-        offset = end + 1;
     }
-    writer.lines
+    let mut offset = 0;
+    crate::wrap::wrap(&expanded, width)
+        .into_iter()
+        .map(|part| {
+            // Wrapped rows are contiguous slices; only trailing whitespace is
+            // omitted. Search from the previous row to skip that whitespace.
+            let start = offset
+                + expanded[offset..]
+                    .find(&part)
+                    .expect("wrapped row comes from its source");
+            let end = start + part.len();
+            offset = end;
+            let mut cuts = vec![start, end];
+            for region in &expanded_regions {
+                cuts.extend(
+                    [region.start, region.end]
+                        .into_iter()
+                        .filter(|at| start < *at && *at < end),
+                );
+            }
+            cuts.sort_unstable();
+            cuts.dedup();
+            let spans: Vec<_> = cuts
+                .windows(2)
+                .map(|pair| {
+                    let style = if expanded_regions
+                        .iter()
+                        .any(|region| region.contains(&pair[0]))
+                    {
+                        style.patch(crate::theme::UNTRUSTED)
+                    } else {
+                        style
+                    };
+                    Span::styled(expanded[pair[0]..pair[1]].to_string(), style)
+                })
+                .collect();
+            Line::from(spans)
+        })
+        .collect()
 }
 
 /// The first line of prose, clipped after removing presentation delimiters.
@@ -1455,6 +1501,22 @@ mod tests {
         }
         let literal = "keep \u{2060} and \u{2063} in `code`";
         assert_eq!(text(&render(literal, 100)), [literal]);
+    }
+
+    #[test]
+    fn plain_highlight_preserves_tabs_blank_lines_and_wrapped_indentation() {
+        let lines = plain(
+            "head\n<<<untrusted>>>\ttab\n\n  one two three<<<end untrusted>>>\ntail",
+            12,
+            Style::new(),
+        );
+        assert_eq!(
+            text(&lines),
+            ["head", "        tab", "", "  one two", "three", "tail"]
+        );
+        assert_eq!(lines[1].spans[0].style.bg, Some(Color::DarkGray));
+        assert_eq!(lines[4].spans[0].style.bg, Some(Color::DarkGray));
+        assert_eq!(lines[5].spans[0].style.bg, None);
     }
 
     #[test]

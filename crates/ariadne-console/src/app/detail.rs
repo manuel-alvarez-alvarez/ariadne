@@ -110,10 +110,26 @@ pub(super) fn lines(
             found(fetch.url.as_deref(), fetch.text.as_deref(), room, top)
         }
         ToolDetailDto::Generic(generic) => {
-            let lines = super::draw::content_lines(&generic.content, room)
-                .into_iter()
-                .map(indent)
-                .collect();
+            let mut lines = Vec::new();
+            for block in &generic.content {
+                match media(block) {
+                    Some(line) => lines.push(said(&wrap::clip(&line, room), DIM)),
+                    None => {
+                        let text = match block {
+                            ContentBlockDto::Text { text } => text.as_str(),
+                            ContentBlockDto::Resource {
+                                text: Some(text), ..
+                            } => text.as_str(),
+                            _ => "",
+                        };
+                        lines.extend(
+                            markdown::plain(text.trim_end(), room, OUTPUT)
+                                .into_iter()
+                                .map(indent),
+                        );
+                    }
+                }
+            }
             folded_top(lines, top)
         }
     }
@@ -155,7 +171,7 @@ fn found(subject: Option<&str>, text: Option<&str>, room: usize, top: usize) -> 
         lines.push(said(&wrap::clip(subject, room), TOOL));
     }
     if let Some(text) = text {
-        let body = markdown::render(text.trim_end(), room)
+        let body = markdown::plain(text.trim_end(), room, OUTPUT)
             .into_iter()
             .map(indent)
             .collect();

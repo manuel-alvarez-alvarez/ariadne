@@ -1124,7 +1124,7 @@ fn answered_on_its_call(step: &StepDto, steps: &[StepDto]) -> bool {
 
 /// Content blocks as lines: the text as markdown, and a block that is not
 /// text as one line with its type and its name.
-pub(super) fn content_lines(blocks: &[ContentBlockDto], width: usize) -> Vec<Line<'static>> {
+fn content_lines(blocks: &[ContentBlockDto], width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut said = String::new();
     let flush = |said: &mut String, lines: &mut Vec<Line<'static>>| {

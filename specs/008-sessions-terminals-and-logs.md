@@ -232,7 +232,9 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
     `?` or Esc closes it. The transcript position and the input text stay as they were.
 
 62. Displayed prose hides `<<<untrusted>>>` and `<<<end untrusted>>>` and gives enclosed text a dark gray background.
-    Markdown formatting stays visible. Inline and fenced code keep literal markers.
+    Existing Markdown formatting stays visible where the TUI renders Markdown.
+    Plain tool details keep their line breaks, indentation and literal syntax.
+    Inline and fenced code keep literal markers.
     An opening marker applies through the current text end until its closing marker arrives.
     Wrapping, shortened prompts and streamed redraws keep the highlight.
     The keys overlay includes a styled trust legend that identifies highlighted text as untrusted data.
@@ -290,11 +292,13 @@ Number selection and question navigation use
 48. Rule 62: `ariadne-console::markdown::tests::untrusted_prose_keeps_formatting_and_code_examples`,
     `::untrusted_regions_survive_wrapping_streaming_and_fenced_examples`,
     `::untrusted_markers_preserve_headings_lists_and_table_cells`,
-    `::untrusted_tables_keep_trust_when_narrow_and_preserve_literal_unicode`.
+    `::untrusted_tables_keep_trust_when_narrow_and_preserve_literal_unicode`,
+    `::plain_highlight_preserves_tabs_blank_lines_and_wrapped_indentation`.
     TUI presentation and the legend use
     `ariadne-console::app::tests::untrusted_prompts_and_answers_show_highlights_and_a_help_legend`.
     Streaming uses `::streamed_untrusted_answers_keep_the_highlight_until_the_close_arrives`.
-    Text details use `::an_open_text_detail_hides_markers_and_keeps_markdown_highlighted`.
+    Text details preserve plain line breaks, indentation and literal syntax, with highlighting:
+    `::text_details_keep_plain_lines_and_syntax_while_highlighting_untrusted_text`.
     Original copying uses `::copying_untrusted_prose_keeps_its_original_delimiters`.
     Existing raw-view and overlay tests continue to pass.
 
