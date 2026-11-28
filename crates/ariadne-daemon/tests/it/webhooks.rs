@@ -844,7 +844,14 @@ async fn a_switched_off_webhook_registers_no_hook_for_a_new_repository() {
 #[tokio::test]
 async fn the_poll_interval_is_bounded_stored_and_moves_the_timer_without_a_restart() {
     let stub = stub_forge_cli(script());
-    let h = harness().forge_cli(&stub).timeouts(timer_timeouts()).await;
+    let h = harness()
+        .forge_cli(&stub)
+        .timeouts(ariadne_daemon::timeouts::Timeouts {
+            forge_poll: std::time::Duration::from_millis(30),
+            forge_wake_debounce: std::time::Duration::from_millis(10),
+            ..Default::default()
+        })
+        .await;
     let id = enable(&h).await;
     eventually(TIMEOUT, "the timer fetches", async || fetches(&stub) >= 3).await;
 
@@ -872,11 +879,23 @@ async fn the_poll_interval_is_bounded_stored_and_moves_the_timer_without_a_resta
         )
         .await;
     assert_eq!(set["forge"]["poll_interval_minutes"], 60);
-    // The fetch in flight, and the one a repository update wakes, settle.
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-    let settled = fetches(&stub);
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    assert_eq!(fetches(&stub), settled, "an hour between fetches");
+    // The fetch in flight, and the one a repository update wakes, settle:
+    // the count holds still for a whole QUIET listen, though the default
+    // timer (30 ms here) would have fetched thrice in it.
+    let settled = loop {
+        let count = fetches(&stub);
+        if tokio::time::timeout(QUIET, async {
+            while fetches(&stub) == count {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .is_err()
+        {
+            break count;
+        }
+    };
+    quiet(&stub, settled).await;
 
     let reset: Value = h
         .json(
