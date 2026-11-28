@@ -826,26 +826,60 @@ const KEY_INDENT: &str = "   ";
 const KEY_WIDTH: usize = 14;
 const KEYS_GUTTER: usize = 2;
 
-/// Pack `groups` in order into at most `across` columns, each group whole in
-/// one column and a blank line between two in a column, as short as the
-/// order allows.
+/// The height of the groups that stand in one column, a blank line between
+/// two.
+fn column_height(column: &[Vec<Line<'static>>]) -> usize {
+    column.iter().map(Vec::len).sum::<usize>() + column.len().saturating_sub(1)
+}
+
+/// Pack `groups` in order into as many columns as `across` allows, each
+/// group whole in one column and a blank line between two in a column, as
+/// short as the order allows. A packing with fewer columns than fit is split
+/// at group boundaries until it fills them, which never makes it taller.
 fn key_columns(groups: Vec<Vec<Line<'static>>>, across: usize) -> Vec<Vec<Line<'static>>> {
     let total = groups.iter().map(Vec::len).sum::<usize>() + groups.len().saturating_sub(1);
     let tallest = groups.iter().map(Vec::len).max().unwrap_or(0);
+    let want = across.min(groups.len());
     for limit in tallest..=total {
-        let mut columns: Vec<Vec<Line<'static>>> = Vec::new();
+        let mut columns: Vec<Vec<Vec<Line<'static>>>> = Vec::new();
         for group in &groups {
             match columns.last_mut() {
-                Some(column) if column.len() + 1 + group.len() <= limit => {
-                    column.push(Line::raw(""));
-                    column.extend(group.iter().cloned());
+                Some(column) if column_height(column) + 1 + group.len() <= limit => {
+                    column.push(group.clone());
                 }
-                _ => columns.push(group.clone()),
+                _ => columns.push(vec![group.clone()]),
             }
         }
-        if columns.len() <= across {
-            return columns;
+        if columns.len() > across {
+            continue;
         }
+        while columns.len() < want {
+            let Some(at) = (0..columns.len())
+                .filter(|&at| columns[at].len() > 1)
+                .max_by_key(|&at| column_height(&columns[at]))
+            else {
+                break;
+            };
+            let column = &columns[at];
+            let split = (1..column.len())
+                .min_by_key(|&k| column_height(&column[..k]).max(column_height(&column[k..])))
+                .unwrap_or(1);
+            let tail = columns[at].split_off(split);
+            columns.insert(at + 1, tail);
+        }
+        return columns
+            .into_iter()
+            .map(|column| {
+                let mut lines = Vec::new();
+                for (at, group) in column.into_iter().enumerate() {
+                    if at > 0 {
+                        lines.push(Line::raw(""));
+                    }
+                    lines.extend(group);
+                }
+                lines
+            })
+            .collect();
     }
     vec![]
 }

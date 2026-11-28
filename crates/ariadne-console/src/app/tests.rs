@@ -2424,6 +2424,19 @@ fn a_wide_overlay_shows_its_groups_whole_in_columns_with_no_scroll() {
 }
 
 #[test]
+fn an_overlay_fills_every_column_the_width_holds() {
+    let mut app = app_with(many());
+    app.event(key(KeyCode::Char('?')));
+    // 348 columns hold six columns of 58.
+    let screen = draw(&app, 348, 50);
+    let heads = KEYS
+        .iter()
+        .filter(|(zone, _)| screen[1].contains(&format!(" {zone}")))
+        .count();
+    assert_eq!(heads, 6, "{screen:#?}");
+}
+
+#[test]
 fn a_narrow_overlay_shows_one_column() {
     let mut app = app_with(many());
     app.event(key(KeyCode::Char('?')));
