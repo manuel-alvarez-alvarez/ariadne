@@ -1191,6 +1191,36 @@ async fn a_submitted_review_stores_its_head_and_raises_no_waiting_user() {
     assert_eq!(h.attention(&session).await, None);
 }
 
+/// A round with nothing new to say submits an empty body and no finding:
+/// the daemon stores the checkout head, makes no forge call and answers
+/// success (029 rule 15).
+#[tokio::test]
+async fn a_quiet_submit_stores_the_checkout_head_and_calls_no_forge() {
+    let stub = stub_forge_cli(json!([]));
+    let h = harness().scheduler().forge_cli(&stub).await;
+    let (path, first) = checkout(&h);
+    stub.reprogram(script(&Shown::open(&first)));
+    let repo = repository(&h, &path).await;
+    let id = the_request(&h).await;
+    ask_review(&h, &id, &repo, 1, PIN).await;
+    let session = idle_session(&h, &id).await;
+    let posts = review_posts(&stub).len();
+    let answered: Value = h
+        .json(
+            as_session(
+                &format!("/v1/pull-requests/{id}/reviews"),
+                &session.id,
+                json!({"event":"comment", "body":"", "comments":[]}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(answered, json!([]));
+    let row = h.store.get_pull_request(&id).await.unwrap();
+    assert_eq!(row.reviewed_sha.as_deref(), Some(first.as_str()));
+    assert_eq!(review_posts(&stub).len(), posts);
+}
+
 /// A push fetched while a round runs leaves the checkout on the head the
 /// reviewer inspected: the stored `reviewed_sha` and the posted review name
 /// that head, not the live forge head (029).

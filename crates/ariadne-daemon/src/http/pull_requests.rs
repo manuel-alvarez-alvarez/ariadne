@@ -1008,8 +1008,8 @@ async fn change_diff(
 
 /// Post one round of a review of a request, in the user's name (029): only
 /// its new findings, as one review of inline comments, each led by its
-/// priority. There is no summary of any kind. A round with no new finding
-/// posts no review. `request_changes` stands on a P0 or P1 finding, new or
+/// priority. There is no summary of any kind. A round with an empty body and
+/// no finding is quiet: it records the reviewed revision and posts nothing. `request_changes` stands on a P0 or P1 finding, new or
 /// still open. Any other event is refused, an approval above all: the user
 /// gives every approval. What it posted is marked as the review's.
 #[utoipa::path(post, path = "/v1/pull-requests/{id}/reviews", tag = "pull-requests",
@@ -1110,6 +1110,16 @@ pub(super) async fn submit_review(
             .map_err(|e| ApiError::conflict(format!("{e:#}")))?,
         None => pull.head_sha.clone(),
     };
+    // An empty body with no finding is a quiet round: it has nothing new to
+    // say, so it records the reviewed revision and posts nothing (029).
+    if req.body.is_empty() && comments.is_empty() && !asked {
+        state
+            .store
+            .set_pull_request_reviewed(&pull.id, &reviewed_sha)
+            .await?;
+        state.notify_scheduler_pull_request(&pull.id);
+        return Ok((StatusCode::CREATED, Json(serde_json::json!([]))));
+    }
     let forge = integration(&state, &pull.repository_id).await?;
     let login = forge.login.clone().unwrap_or_default();
     // A change request has a P0 or P1 finding on a changed line, either

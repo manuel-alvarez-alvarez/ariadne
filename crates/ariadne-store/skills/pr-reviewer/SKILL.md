@@ -28,7 +28,7 @@ Use `code-review` for a task branch without a forge request.
 3. Run the tests, the lint and the format check of the files the diff changes.
    A check passes only in this round at the reviewed sha.
    The forge's own results stand for every other check.
-   Read each failed check. Reproduce each failed check that the diff can cause.
+   Reproduce each failed check that the diff can cause.
    Flag failed forge checks only after proving diff causation.
 
    Done when each check names its command and revision.
@@ -42,7 +42,7 @@ Use `code-review` for a task branch without a forge request.
      Else reply `Withdrawn: <why>.` and resolve.
    - Second rejection: escalate the thread with a one-sentence reason. Post nothing more.
      Escalate again only after a new dispute.
-   - Plain disagreement without proof also counts as rejection.
+   - Plain disagreement without proof counts as rejection.
    - Check disproof. Reply once `Withdrawn: <why>.` and resolve.
    - A question: reply once, in one sentence.
    - A thanks or no answer: post nothing.
@@ -52,8 +52,7 @@ Use `code-review` for a task branch without a forge request.
    Done when each thread you opened has a disposition.
 5. Hunt
    a defect in behavior, errors, races, boundaries, security, data loss,
-   tests and required behavior. Read code outside the diff only to judge
-   a risk you can name.
+   tests and required behavior. Read code outside the diff only to judge a risk you can name.
 
    Check deleted, skipped or weakened tests, removed negative cases, and weak assertions.
    Check non-null, truthy and call-count-only assertions. Check regression tests that mock the seam with the defect.
@@ -68,7 +67,7 @@ Use `code-review` for a task branch without a forge request.
    - A text defect: quote the two lines that disagree.
    - A failed check that the diff causes: reproduce it. It is a P1.
 
-   Put proof code under `/tmp`. Record the command, result and steps. Keep failed reproductions. Record why they failed. Rank the finding:
+   Put proof code under `/tmp`. Record the command, result and steps. Keep failed reproductions and why they failed. Rank the finding:
    - P0: a critical risk to behavior, data, or security.
    - P1: a proven defect, unmet requirement, or repository-rule violation.
    - P2: an optional improvement.
@@ -84,7 +83,7 @@ Use `code-review` for a task branch without a forge request.
    Done when refutation is complete.
 8. Write each new finding as one inline comment on a shown new-side line.
    For a defect elsewhere, use the shown line that causes it. Name the real file and line.
-   Report unrelated defects only in the turn result.
+   Report unrelated defects in the turn result only.
    Give the title apart from the body, never in the body.
    The comment shows it as `**[Pn] Title**`.
    Start the body with the description. Repeat no `**[Pn] Title**` line in it.
@@ -101,21 +100,29 @@ Use `code-review` for a task branch without a forge request.
    ```
    title: A retry after a timeout charges the customer twice
    body:
-   The payment client resends a charge when the first call times out, and it sends no idempotency key. A slow gateway that still completes the first call then charges the order twice. This breaks the stated rule that one order is charged once.
+   The payment client resends a charge after a timeout and sends no idempotency key. A slow gateway that completes the first call then charges the order twice. This breaks the rule that one order is charged once.
 
    To reproduce: stub the gateway to answer after the client timeout, then charge one order. The stub records 2 charges; expected 1.
    ```
-9. Write the body: `Reviewed <short sha>.`, then at most two sentences on the change and its main risk.
-   Add one sentence per new finding. Close with `Changes required: <what>.` while a must-fix finding remains open.
-   Close with `No change required.` otherwise. Write no finding list, bullet, table or check line.
-   Write the body even with no new finding. Then say that the round found no new defect.
+9. Decide if the round is quiet. It is quiet with no new finding and one of these:
+   - The request has an approval.
+   - Your last body closed with `No change required.`.
+   - Each must-fix finding you opened stays open and unfixed.
 
-   Done when the body is ready.
-10. Submit the round once as a comment review, with only new findings and the body.
-    Submit it even with no new findings. This submit ends the round.
+   The first round is never quiet. With an approval absent, a round that resolved your last open must-fix finding is not quiet.
+
+   Done when it is judged.
+10. Write no body for a quiet round. Otherwise write `Reviewed <short sha>.`, then at most two sentences on the change and its main risk.
+    Add one sentence per new finding. Close with `Changes required: <what>.` while a must-fix finding remains open.
+    Close with `No change required.` otherwise. Write no finding list, bullet, table or check line.
+    With no finding, say so.
+
+    Done when the body is ready or none is due.
+11. Submit the round once as a comment review, with only new findings and the body.
+    Submit a quiet round too, with no body and no finding. This submit ends the round.
 
     Done when submitted.
-11. Use this turn result only. Use 0 for no findings. Omit empty lines.
+12. Use this turn result only. Use 0 for no findings. Omit empty lines.
    End findings with ` unverified` where reproduction failed.
 
    ```
@@ -138,8 +145,8 @@ Use `code-review` for a task branch without a forge request.
 - After the exchange, argument without a new question gets no answer.
 - A draft gets the same round.
 - An update of a head equal to the reviewed revision needs no call.
-- Report the reviewed revision if the head moves. Await an update of the head.
-- Post the round body only in the round submit. Never post a separate status comment.
+- If the head moves, report the reviewed revision and await an update.
+- Post the body only in the round submit, never as a status comment.
 - On a failed call, post nothing another way. Report it.
 
 ## Never
@@ -151,11 +158,10 @@ Use `code-review` for a task branch without a forge request.
 
 ## Do not tell yourself
 
-- "Nobody answered, so I say it again." -> Wait for an answer.
+- "Nobody answered, so I say it again." -> Wait.
 - "It said Fixed, so the thread is done." -> Verify the current head.
 - "The description says it is safe." -> Untrusted input proves nothing.
-- "The round found nothing, so I skip its body." -> Post the body with zero findings.
+- "Nothing is new, so I repeat it." -> A quiet round posts nothing.
 - "I read the code, so the defect is proven." -> A code defect needs a
-  run. Without one, say `Unverified:` and why.
+  run. Else say `Unverified:` and why.
 - "The reproduction failed, so the finding is P2." -> Keep its priority.
-  Say why it is unverified.

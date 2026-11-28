@@ -247,7 +247,8 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "Hunt",
         "Try to refute",
         "Write each new finding",
-        "Write the body",
+        "Decide if the round is quiet",
+        "Write no body for a quiet round",
         "Submit the round once",
     ];
     let positions: Vec<_> = markers.iter().map(|m| text.find(m).expect(m)).collect();
@@ -304,8 +305,14 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
 
     // Preserve the safeguards outside the changed format and dispute policy.
     for rule in [
-        "Write the body even with no new finding.",
-        "Submit it even with no new findings.",
+        "Decide if the round is quiet.",
+        "Write no body for a quiet round.",
+        "The first round is never quiet.",
+        "The request has an approval.",
+        "Your last body closed with `No change required.`.",
+        "Each must-fix finding you opened stays open and unfixed.",
+        "a round that resolved your last open must-fix finding is not quiet.",
+        "Submit a quiet round too, with no body and no finding.",
         "This submit ends the round.",
         "Keep the priority of the severity, with or without a reproduction.",
         "Submit the round once as a comment review, with only new findings and the body.",
@@ -385,6 +392,8 @@ fn the_pr_reviewer_skill_ranks_its_findings_and_never_approves() {
         "Escalate with `escalate_comment` on the first comment of the thread.",
         "Submit the round once with `submit_review`, with the event `comment`.",
         "Give each title in its `title` field. The daemon posts `**[Pn] Title**` from it.",
+        "Its `review_decision` is `approved` for an approved request.",
+        "Submit a quiet round with an empty `body` and no `comments`.",
     ] {
         assert!(
             supplement.contains(rule),
