@@ -1,7 +1,7 @@
 ---
 id: planning-a-goal
 status: current
-updated: 2026-11-25
+updated: 2026-11-28
 areas: [prompts, daemon, mcp]
 commits: [d421e30b, fdd0c5b6, 09955c22, 305ad2fb, 7bcb30a0, 31bb7611, 29e6d84e, 1b09ac10, a4d7da95]
 tests:
@@ -87,7 +87,8 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    edge. One more edge is for the user rather than the code: a task that is
    a conversation with the user holds one open question in the console, so
    such tasks are chained with `depends_on` and the user holds one at a
-   time.
+   time. The `orchestration` skill says "a dependency"; the orchestrator
+   seat's `orchestration` supplement says it is `depends_on` (rule 19).
 6. It reads the skill and model catalogs once for the whole plan, not once
    per task. It staffs one agent on every column of each task (030), and
    gives every agent one model from the catalog (011) — a model is
@@ -110,7 +111,12 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    ranks. With none eligible, the review column takes its normal rank-based
    choice instead, even from the coding column's own agent, and the
    orchestrator tells the user independent review was unavailable. No other
-   column's choice is narrowed by this rule.
+   column's choice is narrowed by this rule. The skill says, in plain words,
+   to read the catalogs once, to staff one agent per stage with a brief
+   where one is needed, and to give each agent a model that fits its work.
+   The calls, `list_hosts`, `list_skills`, `list_models` and `create_task`
+   with its `brief`, and every model rule of this rule are the supplement's
+   (rule 19).
 7. Two things are settled with the user rather than decided alone, because
    each is a judgement about the work and not about the code:
    - what the goal actually asks for (3);
@@ -137,7 +143,9 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     `planning`, and never on a plan with no tasks. It refuses a plan with a
     task that has no agent on a column, and the refusal names the task and
     the column. It also ends the plan mode the orchestrator planned in
-    (021 rule 22).
+    (021 rule 22). The skill starts the plan after the yes and no earlier;
+    the supplement names `finalize_plan` and says to call it no earlier
+    (rule 19).
 11. Nothing runs while the goal is in `planning`. A task created there stays
     `pending` however often the scheduler is woken about it: the daemon
     reconciles the tasks of active goals alone. That is what makes 8 safe —
@@ -159,12 +167,17 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     nobody staffs is refused by the column's name (001 rule 12), and
     `retry_task` says so. It switches a task's session where the agent is
     exhausted, stuck or unsuitable, to a model one rank up, and says so to
-    the user.
+    the user. The skill says to answer each agent, to retry, rewrite or
+    cancel a failed task, and to move a struggling agent to a stronger
+    model. The supplement names `post_to_session`, `retry_task`,
+    `update_task`, `cancel_task` and `switch_session`, and the rank (rule
+    19).
 16. `complete_goal` ends the goal. Whether the goal is *met* is a judgement
     about the work, so the daemon does not make it — but it refuses the call
     while any task is not terminal, which is the part it can see. The user may
     make the same call, so a goal whose orchestrator will not start is still
-    one they can close.
+    one they can close. The skill closes the goal when every task is done;
+    the supplement names `complete_goal` (rule 19).
 17. A linked goal starts `active` without an orchestrator session.
     It accepts `POST /v1/goals/{id}/tasks` without a session header.
     The daemon schedules each new task immediately, as after `finalize_plan`.
@@ -188,9 +201,25 @@ Out: the columns and their gates (030), the model catalog the sizing reads
       to skip the request. Claude Code reads the tool list once and ignores
       `notifications/tools/list_changed`, so such a hint would stay after
       `finalize_plan`.
+19. The `orchestration` skill names no Ariadne word (017 rule 16). It keeps
+    the planning craft in plain words: explore, ask one question at a time,
+    split into tracer tasks, write the four sections of a ticket, get a
+    written yes, and run the plan to its end. Each Ariadne rule it held has
+    one owner:
+    - the orchestrator seat text keeps its three rules (rule 2, 006 rule 5);
+    - the orchestrator seat's `orchestration` supplement (006 rule 21)
+      holds the call of each step, in the order of the steps: the hosts,
+      the skills, the models, the staffing, `finalize_plan`, the posts, the
+      failed tasks and `complete_goal`. It also holds the model rules of
+      rule 6: the ranks, `local`, and different ACP agents for the coding
+      and review columns.
 
 ## Acceptance criteria
 
+- Rule 19: the skill names no Ariadne word
+  (`skill_tests/operate.rs::the_orchestration_skill_names_no_ariadne_word`),
+  and the supplement holds the call of each step in order
+  (`defaults.rs::the_orchestration_supplement_holds_each_steps_call_in_order`).
 - The playbook asks before it plans and plans before it starts
   (`skill_tests/operate.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
   asks one question at a time and names the parts of a question
@@ -210,21 +239,21 @@ Out: the columns and their gates (030), the model catalog the sizing reads
   (`skill_tests/operate.rs::the_orchestration_skill_names_what_a_ticket_carries`). The
   orchestration, coding and code-review skills all name the same format
   (`::the_three_skills_name_the_ticket_format`).
-- The playbook keeps each choice within its column's ranks, assesses scope
+- The supplement keeps each choice within its column's ranks, assesses scope
   and complexity case by case, chooses the smallest capable model and effort
   for routine or uncertain work, and states why a more powerful eligible
   model is necessary
   (`skill_tests/operate.rs::the_orchestrator_staffs_each_column_on_its_rank`).
-- The playbook gives a task's coding and review columns different ACP
+- The supplement gives a task's coding and review columns different ACP
   agents where one is eligible, falls back to the review column's normal
   choice with none eligible, and tells the user independent review was
   unavailable
   (`skill_tests/operate.rs::the_orchestration_skill_requires_independent_providers_for_coding_and_review`).
-- The orchestrator is briefed to end planning with `finalize_plan` and with no
-  other plan call
+- The supplement and the resume brief the orchestrator to end planning with
+  `finalize_plan` and with no other plan call
   (`defaults.rs::the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call`).
-- The playbook switches a struggling agent's session to a model one rank
-  up, and tells the user
+- The playbook moves a struggling agent to a stronger model and tells the
+  user, and the supplement names `switch_session` and one rank up
   (`skill_tests/operate.rs::the_orchestration_skill_switches_a_struggling_agents_session`).
 - The nudge fits the conversation and the goal under way
   (`defaults.rs::the_orchestrator_nudge_fits_the_conversation_and_the_goal_under_way`),
@@ -285,6 +314,7 @@ Out: the columns and their gates (030), the model catalog the sizing reads
 `crates/ariadne-store/src/defaults.rs` (`ORCHESTRATOR_SYSTEM_PROMPT`,
 `ORCHESTRATOR_BRIEFING`, `ORCHESTRATOR_RESUME`, `GOAL_ATTENTION`),
 `crates/ariadne-store/skills/orchestration/SKILL.md`,
+`crates/ariadne-store/supplements/orchestration/orchestrator.md`,
 `crates/ariadne-daemon/src/agents/prompts.rs`,
 `crates/ariadne-daemon/src/scheduler/goals.rs`,
 `crates/ariadne-daemon/src/scheduler/tasks.rs` (the guard behind 11),

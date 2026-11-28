@@ -92,10 +92,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 3. The system prompt is the code's, one text per seat. Nothing an agent runs
    under carries a lifecycle text of its own: what makes one agent differ
    from another in the same seat is the skills it holds. No seat text carries
-   a playbook step — the orchestrator's phases are the `orchestration` skill
-   (017), and its seat text keeps only what no skill edit may take away: no
-   code is written, the plan is made with the user, and no open point is
-   decided alone. The `agent` seat text is the one text every column's agent
+   a playbook step. The orchestrator's phases are the `orchestration` skill
+   (017), in plain words, and the call of each phase is the orchestrator
+   seat's `orchestration` supplement (rule 21), in the order of the phases.
+   Its seat text keeps only what no skill edit may take away: no code is
+   written, the plan is made with the user, and no open point is decided
+   alone. The `agent` seat text is the one text every column's agent
    runs under: work in the task's worktree and on the current column, read
    its skills, and what `complete_step`, `fail_step` and `fail_task` are for,
    with the ban on `--no-verify` and `-n`. What a column does — build,
@@ -124,6 +126,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    - planning the goal with the user, writing no code, and deciding no
      open point alone: the `orchestrator` seat text alone; the
      `orchestration` skill states its phases, never these three;
+   - the call of each `orchestration` phase — `list_hosts`, `list_skills`,
+     `list_models`, `create_task` with `depends_on` and `brief`,
+     `finalize_plan` and that it is called no earlier, `post_to_session`,
+     `retry_task`, `update_task`, `cancel_task`, `switch_session` and
+     `complete_goal` — and the model rules — the column ranks, `local`, and
+     different ACP agents for the coding and review columns: the
+     orchestrator seat's `orchestration` supplement alone (003 rule 19);
    - ending the turn after a call: the `complete_step`, `fail_step` and
      `post_to_session` descriptions;
    - how a check runs — in the foreground, split by crate, logged outside
@@ -244,7 +253,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     without a change of the test first; the total still keeps one skill from
     taking the whole room. A supplement rides in the system prompt beside
     the seat text, so it is capped like one: each pair of skill and seat has
-    a cap of its own, and one total holds them all (rule 21). A pair with no
+    a cap of its own, and one total holds them all (rule 21). The
+    orchestrator seat's `orchestration` supplement is capped at 1,800, and
+    the total at 2,300: it holds every call and model rule the skill
+    dropped, and the seat still pays less than the 1,750 its seat text once
+    carried with the playbook in it. A pair with no
     cap fails the test, so a new supplement argues its cap first.
 14. The handoff is a text built from a session's stored events for a
     session switched to another coding agent (021): no ACP agent can resume
@@ -355,10 +368,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       supplement repeats the binding.
     - Each supplement has a cap of its own and obeys the STE rules of rule
       11, the same as a default text (rule 13).
-    - Two ship. `code-review` in the `agent` seat holds the `get_diff` call
+    - Three ship. `code-review` in the `agent` seat holds the `get_diff` call
       for the whole change, and the `fail_step` and `complete_step` calls
       that return and pass the work. `code-review` in the `reviewer` seat
       hands the round to `pr-reviewer` and names no step call.
+      `orchestration` in the `orchestrator` seat holds the call of each
+      playbook step in order, and the model rules (003 rule 19). It names
+      the column where the skill says stage, so no binding line is repeated.
       `architecture-review` has none: the seat text binds its plain words.
 
 ## Acceptance criteria
@@ -381,7 +397,18 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`skill_tests/template.rs::the_agent_seat_text_binds_each_plain_word_to_ariadne`).
   `code-review` and `architecture-review` name no Ariadne, no MCP tool and
   no Ariadne word, by the one helper `assert_names_no_ariadne_word`
-  (`skill_tests/template.rs::the_two_review_skills_name_no_ariadne_word`).
+  (`skill_tests/template.rs::the_two_review_skills_name_no_ariadne_word`),
+  and so does `orchestration`
+  (`skill_tests/operate.rs::the_orchestration_skill_names_no_ariadne_word`).
+  The orchestrator seat's `orchestration` supplement holds the call of each
+  step in order
+  (`defaults.rs::the_orchestration_supplement_holds_each_steps_call_in_order`),
+  the host, rank and ACP agent rules
+  (`skill_tests/operate.rs::the_orchestration_skill_picks_a_host_for_each_task_and_staffs_its_models`,
+  `::the_orchestrator_staffs_each_column_on_its_rank`,
+  `::the_orchestration_skill_requires_independent_providers_for_coding_and_review`),
+  and reaches an orchestrator session between its seat text and its index
+  (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`).
   The agent seat's `code-review` supplement holds its `get_diff`,
   `fail_step` and `complete_step` rules, and the reviewer seat's names no
   step call
@@ -523,9 +550,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`prompts.rs::every_default_briefing_is_its_template_with_the_values_put_in`).
 - A seat's prompt carries what the seat owes and nothing of a skill
   (`skill_documents.rs::a_seat_prompt_carries_only_what_the_seat_owes`).
-- The orchestrator system prompt holds no playbook step; the phases and their
-  order are the `orchestration` skill's
+- The orchestrator system prompt holds no playbook step and no call of one;
+  the phases and their order are the `orchestration` skill's, and their
+  calls the supplement's
   (`defaults.rs::the_orchestrator_seat_text_holds_no_playbook_step`,
+  `::the_orchestration_supplement_holds_each_steps_call_in_order`,
   `skill_tests/operate.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
   and an orchestrator session indexes that skill
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`).

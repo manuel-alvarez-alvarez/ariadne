@@ -337,8 +337,8 @@ fn every_skill_obeys_the_template() {
 #[test]
 fn each_rule_is_stated_in_exactly_one_briefing() {
     // The step calls, the hook rule and the stop rule belong to the
-    // agent seat text. `finalize_plan` belongs to the orchestration
-    // skill. The worktree scope and the plan-with-the-user rule belong
+    // agent seat text. `finalize_plan` belongs to the orchestrator
+    // seat's orchestration supplement. The worktree scope and the plan-with-the-user rule belong
     // to the agent and orchestrator seat texts: a skill that repeated
     // either, as `merge` and `orchestration` once did, is the mistake
     // this guards against.
