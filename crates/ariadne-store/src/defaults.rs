@@ -172,7 +172,7 @@ pub(crate) struct SkillSupplement {
 
 /// Every supplement Ariadne ships. A pair of skill and seat that is not here
 /// adds no text.
-pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 2] = [
+pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 3] = [
     SkillSupplement {
         skill: "code-review",
         seat: Seat::Agent,
@@ -182,6 +182,11 @@ pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 2] = [
         skill: "code-review",
         seat: Seat::Reviewer,
         text: include_str!("../supplements/code-review/reviewer.md"),
+    },
+    SkillSupplement {
+        skill: PR_REVIEWER_SKILL,
+        seat: Seat::Reviewer,
+        text: include_str!("../supplements/pr-reviewer/reviewer.md"),
     },
 ];
 
@@ -943,14 +948,19 @@ pub(crate) mod tests {
     /// up here. The agent seat's `code-review` supplement is 300: the diff
     /// call and the two step calls the skill dropped. The reviewer seat's is
     /// 200: one line that hands the round to `pr-reviewer`, and one that
-    /// skips the step call. A new pair needs a cap of its own here, argued
+    /// skips the step call. The reviewer seat's `pr-reviewer` supplement is 900:
+    /// the calls that read the request, the diff and the threads, the call that
+    /// answers a thread, and the one that submits the round, which the skill
+    /// dropped with every other Ariadne word; the total rose from 500 to 1400
+    /// by those 900 and a sentence of room. A new pair needs a cap of its own here, argued
     /// the same way, and the total holds them all.
     #[test]
     fn supplement_size_caps_hold() {
-        const TOTAL: usize = 500;
+        const TOTAL: usize = 1_400;
         let cap = |skill: &str, seat: Seat| match (skill, seat) {
             ("code-review", Seat::Agent) => 300,
             ("code-review", Seat::Reviewer) => 200,
+            (PR_REVIEWER_SKILL, Seat::Reviewer) => 900,
             _ => panic!(
                 "the {skill} supplement of the {} seat has no cap",
                 seat.as_str()
@@ -991,6 +1001,19 @@ pub(crate) mod tests {
                 "the reviewer supplement and {call}"
             );
         }
+        let pr = skill_supplement(PR_REVIEWER_SKILL, Seat::Reviewer).unwrap();
+        for call in [
+            "`get_pull_request`",
+            "`get_diff`",
+            "`list_comments`",
+            "`reply_comment`",
+            "`resolve_thread`",
+            "`escalate_comment`",
+            "`submit_review`",
+        ] {
+            assert!(pr.contains(call), "the pr-reviewer supplement and {call}");
+        }
+        assert_eq!(skill_supplement(PR_REVIEWER_SKILL, Seat::Agent), None);
         assert_eq!(skill_supplement("code-review", Seat::Orchestrator), None);
         assert_eq!(skill_supplement("code-review", Seat::Keeper), None);
         assert_eq!(skill_supplement("architecture-review", Seat::Agent), None);
