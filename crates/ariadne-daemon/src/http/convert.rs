@@ -95,6 +95,8 @@ dto! {
             last_delivery_at: f.webhook_last_delivery_at,
             fetch_error: f.fetch_error,
         },
+        webhook_enabled: f.webhook_enabled,
+        poll_interval_minutes: f.poll_interval_minutes.and_then(|m| u32::try_from(m).ok()),
         .. host, owner, name, remote, enabled, login
     }
 

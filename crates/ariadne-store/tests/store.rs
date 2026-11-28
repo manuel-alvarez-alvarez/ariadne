@@ -3367,6 +3367,62 @@ async fn the_forge_integrations_kind_check_accepts_github_and_rejects_other_kind
     pool.close().await;
 }
 
+/// A forge row written without the webhook columns keeps its webhook on and
+/// its interval empty, and the interval column refuses a value outside 1 to
+/// 60 (027 rules 1 and 2). Reached by raw SQL: the typed write always names
+/// both columns.
+#[tokio::test]
+async fn a_forge_row_defaults_to_webhook_on_with_no_interval_and_bounds_the_interval() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("forge-switch.db");
+    drop(Store::open(&path).await.unwrap());
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO repositories (id, path, base_branch, created_at, updated_at)
+         VALUES ('r1', '/repo-1', 'main', '', '')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO forge_integrations
+            (repository_id, kind, host, owner, name, remote, detected_at, updated_at)
+         VALUES ('r1', 'github', 'github.com', 'acme', 'widgets', 'origin', '', '')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+    let row = store.forge_integration("r1").await.unwrap().unwrap();
+    assert!(row.webhook_enabled);
+    assert_eq!(row.poll_interval_minutes, None);
+
+    for minutes in [0, 61] {
+        let refused = store
+            .set_forge_integration(SetForgeIntegration {
+                poll_interval_minutes: Some(minutes),
+                ..widgets("r1")
+            })
+            .await;
+        assert!(refused.is_err(), "{minutes} minutes is refused");
+    }
+    store
+        .set_forge_integration(SetForgeIntegration {
+            webhook_enabled: false,
+            poll_interval_minutes: Some(60),
+            ..widgets("r1")
+        })
+        .await
+        .unwrap();
+    let row = store.forge_integration("r1").await.unwrap().unwrap();
+    assert!(!row.webhook_enabled);
+    assert_eq!(row.poll_interval_minutes, Some(60));
+}
+
 /// A fresh database already carries every column the old incremental chain
 /// used to add after the first squash — pull-request readiness and
 /// the `keeper` seat — all folded into the one shipped migration now, so a
@@ -5000,6 +5056,8 @@ fn widgets(repository_id: &str) -> SetForgeIntegration {
         remote: "origin".into(),
         enabled: false,
         login: None,
+        webhook_enabled: true,
+        poll_interval_minutes: None,
     }
 }
 
@@ -5449,6 +5507,8 @@ async fn store_with_my_pull_request() -> (Store, tempfile::TempDir, PullRequestR
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();

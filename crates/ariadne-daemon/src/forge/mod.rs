@@ -252,6 +252,8 @@ pub fn merged(
         remote: detected.remote.clone(),
         enabled: false,
         login: None,
+        webhook_enabled: true,
+        poll_interval_minutes: None,
     };
     let Some(current) = current else {
         return Some(fresh);
@@ -263,6 +265,8 @@ pub fn merged(
     Some(SetForgeIntegration {
         enabled: same && current.enabled,
         login: current.login.clone().filter(|_| same),
+        webhook_enabled: !same || current.webhook_enabled,
+        poll_interval_minutes: current.poll_interval_minutes.filter(|_| same),
         ..fresh
     })
 }
@@ -278,6 +282,8 @@ fn stored(row: &ForgeIntegration) -> SetForgeIntegration {
         remote: row.remote.clone(),
         enabled: row.enabled,
         login: row.login.clone(),
+        webhook_enabled: row.webhook_enabled,
+        poll_interval_minutes: row.poll_interval_minutes,
     }
 }
 
@@ -1090,6 +1096,8 @@ exit \"$(cat \"$dir/exit\")\"\n";
             webhook_error: None,
             webhook_last_delivery_at: None,
             fetch_error: None,
+            webhook_enabled: true,
+            poll_interval_minutes: None,
             repository_id: "repository".into(),
             kind: "github".into(),
             host: "github.com".into(),
