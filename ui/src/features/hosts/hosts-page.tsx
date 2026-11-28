@@ -45,7 +45,7 @@ export function HostsPage() {
   const { hosts, error, isPending } = useHosts()
   const setupQuery = useHostSetups()
   const setups = setupQuery.data ?? []
-  const pending = isPending || setupQuery.isPending
+  const setupsPending = setupQuery.isPending
   const [updating, setUpdating] = useState<HostSetup | null>(null)
   const [continuing, setContinuing] = useState<string | null>(null)
   const [discarding, setDiscarding] = useState<string | null>(null)
@@ -91,7 +91,7 @@ export function HostsPage() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {pending
+          {isPending
             ? [0, 1, 2].map((row) => (
                 <TableRow key={row}>
                   <TableCell colSpan={7}>
@@ -105,7 +105,9 @@ export function HostsPage() {
                   host={host}
                   onUpdate={(() => {
                     const saved = setups.find((one) => one.name === host.name)
-                    return saved && (saved.state === "complete" || saved.operation === "update")
+                    return !setupsPending &&
+                      saved &&
+                      (saved.state === "complete" || saved.operation === "update")
                       ? () => setUpdating(saved)
                       : null
                   })()}
@@ -119,7 +121,14 @@ export function HostsPage() {
                   }}
                 />
               ))}
-          {(pending ? [] : setups)
+          {!isPending && setupsPending ? (
+            <TableRow>
+              <TableCell colSpan={7}>
+                <Skeleton aria-label="Loading saved setups" className="h-10 w-full" />
+              </TableCell>
+            </TableRow>
+          ) : null}
+          {setups
             .filter((one) => one.state !== "complete")
             .map((one) => (
               <SetupRow

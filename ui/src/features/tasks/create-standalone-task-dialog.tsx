@@ -116,7 +116,7 @@ export function CreateStandaloneTaskDialog({
         }
         submitLabel="Create task"
         pending={create.isPending}
-        submitDisabled={!hasModel}
+        submitDisabled={!hasModel || hostsPending}
         onKeyDown={submitOnChord}
       >
         <FormDialogBody>

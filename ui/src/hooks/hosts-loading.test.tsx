@@ -75,3 +75,22 @@ it.each([
     baseElement.querySelector('[aria-label="Loading hosts"][data-slot="skeleton"]'),
   ).toBeTruthy()
 })
+
+it("shows the host rows while the saved setups load", async () => {
+  stubHosts({ local: { "/v1/host-setups": () => undefined } })
+  const router = createMemoryRouter([{ path: "/", element: <HostsPage /> }])
+  const { container, findByText } = render(<RouterProvider router={router} />, { wrapper })
+  await findByText("box")
+  expect(container.querySelector('[aria-label="Loading saved setups"]')).toBeTruthy()
+})
+
+it("disables Create task while the hosts load", () => {
+  stubHosts({ local: { "/v1/hosts": () => undefined } })
+  const { baseElement } = render(<CreateStandaloneTaskDialog open onOpenChange={() => {}} />, {
+    wrapper,
+  })
+  const button = [...baseElement.querySelectorAll("button")].find(
+    (one) => one.textContent === "Create task",
+  )
+  expect(button?.disabled).toBe(true)
+})
