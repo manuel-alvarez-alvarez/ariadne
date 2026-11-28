@@ -30,8 +30,16 @@ afterEach(() => {
   useSettingsStore.setState({ hostFilter: "" })
 })
 
-it("defaults the goal dialog to the picked host, and reloads its lists when the host changes", async () => {
-  const user = userEvent.setup()
+it("opens the goal dialog on local under All", async () => {
+  stubHosts({ box: {} })
+  renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
+
+  const pin = await screen.findByRole("button", { name: "Orchestrator runs on" })
+  await waitFor(() => expect(pin.textContent).toContain("local"))
+  expect(screen.queryByRole("combobox", { name: "Host" })).toBeNull()
+})
+
+it("defaults the goal dialog to the picked host, and reads that host only", async () => {
   useSettingsStore.setState({ hostFilter: "box" })
   const seen = stubHosts({
     local: {
@@ -53,6 +61,16 @@ it("defaults the goal dialog to the picked host, and reloads its lists when the 
     expect(reads(seen, "box")).toEqual(["/v1/models", "/v1/repositories", "/v1/workflows"]),
   )
   expect(reads(seen, "local")).toEqual([])
+})
+
+it("reloads the lists of the new host when the goal dialog's host changes", async () => {
+  const user = userEvent.setup()
+  useSettingsStore.setState({ hostFilter: "box" })
+  const seen = stubHosts({
+    local: { "/v1/repositories": [], "/v1/models": [], "/v1/workflows": [] },
+    box: { "/v1/repositories": [], "/v1/models": [], "/v1/workflows": [] },
+  })
+  renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
 
   await pickHost(user, "local")
 
@@ -252,15 +270,6 @@ it("clears the repositories and the workflow when the picker's host changes, and
   await waitFor(() => expect(reads(seen, "box")).toContain("/v1/repositories"))
   const fields = [...dialog.querySelectorAll("label")].map((label) => label.textContent)
   expect(fields.at(-1)).toBe("Orchestrator runs on")
-})
-
-it("opens the goal dialog on local under All", async () => {
-  stubHosts({ box: {} })
-  renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
-
-  const pin = await screen.findByRole("button", { name: "Orchestrator runs on" })
-  await waitFor(() => expect(pin.textContent).toContain("local"))
-  expect(screen.queryByRole("combobox", { name: "Host" })).toBeNull()
 })
 
 /** The paths a host was asked to read, each once, sorted. */

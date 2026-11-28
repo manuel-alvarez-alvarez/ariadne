@@ -1214,7 +1214,8 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     and reloads them for the new host. The sync warning of a host that is not
     in sync shows below the picker. Tests in
     `ui/src/features/goals/create-goal-hosts.test.tsx`: “defaults the goal dialog to the
-    picked host, and reloads its lists when the host changes”, “clears the
+    picked host, and reads that host only”, “reloads the lists of the new host
+    when the goal dialog's host changes”, “clears the
     repositories and the workflow when the picker's host changes, and keeps the
     picker last”, “clears the model and the effort when the goal dialog's host
     changes”, “sends no effort for a model picked again after the goal dialog's host changes”, “warns in the goal dialog of a host whose sync is failed, and
@@ -2810,9 +2811,9 @@ view.
   (`ui/src/features/goals/hosts.test.tsx::merges the goals of every host under All, each goal naming its host`,
   `::reads only the picked host, and names no host on its goals`,
   `::opens a goal's panel on the host its link names`,
-  `::defaults the goal dialog to the picked host, and reloads its lists when the host changes`,
-  `::opens the goal dialog on local under All`,
-  `::shows a question a remote host's stream delivers, and answers it on that host`).
+  `::shows a question a remote host's stream delivers, and answers it on that host`,
+  `ui/src/features/goals/create-goal-hosts.test.tsx::defaults the goal dialog to the picked host, and reads that host only`,
+  `::opens the goal dialog on local under All`).
 
 - Catalog screens show a sync line per host, with skipped permissions on the
   Learned tab (`ui/src/features/permissions/permissions-hosts.test.tsx::shows a sync line per host: in sync, pending, or failed with its error`,
