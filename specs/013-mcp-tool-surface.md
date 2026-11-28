@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-surface
 status: current
-updated: 2026-11-26
+updated: 2026-11-28
 areas: [mcp, cli]
 commits: [b21bd69e, 20d998bc, 09955c22, 305ad2fb, a69b953f, 03f9c8b7, 29e6d84e, 1b09ac10]
 tests:
@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-daemon/tests/it/adapters.rs
+  - crates/ariadne-daemon/tests/it/prompts.rs
 ---
 
 # MCP tool surface
@@ -39,8 +40,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    prompt, open with "Ariadne tools for this {seat} session." and name no
    session, goal, task, column or pull request id. They carry the session rules
    that hold for every seat alike (006). After the rules come the seat's own text, picked
-   by the seat, and the index of the skills the session loads, which the
-   launcher hands the server as `ARIADNE_SKILL_INDEX` (006). A client can
+   by the seat, then the supplement of each skill the session loads, which
+   the launcher hands the server as `ARIADNE_SKILL_SUPPLEMENTS` (006 rule
+   21), then the index of those skills, which the launcher hands the server
+   as `ARIADNE_SKILL_INDEX` (006). A session whose skills have no
+   supplement is told none. A client can
    defer the tools of a server: Claude Code lists only their names until the
    agent loads one with its tool search. So the rules tell every seat, in
    words that name no client, to load the tools it needs in one tool search
@@ -108,8 +112,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      fifteen lines at most. `fail_step`'s description is the one owner of
      the return report a column is sent back with: each must-fix finding,
      with its file, its failure and the fix wanted. No skill restates a
-     field of either report; `coding` and `code-review` name the report by
-     its name alone (006). Nothing the forge holds is
+     field of either report; `coding` names the report by its name alone,
+     and so does the agent seat's `code-review` supplement, which maps the
+     skill's return of the work to `fail_step` (006 rule 21). Nothing the forge holds is
      stored, so each request read is the forge's now (026). Each request
      tool finds the request through
      `GET /v1/pull-requests?task=<id>&role=author`, and says to call
@@ -302,10 +307,11 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 - Every session is told to load a deferred tool before it calls it
   (`mcp.rs::every_session_is_told_to_load_a_deferred_tool_before_it_calls_it`).
 - Each seat's instructions hold its seat text and its skill index, after
-  the session rules
+  the session rules, with the supplements between the two
   (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`),
-  and the launcher hands the server the index
-  (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`).
+  and the launcher hands the server the supplements and the index
+  (`adapters.rs::a_pull_request_session_tells_its_mcp_server_the_request_and_no_goal`,
+  `it/prompts.rs::a_review_columns_agent_is_launched_with_the_code_review_supplement`).
 - The header names the seat and no id, and only the agent, reviewer and
   keeper seats get the check block
   (`mcp.rs::the_header_names_no_id_and_only_checking_seats_get_the_check_block`).

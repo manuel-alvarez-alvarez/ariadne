@@ -1,11 +1,11 @@
 ---
 name: code-review
-description: Judges a branch revision and ends the column with one verdict. Use when a diff, specification, hot path, regression or scaling risk needs review.
+description: Judges a branch revision and ends the stage with one verdict. Use when a diff, specification, hot path, regression or scaling risk needs review.
 ---
 
 # Code review
 
-Judge the branch revision and end the column with one verdict.
+Judge the branch revision and end the stage with one verdict.
 
 ## When not to use
 
@@ -19,14 +19,14 @@ Use `pr-reviewer` when the diff is an open forge request.
    branch prints, the work is off the branch. That is a must-fix finding.
 
    Done when the reviewed revision and the task branch are named.
-2. Read the column report as unverified claims, not proof.
+2. Read the report as unverified claims, not proof.
 
    Done when you can name what each claim covers.
 3. Pin the scope to the diff. With a prior SHA from the conversation, run
    `git merge-base --is-ancestor <sha> HEAD`. Where HEAD is after it, run
-   `git diff <sha>..HEAD`. Otherwise, use `get_diff`. On a later round,
-   read the diff since your reviewed revision for new findings. Judge
-   every criterion on the whole change, from `get_diff`.
+   `git diff <sha>..HEAD`. Otherwise, read the whole change against its
+   base. On a later round, read the diff since your reviewed revision for
+   new findings. Judge every criterion on the whole change.
 
    Done when the diff is not empty.
 4. Run the tests, the lint and the format check of the files the diff
@@ -68,23 +68,21 @@ Use `pr-reviewer` when the diff is an open forge request.
    ```
 
    Done when every Criteria number has one line.
-9. Open each must-fix finding with `Trigger:`. The two step calls are the
-   task seat's. On a must-fix finding, call `fail_step` with the return
-   report. Else call `complete_step` with the verdict and the optional
-   findings. Beside `pr-reviewer`, post each finding as that skill says.
-   That skill ends the round.
+9. Open each must-fix finding with `Trigger:`. On a must-fix finding,
+   return the work, with a return report. Else pass the work, with the
+   verdict and the optional findings.
 
    Done when `git rev-parse HEAD` prints the reviewed revision and the
-   column has ended.
+   stage has ended.
 
 ## Rules
 
 - Write the verdict first. Add no preamble and no closing summary.
 - A must-fix finding breaks a criterion or a written repository rule.
 - Judge the ticket as it reads now. A criterion about an event outside
-  the repository passes on the column report's record of it.
+  the repository passes on the report's record of it.
 - A request that no criterion holds is no finding. Send it to the
-  orchestrator.
+  requester.
 - Judge the task, not your preferred design.
 - Evidence proves a check ran. Inspect code and enforce both axes
   yourself.
@@ -116,7 +114,7 @@ rule inside the goal, and name the test that proves it.
 
 Judge a hot-path change by a measurement with its workload, never by
 appearance. The workload names a real input size and operation.
-Reuse the column report's measurement only where it covers the reviewed
+Reuse the report's measurement only where it covers the reviewed
 revision and workload. Else measure: method, environment, result.
 Measure each proposed change the same way. A cost you did not measure is
 optional.
@@ -135,7 +133,7 @@ optional.
   or commit.
 - Never change code to see whether a test fails.
 - Never rerun a check whose result you already hold for this verdict.
-- Never fail the step on an optional finding.
+- Never return the work on an optional finding.
 
 ## Do not tell yourself
 
@@ -144,7 +142,7 @@ optional.
 - "The task passes, so conventions do not matter." -> A correct feature
   can still damage the repository.
 - "The report says it is fixed." -> The report is a claim. Read the code.
-- "The user asked for this, so I fail the step." -> A request reaches you
+- "The user asked for this, so I return the work." -> A request reaches you
   as a criterion. Judge the ticket.
 - "The diff is small, so it is safe." -> Classify by risk, not by size.
 - "The task asked for a review, so I name a gap." -> A sound change gets

@@ -317,6 +317,60 @@ async fn a_started_column_agent_is_briefed_from_the_builtin_template() {
     );
 }
 
+/// A review column's agent loads `code-review`, so its launch carries the
+/// supplement of that skill for the agent seat between the seat text and the
+/// skill index, and hands the same text to its MCP server (006 rule 21).
+#[tokio::test]
+async fn a_review_columns_agent_is_launched_with_the_code_review_supplement() {
+    let h = harness().scheduler().await;
+    let cast = seeded(&h).await;
+    let develop = h.step_session(&cast.task, "develop").await;
+    commit_in(develop.worktree_path.as_deref().unwrap());
+    h.complete_step(&cast.task, &develop, "Built it.").await;
+    let review = h.step_session(&cast.task, "review").await;
+
+    let launch = h.launch_file(&review.id).expect("a launch file");
+    let supplement = ariadne_store::defaults::skill_supplement("code-review", Seat::Agent)
+        .expect("the agent seat has a code-review supplement")
+        .trim();
+    let seat_text = ariadne_store::defaults::default_system_prompt(Seat::Agent).trim();
+    let header = "Your skills. Read the document of a skill before you do the work it covers:";
+    let prompt = &launch.system_prompt;
+    assert!(
+        prompt.starts_with(&format!("{seat_text}\n\n{supplement}\n\n{header}")),
+        "{prompt}"
+    );
+    let env: Vec<(String, String)> = launch.mcp_servers[0]
+        .env
+        .iter()
+        .map(|variable| (variable.name.clone(), variable.value.clone()))
+        .collect();
+    assert!(
+        env.contains(&(
+            "ARIADNE_SKILL_SUPPLEMENTS".to_string(),
+            supplement.to_string()
+        )),
+        "{env:?}"
+    );
+
+    // The develop column loads `coding`, which has no supplement.
+    let develop_launch = h.launch_file(&develop.id).expect("a launch file");
+    assert!(
+        develop_launch
+            .system_prompt
+            .starts_with(&format!("{seat_text}\n\n{header}")),
+        "{}",
+        develop_launch.system_prompt
+    );
+    assert!(
+        !develop_launch.mcp_servers[0]
+            .env
+            .iter()
+            .any(|variable| variable.name == "ARIADNE_SKILL_SUPPLEMENTS"),
+        "the develop agent got a supplement"
+    );
+}
+
 /// A column staffed with no skill at all still gets the shared skills link:
 /// the index names none of it, but the launch still creates the configured
 /// link so the agent can open any skill the home copy carries.

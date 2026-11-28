@@ -1,7 +1,7 @@
 ---
 id: prompts-and-simplified-technical-english
 status: current
-updated: 2026-11-26
+updated: 2026-11-28
 areas: [prompts, store, core, mcp, daemon]
 commits: [6b566fe6, 45c5e131, 20d998bc, 95083a17, 09b07d4b, a69b953f, 03f9c8b7, a4d7da95]
 tests:
@@ -26,6 +26,7 @@ tests:
   - crates/ariadne-daemon/tests/it/standalone_tasks.rs
   - crates/ariadne-daemon/tests/it/skill_documents.rs
   - crates/ariadne-daemon/tests/it/seat_brief.rs
+  - crates/ariadne-daemon/tests/it/adapters.rs
   - crates/ariadne-cli/src/commands/mcp.rs
   - crates/ariadne-cli/src/commands/mcp/tools.rs
   - crates/ariadne-core/src/lib.rs
@@ -38,8 +39,9 @@ the English all of it is written in.
 
 ## Scope
 
-In: the layers of text (MCP instructions, system prompt, skill index,
-lifecycle briefing), what each layer states, which turn carries the system
+In: the layers of text (MCP instructions, system prompt, skill supplement,
+skill index, lifecycle briefing), the word list a shipped skill uses in
+place of an Ariadne word, what each layer states, which turn carries the system
 prompt on which agent, rendering and placeholder validation, the STE rules, the
 size caps, and the handoff text a session switch hands the new agent in place
 of the conversation it cannot resume.
@@ -59,11 +61,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      when a seat asks the user and how, what turn text is for — a result,
      a question or a blocker — how few turns to take, how every check runs,
      the English to write in, and that no text carries a trailer. After the
-     rules come the seat text, picked by the seat, and the index of the
-     skills the session loads (rule 4);
-   - the **system prompt**, which is that seat text and that skill index
-     again: what a seat owes from its first read to the call that ends its
-     work, then the skills this agent was staffed with (017) — for the
+     rules come the seat text, picked by the seat, then the supplement of
+     each skill the session loads (rule 21), then the index of those skills
+     (rule 4);
+   - the **system prompt**, which is that seat text, those supplements and
+     that skill index again: what a seat owes from its first read to the
+     call that ends its work, what Ariadne adds to each skill in this seat,
+     then the skills this agent was staffed with (017) — for the
      orchestrator, the one skill its seat fixes by name. It reaches the
      agent through the MCP instructions and in a turn (rule 2);
    - the **lifecycle briefing**, which carries the values of one goal, task
@@ -138,14 +142,30 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      `merge` and `pr-babysit` each name their own report only as "the
      column report";
    - stopping a fix loop: the agent seat text alone, which stops an agent
-     after three failed attempts at one fix.
+     after three failed attempts at one fix;
+   - what a plain word of a shipped skill stands for in Ariadne — the
+     requester is the orchestrator, reached with `post_to_session`, a stage
+     is a column, the report is the column report, to return the work is to
+     fail the step, an update is news, your instructions are the briefing,
+     and the primary checkout is the `Repo:` path: the agent seat text
+     alone (rule 21);
+   - which call reads the whole change and which calls return and pass the
+     work, for `code-review` in the `agent` seat — `get_diff`, `fail_step`
+     with the return report, `complete_step` with the verdict: that seat's
+     `code-review` supplement alone. The skill once said its two step calls
+     were the task seat's; a supplement is picked by seat, so that rule
+     left with them;
+   - that a review session posts each `code-review` finding as
+     `pr-reviewer` says, and that `pr-reviewer` ends the round: the
+     `reviewer` seat's `code-review` supplement alone, which names no step
+     call.
 6. `coding` uses test-first development for a code behavior change: it runs
    the new seam test failing before implementation. Prose changes and
    behavior-preserving refactors use verification that fits their risk.
    `coding` calls `complete_step` with the column report that tool's
    description defines (013), covering every criterion. `code-review` names
-   the column report and the return report by name, and restates no field
-   of either. It reads the column report as unverified claims before it
+   the report and the return report by name, and restates no field
+   of either. It reads the report as unverified claims before it
    pins the scope to the diff, then runs the tests, the lint and the
    format check of the files the diff changes itself, once for the
    verdict. It is an independent gate, not an audit of the report: a
@@ -222,7 +242,10 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     body stays under 500 lines (017 rule 16). One number for every skill,
     rather than a budget per skill, lets a skill grow for a reason of its own
     without a change of the test first; the total still keeps one skill from
-    taking the whole room.
+    taking the whole room. A supplement rides in the system prompt beside
+    the seat text, so it is capped like one: each pair of skill and seat has
+    a cap of its own, and one total holds them all (rule 21). A pair with no
+    cap fails the test, so a new supplement argues its cap first.
 14. The handoff is a text built from a session's stored events for a
     session switched to another coding agent (021): no ACP agent can resume
     another's conversation, so the new agent gets this instead, as its
@@ -293,7 +316,81 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     Simplified Technical English. The agent loads the skills of its staffing,
     and none when none are given.
 
+21. A **supplement** is what Ariadne adds for one shipped skill in one seat:
+    what the plain words of that skill stand for there, in tools and calls.
+    A shipped skill reads the same in any harness, and its supplement makes
+    it Ariadne's.
+    - Each supplement is a file of the code,
+      `crates/ariadne-store/supplements/<skill>/<seat>.md`, compiled in
+      through `SKILL_SUPPLEMENTS` in `crates/ariadne-store/src/defaults.rs`.
+      No row, route, command, screen or host sync holds or changes one, and
+      no edit or reset of the skill reaches it.
+    - The daemon picks a supplement by the skill's name and the seat whose
+      text the session runs under (`skill_supplement`). A pair with none
+      adds no text. A shipped skill the user edited gets the supplement of
+      its name. A skill of the user's own gets none, whatever its name.
+    - The system prompt holds the seat text, then the supplement of each
+      staffed skill in the order of its staffing, then the skill index. The
+      launcher hands the same supplements to the MCP server as
+      `ARIADNE_SKILL_SUPPLEMENTS`, which puts them between the seat text
+      and the index (013 rule 2).
+    - A shipped skill that names no Ariadne word (017 rule 16) uses the plain
+      word of this word list in its place:
+
+      | Ariadne word | Plain word in a skill |
+      | --- | --- |
+      | orchestrator | the requester |
+      | column | stage |
+      | column report | the report |
+      | fail the step | return the work, with a return report |
+      | news | an update |
+      | briefing | your instructions |
+      | `Repo:` path | the primary checkout of the repository |
+      | seat, keeper | not used in a skill |
+      | task, ticket, goal | unchanged |
+
+      The agent seat text binds each plain word to its Ariadne word in one
+      line, and names the orchestrator as the requester and
+      `post_to_session` as the way to reach it (rule 5). No skill and no
+      supplement repeats the binding.
+    - Each supplement has a cap of its own and obeys the STE rules of rule
+      11, the same as a default text (rule 13).
+    - Two ship. `code-review` in the `agent` seat holds the `get_diff` call
+      for the whole change, and the `fail_step` and `complete_step` calls
+      that return and pass the work. `code-review` in the `reviewer` seat
+      hands the round to `pr-reviewer` and names no step call.
+      `architecture-review` has none: the seat text binds its plain words.
+
 ## Acceptance criteria
+
+- Rule 21: the system prompt is the seat text, then the supplements, then
+  the index, and a review session gets the reviewer seat's supplement
+  (`prompts.rs::the_system_prompt_holds_the_seat_text_then_the_supplements_then_the_index`);
+  a pair with no supplement adds no text
+  (`prompts.rs::a_pair_with_no_supplement_adds_no_text`,
+  `defaults.rs::a_supplement_is_picked_by_its_skill_and_its_seat`); an
+  edited shipped skill gets the supplement of its name and a skill of the
+  user's own gets none
+  (`prompts.rs::an_edited_shipped_skill_gets_its_supplement_and_a_user_skill_gets_none`).
+  A review column's agent is launched with the `code-review` supplement in
+  its system prompt and its MCP environment, and a develop column's with
+  none (`it/prompts.rs::a_review_columns_agent_is_launched_with_the_code_review_supplement`).
+  The MCP instructions hold the supplements between the seat text and the
+  index (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`).
+  The agent seat text binds each plain word of the word list
+  (`skill_tests/template.rs::the_agent_seat_text_binds_each_plain_word_to_ariadne`).
+  `code-review` and `architecture-review` name no Ariadne, no MCP tool and
+  no Ariadne word, by the one helper `assert_names_no_ariadne_word`
+  (`skill_tests/template.rs::the_two_review_skills_name_no_ariadne_word`).
+  The agent seat's `code-review` supplement holds its `get_diff`,
+  `fail_step` and `complete_step` rules, and the reviewer seat's names no
+  step call
+  (`skill_tests/review.rs::the_review_skill_reviews_in_place_and_ends_on_a_step_call`).
+  Each supplement is within its cap and the total
+  (`defaults.rs::supplement_size_caps_hold`), is STE
+  (`defaults.rs::every_default_text_is_simplified_technical_english`), and
+  each rule of rule 5 it owns is stated there alone
+  (`skill_tests/template.rs::each_rule_is_stated_in_exactly_one_briefing`).
 
 - Rule 20: `prompts.rs::a_task_with_no_workflow_is_briefed_without_a_column`
   and `standalone_tasks::a_task_with_no_workflow_is_finished_by_its_agents_complete_step`
@@ -381,7 +478,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`defaults.rs::the_ste_rules_are_read_off_a_text_line_by_line`).
 - `coding` calls `complete_step` with the column report that tool's
   description defines, covering every criterion, and names no field of it
-  itself. `code-review` names the column report and the return report by
+  itself. `code-review` names the report and the return report by
   name, reads the former as unverified claims, then runs the tests, the
   lint and the format check of the changed files itself and reuses a
   reported result only for a check outside them.
@@ -511,13 +608,15 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 
 ## Sources
 
-`crates/ariadne-store/src/defaults.rs` (every default text and the STE rules),
-`crates/ariadne-daemon/src/agents/prompts.rs` (assembly),
+`crates/ariadne-store/src/defaults.rs` (every default text, the STE rules
+and `SKILL_SUPPLEMENTS`), `crates/ariadne-store/supplements/` (the
+supplement texts), `crates/ariadne-daemon/src/agents/prompts.rs` (assembly,
+`skill_supplements`),
 `crates/ariadne-daemon/src/agents/handoff.rs` (the handoff text of a session
 switch),
 `crates/ariadne-core/src/lib.rs` (`PromptKind`, placeholder validation),
-`crates/ariadne-cli/src/commands/mcp.rs` (session rules, and the seat text
-and skill index in the instructions),
+`crates/ariadne-cli/src/commands/mcp.rs` (session rules, and the seat text,
+the supplements and the skill index in the instructions),
 `crates/ariadne-daemon/src/acp.rs` (`seat_brief_in_turns`, which turn
 carries the system prompt),
 `crates/ariadne-daemon/src/agents/mod.rs` (`link_skills`).

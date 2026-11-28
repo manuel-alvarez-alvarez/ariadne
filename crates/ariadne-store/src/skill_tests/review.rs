@@ -18,12 +18,12 @@ use super::*;
 /// over approval it could not see. A later round judges every criterion
 /// on the whole change, and the verdict takes one literal shape, since
 /// a prose shape was compressed to "Criteria 3–10 not fully judged". A
-/// must-fix finding opens with `Trigger:` and ends the step on
-/// `fail_step`; an optional one never does. The two step calls are the
-/// task seat's: a review session (029) loads this skill beside
-/// `pr-reviewer` — 18 of 48 review goals did in November 2026 — and has
-/// neither tool, so the step says which seat the calls serve and that
-/// `pr-reviewer` ends the round there.
+/// must-fix finding opens with `Trigger:` and returns the work; an
+/// optional one never does. The skill names no step call: the agent seat's
+/// supplement maps returning and passing the work to `fail_step` and
+/// `complete_step`, and the reviewer seat's hands the round to
+/// `pr-reviewer`, since a review session (029) loads this skill beside it
+/// — 18 of 48 review goals did in November 2026 — and has neither tool.
 #[test]
 fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
     let text = unwrapped(default_skill_document("code-review").unwrap());
@@ -38,7 +38,7 @@ fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
             .unwrap_or_else(|| panic!("the code-review skill has no \"{needle}\""))
     };
     let pinned = at("Run `git rev-parse HEAD` and `git branch --show-current`.");
-    let claims = at("Read the column report as unverified claims, not proof.");
+    let claims = at("Read the report as unverified claims, not proof.");
     let scope = at("Pin the scope to the diff.");
     let checks = at(
         "Run the tests, the lint and the format check of the files the diff changes, once for this verdict.",
@@ -59,7 +59,8 @@ fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
         "the work is off the branch. That is a must-fix finding.",
         "`git merge-base --is-ancestor <sha> HEAD`",
         "On a later round, read the diff since your reviewed revision for new findings.",
-        "Judge every criterion on the whole change, from `get_diff`.",
+        "Otherwise, read the whole change against its base.",
+        "Judge every criterion on the whole change.",
         "Reuse a reported result only for a check outside those files.",
         "Reuse it only where the report names its command, the reviewed revision and the result.",
         "A reported result stands for no check you ran.",
@@ -70,27 +71,53 @@ fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
         "Write it in this shape:",
         "A must-fix finding breaks a criterion or a written repository rule.",
         "Judge the ticket as it reads now.",
-        "A criterion about an event outside the repository passes on the column report's record of it.",
-        "A request that no criterion holds is no finding. Send it to the orchestrator.",
+        "A criterion about an event outside the repository passes on the report's record of it.",
+        "A request that no criterion holds is no finding. Send it to the requester.",
         "Judge each test by reading its setup, action and assertions.",
         "Run no command that moves HEAD or a ref: no switch, reset, rebase or commit.",
         "Never change code to see whether a test fails.",
         "Never rerun a check whose result you already hold for this verdict.",
-        "Never fail the step on an optional finding.",
+        "Never return the work on an optional finding.",
         "Open each must-fix finding with `Trigger:`.",
-        "The two step calls are the task seat's.",
-        "On a must-fix finding, call `fail_step` with the return report.",
-        "Else call `complete_step` with the verdict and the optional findings.",
-        "Beside `pr-reviewer`, post each finding as that skill says. That skill ends the round.",
-        "Done when `git rev-parse HEAD` prints the reviewed revision and the column has ended.",
+        "On a must-fix finding, return the work, with a return report.",
+        "Else pass the work, with the verdict and the optional findings.",
+        "Done when `git rev-parse HEAD` prints the reviewed revision and the stage has ended.",
     ] {
         assert!(text.contains(rule), "the code-review skill and {rule}");
     }
-    assert_eq!(
-        text.matches("`fail_step`").count() + text.matches("`complete_step`").count(),
-        2,
-        "the code-review skill names its step calls in one place"
-    );
+    // The step calls and the diff call are the agent seat's supplement, and
+    // the reviewer seat's hands the round to `pr-reviewer` with no step call.
+    let agent = unwrapped(skill_supplement("code-review", ariadne_core::Seat::Agent).unwrap());
+    for rule in [
+        "Read the whole change with `get_diff`.",
+        "On a must-fix finding, return the work with `fail_step` and the return report.",
+        "Else pass the work with `complete_step`, with the verdict and the optional findings.",
+    ] {
+        assert!(agent.contains(rule), "the agent supplement and {rule}");
+    }
+    let reviewer =
+        unwrapped(skill_supplement("code-review", ariadne_core::Seat::Reviewer).unwrap());
+    for rule in [
+        "Post each finding as `pr-reviewer` says. That skill ends the round.",
+        "Skip the step that returns or passes the work.",
+    ] {
+        assert!(
+            reviewer.contains(rule),
+            "the reviewer supplement and {rule}"
+        );
+    }
+    for call in [
+        "`fail_step`",
+        "`complete_step`",
+        "`fail_task`",
+        "`get_diff`",
+        "`submit_review`",
+    ] {
+        assert!(
+            !reviewer.contains(call),
+            "the reviewer supplement names {call}"
+        );
+    }
     // The verdict shape is a literal template in step 8, and the weights
     // sit with it. The fence is read off the raw document: `unwrapped`
     // drops fenced lines.
@@ -109,7 +136,7 @@ fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
         "the code-review skill states the verdict shape or its weights outside step 8"
     );
     assert!(
-        text.contains("\"The user asked for this, so I fail the step.\""),
+        text.contains("\"The user asked for this, so I return the work.\""),
         "the code-review skill does not tell the reviewer a request is no finding"
     );
 }
@@ -169,7 +196,7 @@ fn architecture_review_adds_to_the_one_verdict_of_its_column() {
         "Add the findings to the verdict of the skill loaded beside this one.",
         "Beside `code-review`: add one line under the Repository conventions heading of its one verdict: `Architecture: <pass|fail>: <finding, or none>`.",
         "A must-fix finding fails that verdict.",
-        "That skill ends the column.",
+        "That skill ends the stage.",
         "Beside `pr-reviewer`: write each finding as an inline comment by the rules of that skill. Add no line. Where there is no finding, say nothing.",
         "List each boundary the diff changes: a new dependency, a moved responsibility or a new stored value.",
         "Where the list is empty, go to step 5. Beside `code-review`, the line is `Architecture: pass: no boundary changed`.",
@@ -177,7 +204,7 @@ fn architecture_review_adds_to_the_one_verdict_of_its_column() {
         "- Abstraction: a general layer with one caller, or unrelated callers forced through one.",
         "Run no command that moves HEAD or a ref: no switch, reset, rebase or commit.",
         "A must-fix finding breaks a criterion, a written repository rule or a boundary the repository already holds.",
-        "Reuse the column report's evidence only where it covers the reviewed revision.",
+        "Reuse the report's evidence only where it covers the reviewed revision.",
     ] {
         assert!(
             text.contains(rule),
@@ -363,8 +390,8 @@ fn every_review_skill_states_the_shared_rules_in_the_same_words() {
             "the {name} skill does not bind its reused evidence to the reviewed revision"
         );
         assert!(
-            text.contains("the column report"),
-            "the {name} skill does not reuse the column report's evidence"
+            text.contains("the report"),
+            "the {name} skill does not reuse the report's evidence"
         );
     }
 }
