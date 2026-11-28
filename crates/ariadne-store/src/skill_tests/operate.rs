@@ -536,6 +536,7 @@ fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
 fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
     let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
     for phrase in [
+        "Ask each question with the question tool, not in turn text.",
         "Ask one question in a turn, then stop and wait for the answer.",
         "Ask the next question only after the answer.",
         "Put no second question in the context or in the options.",
