@@ -375,7 +375,12 @@ it("labels a projected task by worker identity and keeps the source route", asyn
   expect(screen.getByRole("link").getAttribute("href")).toContain("host=box")
 })
 
-it("labels an unresolved execution owner as unconfigured", async () => {
+it("labels an unknown execution owner as unconfigured after identities resolve", async () => {
+  const { stubHosts } = await import("@/test/hosts")
+  stubHosts(
+    { local: { "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "other" } } },
+    [LOCAL],
+  )
   const task = aTask({
     host: "gpu",
     execution_context: {

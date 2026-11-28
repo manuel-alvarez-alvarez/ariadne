@@ -1429,10 +1429,12 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     “shows the panel host label when a named host is listed” proves panel labels.
     Local cases remain in `pull-request-panel.test.tsx` and
     `pull-requests-page.test.tsx`.
-70. Start review and Start babysit have a host select, shown when more than one
-    host has the request's repository registered. It is limited to those hosts,
-    defaults to the panel's host, and its models, pin and ask go to the chosen
-    host with that host's repository id. After the start, the panel opens the
+70. Start review and Start babysit choose the host in the host column of
+    their model picker, with no host select of their own. The column lists
+    only the hosts that have the request's repository registered, and starts
+    on the panel's host. With one such host, the picker shows no host column.
+    The models, the pin and the ask go to the picked host with that host's
+    repository id. After the start, the panel opens the
     new session on the chosen host: `?host=` and `?pr=` move to the request on
     that host. While a host reviews the request, the panel offers no Start
     review. While a host or a task keeps it, the panel offers no Start babysit.
@@ -1444,9 +1446,15 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     babysit by a task, in `hosts.test.tsx`.
     Tests: “opens the new review console on box” and “opens the new babysit
     console on box” in `ui/src/features/pull-requests/hosts.test.tsx`;
-    “opens the new session on the host Start review picked, not on the panel's
-    host” in `ui/src/features/forge/forge-hosts.test.tsx`, which also proves
-    the host select; “sends New turn and Stop review to the host that
+    “offers the hosts where the repository is registered in the model picker
+    of Start review, the row's host first” and “offers the hosts of the
+    repository in the model picker of Start babysit, and sends the start to
+    the picked host” prove the column, its default and the host of the models
+    and the start; “opens the new session on the host Start review picked, not
+    on the panel's host” proves the new session, all in
+    `ui/src/features/forge/forge-hosts.test.tsx`;
+    “starts and stops a review of a Dependabot request without a review assignment” in `pull-request-panel.test.tsx` proves that
+    one host shows no column; “sends New turn and Stop review to the host that
     reviews, with its repository id”, “sends New turn and Stop babysit to
     the host that keeps, with its repository id” and “links the task that
     keeps the request on the host of the task” in `hosts.test.tsx` for the
@@ -1637,9 +1645,12 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     column, and sends one agent with no `step` and no `workflow`. It has no
     `depends_on` field.
 87. The dialog's host picker lists the `ready` hosts and starts on `local`, this
-    machine. It posts to `POST /v1/tasks` of the settings daemon, with `host`
-    only for a host other than `local`, and shows the daemon's reason where the
-    daemon refuses the host.
+    machine. It sits directly above the staffing rows. Each row's model picker
+    offers the models of the picked host (its `GET /v1/models`), and a host
+    change clears the picked model and effort of every row. The repositories
+    and workflows stay `local`'s. The dialog posts to `POST /v1/tasks` of the
+    settings daemon, with `host` only for a host other than `local`, and shows
+    the daemon's reason where the daemon refuses the host.
 88. The panel of a task with no goal has no goal breadcrumb and reads no goal.
     It shows the task's own `steps`, or no columns for a task with no workflow.
 
@@ -2132,7 +2143,19 @@ view.
      It never presents a local default as the remote answer.
      This includes host controls, sync blocks, table cells, forms, labels and colours.
 
-114. Forms and pull request controls follow rule 113.
+114. Display untrusted prose between `<<<untrusted>>>` and `<<<end untrusted>>>`
+     with a highlight and a tooltip on hover and keyboard focus. Hide the markers.
+     Preserve Markdown formatting and literal markers in code. An open marker
+     highlights through the current end of streamed text. Folded prompt previews
+     retain the highlight. Stored text, input, copy, export and raw data stay unchanged.
+
+115. Source-host resolution distinguishes pending identities from an unknown source, following rule 113.
+     Task panels, rows and cards show a Skeleton while hosts or identities load.
+     Session details show a Skeleton while the source loads.
+     Unknown-source messages appear only after resolution.
+     Task breadcrumbs show a Skeleton while the goal loads.
+
+116. Forms and pull request controls follow rule 113.
      The tunnel switch and webhook mode wait for the tunnel query.
      Repository and workflow fields wait for their catalogs.
      Task steps, repository and dependency options wait for goal detail and their own queries.
@@ -2145,19 +2168,39 @@ view.
 
 ## Acceptance criteria
 
-- Forms show Skeletons while remote values load (rule 114)
+- Source loading follows rule 115
+  (`ui/src/features/tasks/source-loading.test.tsx::shows a skeleton while the task goal loads`,
+  `::shows a skeleton while the worker identity loads: %s`,
+  `::shows a skeleton while the source loads in the %s`,
+  `ui/src/features/tasks/source-host.test.tsx::keeps source resolution pending while the hosts load`,
+  `::resolves an unknown source only after all identities answer`).
+
+- Forms show Skeletons while remote values load (rule 116)
   (`ui/src/features/tasks/form-loading.test.tsx`,
   `ui/src/features/workflows/workflow-select.test.tsx::shows a skeleton until workflows answer`).
-- Dependency summaries distinguish pending queries from failed queries (rule 114)
+- Dependency summaries distinguish pending queries from failed queries (rule 116)
   (`ui/src/features/tasks/task-panel.test.tsx::shows a skeleton while dependency status loads without claiming a blocker`,
   `::shows an unknown cause when dependency status fails to load`).
-- Pull request controls wait for remote data (rule 114)
+- Pull request controls wait for remote data (rule 116)
   (`ui/src/features/pull-requests/pull-requests-page.test.tsx::shows skeletons for refresh and repository labels until remote data answers`,
   `ui/src/features/pull-requests/hosts.test.tsx::starts no %s while box has not answered, and none once box holds the work`).
 
 - Remote loading follows rule 113
   (`ui/src/hooks/hosts-loading.test.tsx::keeps All unresolved until the hosts answer`,
   `::shows skeletons for the host picker and catalog sync until hosts answer`).
+
+- Untrusted prose hides its markers and retains Markdown formatting and literal inline code
+  (`ui/src/components/markdown.test.tsx::marks untrusted prose while preserving Markdown and code examples`).
+- A highlight offers a tooltip on keyboard focus
+  (`ui/src/components/markdown.test.tsx::offers the trust tooltip on keyboard focus`).
+- Streaming keeps an open span highlighted and fenced code markers literal
+  (`ui/src/components/markdown.test.tsx::updates an open untrusted span as text streams and keeps code markers literal`).
+- Folded prompts retain the highlight
+  (`ui/src/features/sessions/console/blocks.test.tsx::keeps untrusted text highlighted in a folded prompt`,
+  `ui/src/features/sessions/console/blocks.test.tsx::preserves Markdown code boundaries in a folded prompt`).
+- Daemon prompts and agent questions highlight untrusted prose
+  (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::highlights untrusted text in a daemon prompt without its seat brief`,
+  `ui/src/features/goals/attention-forms.test.tsx::highlights untrusted prose in an agent question`).
 
 - Goal task cards show a remote host in its host colour and explain when it
   cannot be reached, in the label and in the card description (`ui/src/features/tasks/task-card.test.tsx::shows the colored remote host and its unreachable state`).
@@ -2183,7 +2226,7 @@ view.
 - The palette offers New task for a task with no goal, and a distinct entry beside a goal's own
   (`ui/src/features/command-palette/command-palette.test.tsx::offers a task with no goal over a screen with no goal open, and opens its dialog`; `::offers the goal-less task beside the goal's own when a goal is open`).
 - The dialog offers "No workflow" first with one row and no column, one row per column with a workflow, no dependency field, and the ready hosts starting on this machine
-  (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::offers No workflow first, and one staffing row with no column under it`; `::staffs one row for each column of the picked workflow`; `::has no dependency field`; `::offers the ready hosts, starting on this machine`).
+  (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::offers No workflow first, and one staffing row with no column under it`; `::staffs one row for each column of the picked workflow`; `::has no dependency field`; `::offers the ready hosts, starting on this machine`; `::shows the host picker directly above the staffing rows`; `::offers the models of the picked host in each staffing row`; `::clears the picked model and effort of each row when the host changes`).
 - The dialog picks its repository by search in the goal dialog's field
   (`ui/src/features/tasks/create-standalone-task-dialog.test.tsx::picks the repository by search in the field the goal dialog uses`).
 - The dialog posts the repository, the one agent and no workflow, and refuses a missing repository

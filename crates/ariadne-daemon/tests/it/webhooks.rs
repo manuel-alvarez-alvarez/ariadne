@@ -588,6 +588,8 @@ async fn startup_checks_a_stored_hook_without_creating_another_and_fetches_once(
                 remote: "origin".into(),
                 enabled: true,
                 login: Some("me".into()),
+                webhook_enabled: true,
+                poll_interval_minutes: None,
             }),
         )
         .await
@@ -721,4 +723,199 @@ async fn replacing_and_enabling_a_remote_in_one_edit_creates_its_own_hook() {
         c.args.get(1).is_some_and(|p| p == "repos/acme/other/hooks")
             && c.args.iter().any(|a| a == "POST")
     }));
+}
+
+fn timer_timeouts() -> ariadne_daemon::timeouts::Timeouts {
+    ariadne_daemon::timeouts::Timeouts {
+        forge_poll: std::time::Duration::from_millis(100),
+        forge_wake_debounce: std::time::Duration::from_millis(10),
+        ..Default::default()
+    }
+}
+
+async fn row(h: &crate::common::Harness, id: &str) -> ariadne_store::ForgeIntegration {
+    h.store.forge_integration(id).await.unwrap().unwrap()
+}
+
+#[tokio::test]
+async fn a_webhook_switched_off_deletes_the_hook_polls_without_error_and_registers_again_when_on() {
+    let stub = stub_forge_cli(script());
+    let h = harness().forge_cli(&stub).timeouts(timer_timeouts()).await;
+    h.state
+        .forge_poll
+        .webhook_url()
+        .set(Some("https://first.example".into()));
+    let id = enable(&h).await;
+    eventually(TIMEOUT, "the hook goes live", async || {
+        row(&h, &id).await.webhook_state == "live"
+    })
+    .await;
+    let dto: Value = h.get(&format!("/v1/repositories/{id}")).await;
+    assert_eq!(dto["forge"]["webhook_enabled"], true);
+
+    let off: Value = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{id}"),
+                json!({"forge":{"webhook":false}}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(off["forge"]["webhook_enabled"], false);
+    eventually(TIMEOUT, "the hook is deleted", async || {
+        let row = row(&h, &id).await;
+        row.webhook_state == "polling" && row.webhook_id.is_none()
+    })
+    .await;
+    assert!(
+        stub.invocations()
+            .iter()
+            .any(|c| c.args.iter().any(|a| a == "DELETE")),
+        "the registered hook is deleted"
+    );
+    assert!(row(&h, &id).await.webhook_error.is_none());
+    assert!(row(&h, &id).await.enabled, "the integration stays enabled");
+    let before = fetches(&stub);
+    eventually(TIMEOUT, "the timer fetches", async || {
+        fetches(&stub) > before + 1
+    })
+    .await;
+
+    let creates = |stub: &StubForgeCli| {
+        stub.invocations()
+            .iter()
+            .filter(|c| c.args.iter().any(|a| a == "POST"))
+            .count()
+    };
+    let created = creates(&stub);
+    let _: Value = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{id}"),
+                json!({"forge":{"webhook":true}}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "the hook is registered again", async || {
+        row(&h, &id).await.webhook_state == "live"
+    })
+    .await;
+    assert!(creates(&stub) > created, "a new hook is created");
+}
+
+#[tokio::test]
+async fn a_switched_off_webhook_registers_no_hook_for_a_new_repository() {
+    let stub = stub_forge_cli(script());
+    let h = harness().forge_cli(&stub).timeouts(timer_timeouts()).await;
+    h.state
+        .forge_poll
+        .webhook_url()
+        .set(Some("https://first.example".into()));
+    let path = h.git_repo("no-hook");
+    sh(
+        &path,
+        "git remote add origin https://github.com/acme/widgets.git",
+    );
+    let repo: Value = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                json!({"path":path,"forge":{"enabled":true,"webhook":false}}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let id = repo["id"].as_str().unwrap();
+    eventually(TIMEOUT, "the timer fetches", async || fetches(&stub) >= 2).await;
+    let row = row(&h, id).await;
+    assert_eq!(row.webhook_state, "polling");
+    assert!(row.webhook_error.is_none() && row.webhook_id.is_none());
+    assert!(
+        !stub
+            .invocations()
+            .iter()
+            .any(|c| c.args.iter().any(|a| a == "POST")),
+        "no hook is created"
+    );
+}
+
+#[tokio::test]
+async fn the_poll_interval_is_bounded_stored_and_moves_the_timer_without_a_restart() {
+    let stub = stub_forge_cli(script());
+    let h = harness()
+        .forge_cli(&stub)
+        .timeouts(ariadne_daemon::timeouts::Timeouts {
+            forge_poll: std::time::Duration::from_millis(30),
+            forge_wake_debounce: std::time::Duration::from_millis(10),
+            ..Default::default()
+        })
+        .await;
+    let id = enable(&h).await;
+    eventually(TIMEOUT, "the timer fetches", async || fetches(&stub) >= 3).await;
+
+    for minutes in [0, 61] {
+        let refused = h
+            .error(
+                put_json(
+                    &format!("/v1/repositories/{id}"),
+                    json!({"forge":{"poll_interval_minutes":minutes}}),
+                ),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert_eq!(refused.error.code, "invalid_request");
+    }
+    assert_eq!(row(&h, &id).await.poll_interval_minutes, None);
+
+    let set: Value = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{id}"),
+                json!({"forge":{"poll_interval_minutes":60}}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(set["forge"]["poll_interval_minutes"], 60);
+    // The fetch in flight, and the one a repository update wakes, settle:
+    // the count holds still for a whole QUIET listen, though the default
+    // timer (30 ms here) would have fetched thrice in it.
+    let mut settled = 0;
+    eventually(
+        TIMEOUT,
+        "the timer to stop at the new interval",
+        async || {
+            let count = fetches(&stub);
+            let held = tokio::time::timeout(QUIET, async {
+                while fetches(&stub) == count {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .is_err();
+            if held {
+                settled = count;
+            }
+            held
+        },
+    )
+    .await;
+    quiet(&stub, settled).await;
+
+    let reset: Value = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{id}"),
+                json!({"forge":{"poll_interval_minutes":null}}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(reset["forge"]["poll_interval_minutes"], Value::Null);
+    eventually(TIMEOUT, "the default timer returns", async || {
+        fetches(&stub) >= settled + 3
+    })
+    .await;
 }

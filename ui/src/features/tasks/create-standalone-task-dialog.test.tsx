@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it, vi } from "vitest"
 
@@ -186,6 +186,7 @@ it("shows the daemon's reason when it refuses the host", async () => {
             ? errorResponse(400, "bad_request", "a goal-less task requires the local host")
             : undefined,
       },
+      box: { "/v1/models": [MODEL], "/v1/acp-agents": [] },
     },
     [LOCAL, BOX],
   )
@@ -193,20 +194,105 @@ it("shows the daemon's reason when it refuses the host", async () => {
   const user = userEvent.setup()
   renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} onCreated={onCreated} />)
 
-  await user.type(await screen.findByLabelText("Title"), "Far task")
-  await user.click(screen.getByRole("combobox", { name: "Repository" }))
-  await user.click(await screen.findByRole("option", { name: /^\/work\/ariadne/ }))
+  fireEvent.change(await screen.findByLabelText("Title"), { target: { value: "Far task" } })
+  fireEvent.click(screen.getByRole("combobox", { name: "Repository" }))
+  fireEvent.click(await screen.findByRole("option", { name: /^\/work\/ariadne/ }))
   await user.click(screen.getByRole("combobox", { name: "Host" }))
   await user.click(await screen.findByRole("option", { name: "box" }))
-  await user.click(screen.getByRole("button", { name: "Agent runs on" }))
-  await user.click(
+  fireEvent.click(screen.getByRole("button", { name: "Agent runs on" }))
+  fireEvent.click(
     within(await screen.findByRole("listbox", { name: "Models" })).getByText(MODEL.id),
   )
-  await user.click(within(screen.getByRole("listbox", { name: "Efforts" })).getByText("high"))
-  await user.click(screen.getByRole("button", { name: "Create task" }))
+  fireEvent.click(screen.getByRole("button", { name: "Create task" }))
 
   expect(await screen.findByText(/a goal-less task requires the local host/)).toBeTruthy()
   expect(onCreated).not.toHaveBeenCalled()
+})
+
+const BOX_MODEL = aModel({
+  id: "claude-acp:opus",
+  agent_id: "claude-acp",
+  efforts: [anEffort({ id: "medium", default: true })],
+})
+
+function stubTwoHosts() {
+  stubHosts(
+    {
+      local: {
+        "/v1/repositories": [REPO],
+        "/v1/workflows": [WORKFLOW],
+        "/v1/models": [MODEL],
+        "/v1/skills": [],
+        "/v1/acp-agents": [],
+      },
+      box: { "/v1/models": [BOX_MODEL], "/v1/acp-agents": [] },
+    },
+    [LOCAL, BOX],
+  )
+}
+
+async function pickWorkflow() {
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole("combobox", { name: "Workflow" }))
+  await user.click(await screen.findByRole("option", { name: "build-test" }))
+  await screen.findByRole("button", { name: "Test runs on" })
+}
+
+async function pickHost(name: string) {
+  const user = userEvent.setup()
+  await user.click(screen.getByRole("combobox", { name: "Host" }))
+  await user.click(await screen.findByRole("option", { name }))
+}
+
+it("shows the host picker directly above the staffing rows", async () => {
+  stubDaemon()
+  renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} />)
+
+  const host = (await screen.findByRole("combobox", { name: "Host" })).closest("[data-slot=field]")
+  expect(host?.nextElementSibling?.textContent).toContain("Agents")
+})
+
+it("offers the models of the picked host in each staffing row", async () => {
+  stubTwoHosts()
+  renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} />)
+
+  await pickWorkflow()
+  await pickHost("box")
+  for (const row of ["Build", "Test"]) {
+    const pin = screen.getByRole("button", { name: `${row} runs on` })
+    fireEvent.click(pin)
+    const models = within(await screen.findByRole("listbox", { name: "Models" }))
+    expect(models.getByText(BOX_MODEL.id)).toBeTruthy()
+    expect(models.queryByText(MODEL.id)).toBeNull()
+    fireEvent.click(pin)
+  }
+})
+
+it("clears the picked model and effort of each row when the host changes", async () => {
+  stubTwoHosts()
+  renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} />)
+
+  // Setup only: pick a model and effort in each row, closing each picker.
+  await pickWorkflow()
+  for (const row of ["Build", "Test"]) {
+    const pin = screen.getByRole("button", { name: `${row} runs on` })
+    fireEvent.click(pin)
+    fireEvent.click(
+      within(await screen.findByRole("listbox", { name: "Models" })).getByText(MODEL.id),
+    )
+    fireEvent.click(within(screen.getByRole("listbox", { name: "Efforts" })).getByText("high"))
+    fireEvent.click(pin)
+    expect(pin.textContent).toContain("high")
+  }
+
+  await pickHost("box")
+
+  for (const row of ["Build", "Test"]) {
+    const text = screen.getByRole("button", { name: `${row} runs on` }).textContent
+    expect(text).not.toContain("gpt-5.5")
+    expect(text).not.toContain("high")
+  }
+  expect(screen.getByRole("button", { name: "Create task" }).hasAttribute("disabled")).toBe(true)
 })
 
 it("keeps Create task disabled while the hosts list loads, with the form filled", async () => {

@@ -225,9 +225,18 @@ async fn forge_asked(
     detected: Option<SetForgeIntegration>,
     update: Option<&ForgeUpdate>,
 ) -> ApiResult<Option<SetForgeIntegration>> {
-    let Some(update) = update.filter(|u| u.enabled.is_some()) else {
+    let Some(update) = update.filter(|u| {
+        u.enabled.is_some() || u.webhook.is_some() || u.poll_interval_minutes.is_some()
+    }) else {
         return Ok(detected);
     };
+    if let Some(Some(minutes)) = update.poll_interval_minutes
+        && !(1..=60).contains(&minutes)
+    {
+        return Err(ApiError::bad_request(format!(
+            "poll_interval_minutes must be from 1 to 60, not {minutes}"
+        )));
+    }
     let Some(mut row) = detected else {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -255,6 +264,12 @@ async fn forge_asked(
             row.login = None;
         }
         _ => {}
+    }
+    if let Some(webhook) = update.webhook {
+        row.webhook_enabled = webhook;
+    }
+    if let Some(minutes) = update.poll_interval_minutes {
+        row.poll_interval_minutes = minutes.map(i64::from);
     }
     Ok(Some(row))
 }
