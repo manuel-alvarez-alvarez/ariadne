@@ -2866,7 +2866,7 @@ view.
   `/v1/hosts/{host}/` (`ui/dashboard/src/datasource-api.test.ts::points both datasources at the named host, or at all of them`,
   `ui/dashboard/src/page-params.test.ts::reads the daemon, the dashboard and the theme off the query string`).
 - The goal dialog follows rule 79
-  (`ui/src/features/goals/hosts.test.tsx::clears the model and the effort when the goal dialog's host changes`,
+  (`ui/src/features/goals/create-goal-hosts.test.tsx::clears the model and the effort when the goal dialog's host changes`,
   `::warns in the goal dialog of a host whose sync is failed, and still creates`,
   `::warns in the goal dialog of a host whose sync is pending, and still creates`,
   `::names the host in the toast of a goal created on a named host, and offers all hosts when the pick leaves it out`).
