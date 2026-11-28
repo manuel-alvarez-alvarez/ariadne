@@ -313,16 +313,6 @@ impl Store {
         .await?)
     }
 
-    /// The oldest event id of a session, payload unread.
-    pub async fn oldest_session_event_id(&self, session_id: &str) -> Result<Option<String>> {
-        Ok(
-            sqlx::query_scalar("SELECT MIN(id) FROM agent_events WHERE session_id = ?")
-                .bind(session_id)
-                .fetch_one(self.r())
-                .await?,
-        )
-    }
-
     /// The heads of a session's events from `from` on and up to `upto`, in
     /// order, payloads unread. With `kinds`, of those kinds alone. An unset
     /// bound is open.

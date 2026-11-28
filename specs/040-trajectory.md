@@ -771,7 +771,6 @@ Out:
     `fold.rs::command_previews_accept_empty_fences_and_crlf`.
 86. The API documents contain answer IDs and raw tool titles (rules 15, 51):
     `docs.rs::the_committed_api_pair_holds_every_trajectory_type`.
-
 87. A lifecycle note that came while no turn ran reads with the next
     prompt's turn on a steps page and on a cold read, and a warning before
     the first prompt opens a turn with a steps page (rule 22):
