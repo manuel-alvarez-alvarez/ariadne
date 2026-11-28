@@ -2109,6 +2109,18 @@ view.
 
 ## Acceptance criteria
 
+- Untrusted prose hides its markers and retains Markdown formatting and literal inline code
+  (`ui/src/components/markdown.test.tsx::marks untrusted prose while preserving Markdown and code examples`).
+- A highlight offers a tooltip on keyboard focus
+  (`ui/src/components/markdown.test.tsx::offers the trust tooltip on keyboard focus`).
+- Streaming keeps an open span highlighted and fenced code markers literal
+  (`ui/src/components/markdown.test.tsx::updates an open untrusted span as text streams and keeps code markers literal`).
+- Folded prompts retain the highlight
+  (`ui/src/features/sessions/console/blocks.test.tsx::keeps untrusted text highlighted in a folded prompt`).
+- Daemon prompts and agent questions highlight untrusted prose
+  (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::highlights untrusted text in a daemon prompt without its seat brief`,
+  `ui/src/features/goals/attention-forms.test.tsx::highlights untrusted prose in an agent question`).
+
 - Goal task cards show a remote host in its host colour and explain when it
   cannot be reached, in the label and in the card description (`ui/src/features/tasks/task-card.test.tsx::shows the colored remote host and its unreachable state`).
 - A goal task list follows a `task_updated` change to its host and reachability
@@ -3142,11 +3154,6 @@ behaviour of rule 61.
 The tests run in jsdom and measure no layout. No test proves that the board's
 columns fit at 33.9rem, the floor of rule 39. The test of rule 39 reads the
 classes that set the floor and the hide widths, not the drawn widths.
-
-- Untrusted prose, Markdown, streaming and code examples:
-  `ui/src/components/markdown.test.tsx`; folded prompts:
-  `ui/src/features/sessions/console/blocks.test.tsx`; daemon prompts:
-  `ui/src/features/sessions/trajectory/trajectory-console.test.tsx`.
 
 ## Sources
 
