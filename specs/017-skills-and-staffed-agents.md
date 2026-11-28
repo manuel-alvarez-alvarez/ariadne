@@ -182,8 +182,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
     first, and changes in the same commit each document those rules bind to
     the code. It reads an area spec where the repository keeps one.
     It routes behavior, structure and prose to their proof before implementation.
-    It sends contradictions with both readings and its pick to `orchestrator`
-    through `post_to_session`, then continues with that pick.
+    It sends contradictions with both readings and its pick to the requester,
+    then continues with that pick.
     It uses independent expected values and public-interface assertions that
     detect a breach of every required part of the claim.
     It runs each touched test file whole after focused checks.
@@ -195,7 +195,7 @@ written into the system prompt (006), and the lifecycle the seats sit in
     Its exclusions name `coding`, `spec-writing` and `research`.
     `research` cites a source for every fact and lists what it did not check.
     Its research report names what would change the recommendation.
-    It posts the full research report to the orchestrator with `post_to_session`.
+    It sends the full research report to the requester.
     `spec-writing` writes the spec that later tasks build against,
     before its code exists: it reads the repository's spec format first,
     sends the orchestrator its open questions as one list with options and a
@@ -269,15 +269,16 @@ written into the system prompt (006), and the lifecycle the seats sit in
     reproduce each finding before it posts it, keeps the priority of a
     finding whose reproduction failed and marks its proof `Unverified:`
     rather than downgrade it to P2, and names no approval (029 rule 17).
-    `coding` and `pr-babysit` name their own report only as "the column
-    report", never a field of it (006 rule 5) — `pr-babysit` on a merge;
-    `merge` and `conflict-resolution` name it as "the report", and the
-    `agent` seat's supplement of each holds its call: `merge` passes the
+    `pr-babysit` names its own report only as "the column report", never a
+    field of it (006 rule 5), on a merge; `coding`, `merge` and
+    `conflict-resolution` name it as "the report", and the
+    `agent` seat's supplement of `merge` and of `conflict-resolution` holds
+    its call: `merge` passes the
     work with the base branch's sha as `merge_commit` and returns it with
     `fail_step` for a failed check, and `conflict-resolution` passes the
     work only where no skill invoked it. Every other produce skill that
     ends its own column — `documentation`, `research`, `spec-writing` —
-    calls `complete_step` with the column report the same way, and
+    ends on the report the same way, and
     `conflict-resolution` returns to the skill that invoked it, and calls
     nothing, where one did.
     `conflict-resolution` alone states the conflict method: both sides read
@@ -412,10 +413,14 @@ written into the system prompt (006), and the lifecycle the seats sit in
     server and no Ariadne word of the word list of 006 rule 21. It says
     the plain word of that list instead, and the seat text and the
     supplement of its skill and seat say what the plain word stands for.
-    `code-review`, `architecture-review`, `merge` and `conflict-resolution`
-    hold to this today, proven by the one helper
-    `assert_names_no_ariadne_word` in `skill_tests/template.rs`; the other
-    seven skills move to it in later changes.
+    `code-review`, `architecture-review`, `coding`, `documentation`,
+    `research`, `spec-writing`, `merge` and `conflict-resolution` hold to
+    this today, proven by the one helper `assert_names_no_ariadne_word` in
+    `skill_tests/template.rs`; the other three skills move to it in later
+    changes. The four produce skills
+    keep the ticket and report contract in plain words, and none has a
+    supplement: the agent seat text owns the report call and the binding of
+    the requester, the stage and the report (006 rule 21).
     The body stays under 500 lines and within the caps of 006 rule 13.
     The template is proven by structure and words
     (`skill_tests/template.rs::every_skill_obeys_the_template`,
@@ -521,9 +526,12 @@ written into the system prompt (006), and the lifecycle the seats sit in
 - No skill repeats how a check runs: that is the session rules'
   (`skill_tests/template.rs::the_skills_leave_how_a_check_runs_to_the_session_rules`,
   `mcp.rs::each_shared_rule_is_written_in_its_owner_alone`).
-- `coding` and the other produce skills that end their own column name the
-  column report there and restate no field of it
-  (`skill_tests/produce.rs::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
+- `coding` and the other produce skills that end their own stage name the
+  report there and restate no field of it
+  (`skill_tests/produce.rs::a_produce_skill_names_the_report_where_it_ends_a_stage`).
+- `coding`, `documentation`, `research` and `spec-writing` name no Ariadne
+  word and have no supplement
+  (`skill_tests/produce.rs::the_four_produce_skills_name_no_ariadne_word_and_have_no_supplement`).
 - No shipped skill divides a task, `coding` adds a new commit on a return
   and never amends, and its refactoring path names one commit
   (`skill_tests/produce.rs::a_task_is_one_commit_and_nothing_amends_a_pushed_one`).

@@ -176,11 +176,10 @@ the ACP runtime that takes a prompt (021).
     gone in the moment between the liveness check and the hand-off, and
     told at the attempt regardless, that situation would never be said
     again.
-31. An orchestrator in planning, idle between turns, is waiting on the
-    user's answer to whatever it last asked, not silent: it is never nudged
-    and never flagged stalled for sitting idle. A turn that never ends is the
-    one silence a planning orchestrator can have, and that is still flagged
-    and relaunched as any other agent's is.
+31. An idle planning orchestrator is never nudged or flagged stalled.
+    A normal turn without an opened question or `finalize_plan` raises
+    the console-input item defined in 031. Cancelled and failed turns raise
+    no such item. A turn that never ends remains subject to watchdogs.
 32. An agent reports far more often than its task changes — one tool call is
     a start and an end — so the wakes its events send are folded per session
     over a window of 250 ms (`Timeouts::session_wake`). The first wake of a
@@ -284,7 +283,9 @@ the ACP runtime that takes a prompt (021).
   (`workflow_steps.rs::only_the_current_column_is_nudged_and_idle_columns_raise_no_attention`).
 - An idle orchestrator in planning is waiting on the user, not silent, so it
   is never nudged or flagged stalled, however long it sits idle
-  (`scheduler_attention.rs::an_idle_planning_orchestrator_is_never_nudged_or_flagged`).
+  (`scheduler_attention.rs::an_idle_planning_orchestrator_is_never_nudged_or_flagged_stalled`).
+- A planning turn without a question raises console input
+  (`attention.rs::a_planning_turn_without_a_question_needs_console_input`).
 - An idle review session is not nudged past `QUIET_NUDGE_SECS` and not
   relaunched, and one mid-turn past the relaunch threshold is relaunched
   (`scheduler_attention.rs::an_idle_pull_request_session_is_waiting_on_the_forge_and_a_wedged_one_is_relaunched`).

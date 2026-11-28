@@ -1,3 +1,4 @@
+use super::template::assert_names_no_ariadne_word;
 use super::*;
 
 /// A skill scopes its checks to what its step changed.
@@ -31,7 +32,7 @@ fn a_skill_scopes_its_own_checks_to_what_the_task_changed() {
         ),
         (
             "coding",
-            "Call `complete_step` with the column report. End it with one line per Criteria number and the proof for that criterion.",
+            "Send the report. End it with one line per Criteria number and the proof for that criterion.",
         ),
         (
             "conflict-resolution",
@@ -85,7 +86,7 @@ fn a_task_is_one_commit_and_nothing_amends_a_pushed_one() {
     for (name, step) in [
         (
             "coding",
-            "On a return from review, add a new commit on top. Never amend. The merge column squashes.",
+            "On a return from review, add a new commit on top. Never amend. The merge stage squashes.",
         ),
         (
             "coding",
@@ -104,21 +105,64 @@ fn a_task_is_one_commit_and_nothing_amends_a_pushed_one() {
     }
 }
 
-/// `coding` names the column report at its own end, and every other
-/// produce skill that ends its own column names it the same way. None
-/// of them restates a field of the report, which the `complete_step`
-/// description alone defines.
+/// `conflict-resolution` says "pass the work, with the report" at its own
+/// end, and the four other produce skills say "Send the report.": the agent
+/// seat text owns the `complete_step` call and binds the report to the
+/// column report (006 rule 21), and the `agent` supplement of
+/// `conflict-resolution` holds its call. None of them restates a field of
+/// the report, which the `complete_step` description alone defines.
 #[test]
-fn a_produce_skill_names_the_column_report_where_it_ends_a_column() {
-    for name in ["coding", "documentation", "research", "spec-writing"] {
+fn a_produce_skill_names_the_report_where_it_ends_a_stage() {
+    for (name, ending) in [
+        ("coding", "Send the report. End it with one line per"),
+        ("conflict-resolution", "pass the work, with the report"),
+        ("documentation", "Send the report."),
+        ("research", "Send the report."),
+        ("spec-writing", "Send the report."),
+    ] {
         let document = unwrapped(default_skill_document(name).unwrap());
         assert!(
-            document.contains("Call `complete_step` with the column report"),
-            "the {name} skill does not name the column report where it ends"
+            document.contains(ending),
+            "the {name} skill does not name the report where it ends"
         );
         assert!(
             !document.contains("Fifteen lines at most"),
             "the {name} skill restates the column report's own line cap"
+        );
+    }
+    let agent = default_system_prompt(ariadne_core::Seat::Agent);
+    assert!(agent.contains("Call `complete_step` when"));
+}
+
+/// `coding`, `documentation`, `research` and `spec-writing` name no
+/// Ariadne word (017 rule 16). Each Ariadne rule they held has an owner
+/// outside them: the agent seat text owns the report call and the binding
+/// of the requester, the stage and the report (006 rule 21). None of the
+/// four has a supplement, since none holds an Ariadne rule of its own.
+/// `coding` keeps the four ticket sections and the report line for each
+/// Criteria number in plain words.
+#[test]
+fn the_four_produce_skills_name_no_ariadne_word_and_have_no_supplement() {
+    for name in ["coding", "documentation", "research", "spec-writing"] {
+        assert_names_no_ariadne_word(name, default_skill_document(name).unwrap());
+        for seat in [
+            ariadne_core::Seat::Agent,
+            ariadne_core::Seat::Reviewer,
+            ariadne_core::Seat::Orchestrator,
+            ariadne_core::Seat::Keeper,
+        ] {
+            assert_eq!(
+                skill_supplement(name, seat),
+                None,
+                "{name} has a supplement"
+            );
+        }
+    }
+    let coding = unwrapped(default_skill_document("coding").unwrap());
+    for section in ["Objective", "Criteria", "Interfaces", "Out of scope"] {
+        assert!(
+            coding.contains(section),
+            "coding drops the {section} section"
         );
     }
 }
@@ -158,7 +202,7 @@ fn coding_routes_changes_and_proves_each_claim() {
         "For structure, follow the refactoring path in place of steps 5 and 6.",
         "For prose, inspect the diff and run the relevant existing checks.",
         "Skip steps 5 and 6 for prose.",
-        "with `post_to_session` to `orchestrator`.",
+        "Report a contradiction to the requester.",
         "Send both readings and your pick. Continue with your pick.",
         "the area spec where the repository keeps one.",
         "Examples include a spec, manual or index where the repository keeps them.",
@@ -252,21 +296,21 @@ fn each_writing_skill_names_its_sibling_and_its_own_proof() {
         ),
         (
             "research",
-            "Post the full research report to `orchestrator` with `post_to_session`.",
+            "Send the full research report to the requester.",
         ),
         (
             "research",
-            "Done when the post holds the full research report and the tool accepts it.",
+            "Done when the requester has the full research report.",
         ),
         (
             "spec-writing",
-            "Post every open question to the orchestrator in one `post_to_session`.",
+            "Send every open question to the requester in one message.",
         ),
         ("spec-writing", "Name the test that proves it"),
         ("spec-writing", "The coding task writes that test."),
         ("spec-writing", "Mark each test that does not exist yet"),
         ("spec-writing", "every criterion names a test"),
-        ("spec-writing", "the orchestrator has agreed to the spec"),
+        ("spec-writing", "the requester has agreed to the spec"),
         (
             "spec-writing",
             "Commit the spec once, under the repository's commit rules.",
