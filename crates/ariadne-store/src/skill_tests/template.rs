@@ -509,6 +509,16 @@ fn the_review_skills_name_no_ariadne_word() {
     assert!(ariadne_words_in("Return the work to the requester at this stage.").is_empty());
 }
 
+/// `merge` and `conflict-resolution` read the same in any harness too. The
+/// agent seat's supplements hold what their plain words stand for (006
+/// rule 21).
+#[test]
+fn merge_and_conflict_resolution_name_no_ariadne_word() {
+    for name in ["merge", "conflict-resolution"] {
+        assert_names_no_ariadne_word(name, default_skill_document(name).unwrap());
+    }
+}
+
 /// The agent seat text binds each plain word of a shipped skill to the
 /// Ariadne word it stands for, names the orchestrator as the requester, and
 /// names `post_to_session` as the way to reach it (006 rule 21).
