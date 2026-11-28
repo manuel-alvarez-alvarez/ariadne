@@ -71,14 +71,9 @@ pub(super) fn rights_refusal(error: &str) -> bool {
         || error.contains("missing scope")
         || (error.contains("needs the") && error.contains("scope"));
     missing_scope
-        || [
-            "http 404",
-            "404 not found",
-            "admin:repo_hook",
-            "admin rights",
-        ]
-        .iter()
-        .any(|word| error.contains(word))
+        || ["http 404", "404 not found", "admin rights"]
+            .iter()
+            .any(|word| error.contains(word))
 }
 
 impl ForgeClient {
@@ -258,6 +253,7 @@ mod tests {
         for error in [
             "HTTP 422: Validation Failed",
             "HTTP 422: invalid scope for this URL",
+            "HTTP 422: invalid scope admin:repo_hook",
             "HTTP 502: Bad Gateway",
             "the forge returned no hook id",
         ] {

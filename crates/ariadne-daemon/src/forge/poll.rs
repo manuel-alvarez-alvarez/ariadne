@@ -61,8 +61,6 @@ enum Command {
     Wake(String),
     Mode(String, Mode),
     Changed(String, oneshot::Sender<()>),
-    /// A timer fetch is due: retry a hook the forge refused for rights first.
-    Retry(String, oneshot::Sender<()>),
 }
 #[derive(Clone)]
 pub struct ForgePoll {
@@ -107,9 +105,26 @@ struct Handoff {
     live: LivePulls,
     /// Caps how many of this fetch's host's repositories run at once.
     host_limits: HostFetchLimits,
-    /// Where a worker asks for a hook retry. Weak, so the poll still ends
-    /// once its handle is dropped.
+    /// Where a worker reports a hook that went live. Weak, so the poll still
+    /// ends once its handle is dropped.
     commands: mpsc::WeakUnboundedSender<Command>,
+    /// The current public URL, read by a hook retry at the moment it runs.
+    urls: watch::Receiver<Public>,
+    /// One lock per repository: its hook registrations run one at a time.
+    hook_locks: Arc<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+}
+impl Handoff {
+    /// Wait for the turn of a repository's hook registration.
+    async fn hook_turn(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = self
+            .hook_locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(id.into())
+            .or_default()
+            .clone();
+        lock.lock_owned().await
+    }
 }
 struct Worker {
     identity: (String, String, String, String),
@@ -211,6 +226,7 @@ pub fn start(
     let scheduler: Waker = Arc::default();
     let pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>> = Arc::default();
     let (commands, mut requests) = mpsc::unbounded_channel();
+    let webhook_url = crate::webhooks::WebhookUrl::new(cfg.webhook_public_url.clone());
     let handoff = Handoff {
         details: timeouts.forge_details,
         scheduler: scheduler.clone(),
@@ -220,8 +236,9 @@ pub fn start(
         live,
         host_limits: HostFetchLimits::default(),
         commands: commands.downgrade(),
+        urls: webhook_url.subscribe(),
+        hook_locks: Arc::default(),
     };
-    let webhook_url = crate::webhooks::WebhookUrl::new(cfg.webhook_public_url.clone());
     let mut urls = webhook_url.subscribe();
     let mut events = events.subscribe();
     tokio::spawn(async move {
@@ -239,10 +256,6 @@ pub fn start(
                     None => break,
                     Some(Command::Changed(id, done)) => {
                         sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
-                        let _ = done.send(());
-                    }
-                    Some(Command::Retry(id, done)) => {
-                        retry(&store, &cfg, &workers, &id, &public_url).await;
                         let _ = done.send(());
                     }
                     Some(Command::Wake(id)) => {
@@ -325,9 +338,11 @@ async fn sync(
         }
         if let Some(row) = row
             && row.webhook_id.is_some()
-            && let Err(error) = super::hooks::reconcile(store, cfg, row, &Public::default()).await
         {
-            warn!(%error, repository = id, "cannot remove forge hook");
+            let _turn = handoff.hook_turn(id).await;
+            if let Err(error) = super::hooks::reconcile(store, cfg, row, &Public::default()).await {
+                warn!(%error, repository = id, "cannot remove forge hook");
+            }
         }
         // With the integration off nothing reads the forge for its
         // requests: the scheduler ends the work of each but a task's,
@@ -381,6 +396,7 @@ async fn sync(
     let interval = poll_interval(&row, &timeouts);
     let webhook_enabled = row.webhook_enabled;
     if reconcile_hook {
+        let _turn = handoff.hook_turn(id).await;
         match super::hooks::reconcile(store, cfg, row, public_url).await {
             Ok(current) => row = current,
             Err(error) => {
@@ -442,19 +458,13 @@ async fn sync(
 }
 
 /// Register again a hook the forge refused for rights (rule 8 of 027), while
-/// the integration is enabled with its webhook switch on. A hook that goes
-/// live puts the worker in `WakeOnly`. The timer fetch that asked for the
-/// retry is the catch-up fetch, so no wake follows.
-async fn retry(
-    store: &Store,
-    cfg: &Arc<Config>,
-    workers: &HashMap<String, Worker>,
-    id: &str,
-    public_url: &Public,
-) {
-    let Some(worker) = workers.get(id) else {
-        return;
-    };
+/// the integration is enabled with its webhook switch on. It runs in the
+/// repository's own worker, never in the shared loop, and reads the integration
+/// and the public URL once it holds the repository's turn, so a withdrawal that
+/// came first is never undone. A hook that goes live puts the worker in
+/// `WakeOnly`. The timer fetch that follows is the catch-up fetch.
+async fn retry_hook(store: &Store, cfg: &Arc<Config>, handoff: &Handoff, id: &str) {
+    let _turn = handoff.hook_turn(id).await;
     let row = match store.forge_integration(id).await {
         Ok(Some(row)) if row.enabled && row.webhook_enabled && row.webhook_rights_refused => row,
         Ok(_) => return,
@@ -463,23 +473,15 @@ async fn retry(
             return;
         }
     };
-    match super::hooks::reconcile(store, cfg, row, public_url).await {
+    let public_url = handoff.urls.borrow().clone();
+    match super::hooks::reconcile(store, cfg, row, &public_url).await {
         Ok(current) if current.webhook_state == "live" => {
-            worker.mode.send_replace(Mode::WakeOnly);
+            if let Some(commands) = handoff.commands.upgrade() {
+                let _ = commands.send(Command::Mode(id.into(), Mode::WakeOnly));
+            }
         }
         Ok(_) => {}
         Err(error) => warn!(%error, repository = id, "cannot retry forge hook"),
-    }
-}
-
-/// Ask the poll to retry a hook refused for rights, and wait until it has.
-async fn retry_hook(handoff: &Handoff, id: &str) {
-    let Some(commands) = handoff.commands.upgrade() else {
-        return;
-    };
-    let (done, wait) = oneshot::channel();
-    if commands.send(Command::Retry(id.into(), done)).is_ok() {
-        let _ = wait.await;
     }
 }
 
@@ -524,7 +526,7 @@ async fn worker(
     let mut timed = false;
     loop {
         if std::mem::take(&mut timed) {
-            retry_hook(&handoff, &id).await;
+            retry_hook(&store, &cfg, &handoff, &id).await;
         }
         let base = *interval.borrow();
         // `fetch` itself acquires its host's permit, on the integration it
