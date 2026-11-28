@@ -16,6 +16,7 @@ import { Link, useLocation, useSearchParams } from "react-router-dom"
 import { api, type GoalDto, type Host, qk, unwrap } from "@/api"
 import { HostLabel } from "@/components/host-label"
 import { IconButton } from "@/components/icon-button"
+import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -340,7 +341,7 @@ function FormAnswers({
   return (
     <section aria-label="Agent question" className="flex flex-col gap-1 px-3 pb-2 text-sm">
       {asked.message === "" ? null : (
-        <p className="whitespace-pre-wrap text-foreground">{asked.message}</p>
+        <Markdown className="text-foreground">{asked.message}</Markdown>
       )}
       <fieldset aria-label={field.title} className="flex flex-wrap gap-1">
         {field.kind.choices.map((choice) => (

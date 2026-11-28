@@ -9,6 +9,7 @@
 
 import { type HostView, LOCAL_HOST, useHosts } from "@/api"
 import { HostLabel } from "@/components/host-label"
+import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/format"
 
 const STATE_LABEL: Record<HostView["sync"]["state"], string> = {
@@ -36,8 +37,9 @@ const STATE_TONE: Record<HostView["sync"]["state"], string> = {
 }
 
 export function HostSync({ skippedPermissions = false }: { skippedPermissions?: boolean }) {
-  const { hosts } = useHosts()
+  const { hosts, isPending } = useHosts()
   const named = hosts.filter((host) => host.name !== LOCAL_HOST)
+  if (isPending) return <Skeleton aria-label="Loading host sync" className="h-16 w-full" />
   if (named.length === 0) return null
   return (
     <section className="flex flex-col gap-2 text-xs text-muted-foreground">

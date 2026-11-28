@@ -2,7 +2,7 @@
 
 /** The note and the sync lines under the four screens `local` owns. */
 
-import { screen } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import { afterEach, describe, expect, it } from "vitest"
 
@@ -56,7 +56,7 @@ describe.each(SCREENS)("the %s screen", (name, Screen) => {
     expect(screen.queryByTestId("local-note")).toBeNull()
     expect(screen.queryByRole("heading", { name: "Sync to other hosts" })).toBeNull()
     expect(screen.queryByRole("list", { name: "Sync" })).toBeNull()
-    expect(screen.queryByRole("columnheader", { name: "Hosts" })).toBeNull()
+    await waitFor(() => expect(screen.queryByRole("columnheader", { name: "Hosts" })).toBeNull())
     expect(screen.queryByRole("list", { name: "Checkouts" })).toBeNull()
   })
 })
