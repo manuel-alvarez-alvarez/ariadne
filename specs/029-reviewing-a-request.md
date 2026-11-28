@@ -92,8 +92,7 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
    states: "You review one open pull or merge request that the user explicitly asks Ariadne to review.
    The author can be the user, another person or a bot. The user needs no GitHub review assignment.
    The request can be a draft. Work only in your worktree, detached at the head of the request.
-   Commit nothing and push nothing. The requester is the user. A stage is a review round.
-   The report is the request body. An update is news."
+   Commit nothing and push nothing."
    (`defaults.rs::the_agreed_texts_ship_word_for_word`)
 5a. A review session that went away is resumed on its own row and
    conversation, unless the pin moved since it started: a conversation keeps

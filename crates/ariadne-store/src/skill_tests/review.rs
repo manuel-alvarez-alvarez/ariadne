@@ -99,7 +99,8 @@ fn the_review_skill_reviews_in_place_and_ends_on_a_step_call() {
         unwrapped(skill_supplement("code-review", ariadne_core::Seat::Reviewer).unwrap());
     for rule in [
         "Post each finding as `pr-reviewer` says. That skill ends the round.",
-        "To return the work or pass the work is a step call of the task seat. Skip it.",
+        "A stage is a round. The report is the request body.",
+        "To return the work or pass the work is no call.",
     ] {
         assert!(
             reviewer.contains(rule),

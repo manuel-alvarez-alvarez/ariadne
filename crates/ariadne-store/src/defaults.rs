@@ -172,7 +172,7 @@ pub(crate) struct SkillSupplement {
 
 /// Every supplement Ariadne ships. A pair of skill and seat that is not here
 /// adds no text.
-pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 8] = [
+pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 9] = [
     SkillSupplement {
         skill: ORCHESTRATION_SKILL,
         seat: Seat::Orchestrator,
@@ -187,6 +187,11 @@ pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 8] = [
         skill: "code-review",
         seat: Seat::Reviewer,
         text: include_str!("../supplements/code-review/reviewer.md"),
+    },
+    SkillSupplement {
+        skill: "architecture-review",
+        seat: Seat::Reviewer,
+        text: include_str!("../supplements/architecture-review/reviewer.md"),
     },
     SkillSupplement {
         skill: PR_REVIEWER_SKILL,
@@ -470,7 +475,7 @@ pub const PULL_REQUEST_KEEPER_PLACEHOLDERS: [&str; 7] = [
 /// them — it writes no code, and a point it cannot settle goes to the user
 /// rather than being decided alone. How to ask is the session rules' (013),
 /// which every seat reads, so this text names no tool.
-const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Never write code. Plan the goal with the user. Decide no open point alone. Ask the user before you agree to a spec that an agent sends. A stage is a column. Your instructions are your briefing."#;
+const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Never write code. Plan the goal with the user. Decide no open point alone. Ask the user before you agree to a spec. A stage is a column. Your instructions are the briefing."#;
 
 /// The one task seat text: what the agent of a column owes, whatever the
 /// column is. The work of the column is its skills'; what each of the three
@@ -482,13 +487,13 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Never write code. Plan the goal with
 /// to the Ariadne words they stand for (006 rule 21), so no skill names the
 /// orchestrator, a column or a step call.
 const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its branch. Do only the work of your current column. Read its skills first.
-- Call `complete_step` when the column's work is done. To send the report or pass the work is this call.
+- Call `complete_step` when your work is done, to send the report and pass the work.
 - Call `fail_step` when the previous column must fix something.
 - Call `fail_task` when nobody can do the task as written.
-- Call `get_task` for a value that your briefing does not give.
+- Call `get_task` for a missing value.
 - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.
-- After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason.
-- A skill uses plain words. The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. To return the work is to fail the step. An update is news. Your instructions are your briefing. The primary checkout of the repository is the `Repo:` path, `<repo>`."#;
+- After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator, or call `fail_task`. A post can be refused. The refusal gives the reason.
+- The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. To return the work is to fail the step. An update is news."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
 /// commands act on, and what the column before it said.
@@ -520,7 +525,7 @@ const AGENT_RESUME: &str = "Not a new request: continue \"{task_title}\" at {ste
 /// and nothing a layer it already reads says. How to review is the skill's,
 /// and the skills header tells every seat to read it; when the turn ends is
 /// the briefing's and the news prompt's, which each end on it.
-const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request that the user explicitly asks Ariadne to review. The author can be the user, another person or a bot. The user needs no GitHub review assignment. The request can be a draft. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing. The requester is the user. A stage is a review round. The report is the request body. An update is news."#;
+const PULL_REQUEST_REVIEW_SYSTEM_PROMPT: &str = r#"You review one open pull or merge request that the user explicitly asks Ariadne to review. The author can be the user, another person or a bot. The user needs no GitHub review assignment. The request can be a draft. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing."#;
 
 /// Initial briefing of a reviewer pull request session (029).
 const PULL_REQUEST_REVIEW_BRIEFING: &str = r#"# Review pull request: {title}
@@ -543,7 +548,7 @@ const PULL_REQUEST_NEWS: &str = r#"News on "{title}":
 Handle each item. Then end your turn."#;
 
 /// Seat text of a session that keeps a request asked for by hand (032).
-const PULL_REQUEST_KEEPER_SYSTEM_PROMPT: &str = r#"You keep one open request the user asked you to keep. Work only in your worktree, on its branch. When the request needs a fix, commit it and push it with the briefing's push command. Ariadne ends this session when the request merges or closes. An update is news."#;
+const PULL_REQUEST_KEEPER_SYSTEM_PROMPT: &str = r#"You keep one open request the user asked you to keep. Work only in your worktree, on its branch. When the request needs a fix, commit it and push it with the briefing's push command. Ariadne ends this session when the request merges or closes."#;
 
 /// Initial briefing of a keeper session (032): the request, the worktree and
 /// branch it works on, and the command that pushes a fix to the request.
@@ -557,7 +562,7 @@ const PULL_REQUEST_KEEPER_BRIEFING: &str = r#"# Keep pull request: {title}
 - Your login: {login}
 - Push with: {push_command}
 
-Keep this request. Then end your turn."#;
+Keep this request. End your turn."#;
 
 /// Initial briefing of an orchestrator session: the goal, its workflow with
 /// every column, and the repositories it works in.
@@ -580,7 +585,6 @@ Workflow: {workflow}
 ## Repositories
 {repositories}
 
-## Plan mode
 In planning, you run in plan mode if your agent has one. The Ariadne tools are permitted in plan mode. `finalize_plan` ends plan mode. Do not call `ExitPlanMode`."#;
 
 /// What an orchestrator that has gone quiet is picked up with, in both
@@ -889,10 +893,8 @@ pub(crate) mod tests {
         const KIND_TOTAL: usize = 1500;
         // Every seat text, every kind and the three pull request texts. It
         // rose from 3400 to 3600 with the agent seat text, for the line that
-        // binds the plain words of a shipped skill (006 rule 21), and to
-        // 4000 when every seat bound the plain words its own skills use,
-        // the agent named `get_task` and the keeper briefing ended the turn.
-        const GRAND_TOTAL: usize = 4000;
+        // binds the plain words of a shipped skill (006 rule 21).
+        const GRAND_TOTAL: usize = 3600;
 
         // A cap per seat. The orchestrator's carried its playbook up to
         // 1750; the playbook is the `orchestration` skill now, and 200 holds
@@ -902,15 +904,10 @@ pub(crate) mod tests {
         // plain words of a shipped skill to Ariadne (006 rule 21): that line
         // is what lets `code-review` and `architecture-review` drop every
         // Ariadne word, so it is paid once per seat rather than per skill.
-        // It rose to 1050 for the two plain words of the call that passes
-        // the work, the `<repo>` name and the `get_task` line. The
-        // reviewer's rose to 450 for its own binding of four plain words:
-        // the review skills it loads use them, and a word no seat binds
-        // reaches the model with no meaning.
         let system_cap = |seat: Seat| match seat {
-            Seat::Agent => 1050,
+            Seat::Agent => 950,
             Seat::Orchestrator => 200,
-            Seat::Reviewer => 450,
+            Seat::Reviewer => 400,
             Seat::Keeper => 400,
         };
         let cap = |kind: PromptKind| match kind {
@@ -980,8 +977,8 @@ pub(crate) mod tests {
     /// a sentence of room, so a rule that creeps back from the skill shows
     /// up here. The agent seat's `code-review` supplement is 300: the diff
     /// call and the two step calls the skill dropped. The reviewer seat's is
-    /// 200: one line that hands the round to `pr-reviewer`, and one that
-    /// ties the two plain words of a step call to the task seat and skips it. The agent seat's `pr-babysit` supplement is 1,100:
+    /// 200: one line that hands the round to `pr-reviewer`, one that ties
+    /// the stage and the report, and one that ties the step call to none. The agent seat's `pr-babysit` supplement is 1,100:
     /// it holds every Ariadne rule the skill gave up for the task seat, which
     /// is how to open the request (the push, the open call, the title and the
     /// body), the read and reply calls, the escalation call, the update of
@@ -1002,20 +999,22 @@ pub(crate) mod tests {
     /// supplement is 1,800: the tool of each playbook step, from
     /// `list_hosts` to `complete_goal`, and the model rules, which name the
     /// column ranks, `local` and the ACP agents. The skill dropped all of it
-    /// to name no Ariadne word, and the orchestrator seat text is 200. It
-    /// rose to 1,900 for the end of the turn after `finalize_plan`, the
-    /// `get_task` read, and the relay of an agent's question to the user and
-    /// of the answer back. The total is 5,650, the eight caps with room: it
-    /// rose from 3,750 by the first 1,800.
+    /// to name no Ariadne word, and the orchestrator seat text is 200, so the
+    /// seat still pays less than the 1,750 its text once carried with the
+    /// playbook in it. The reviewer seat's `architecture-review` supplement
+    /// is 100: the one line that ties the two plain words the skill says to
+    /// the review round and the request body. The total is 5,650, the nine
+    /// caps with room: it rose from 3,750 by the first 1,800.
     /// A new pair needs a cap of its own here, argued the same way, and the
     /// total holds them all.
     #[test]
     fn supplement_size_caps_hold() {
         const TOTAL: usize = 5_650;
         let cap = |skill: &str, seat: Seat| match (skill, seat) {
-            (ORCHESTRATION_SKILL, Seat::Orchestrator) => 1_900,
+            (ORCHESTRATION_SKILL, Seat::Orchestrator) => 1_800,
             ("code-review", Seat::Agent) => 300,
             ("code-review", Seat::Reviewer) => 200,
+            ("architecture-review", Seat::Reviewer) => 100,
             (PR_REVIEWER_SKILL, Seat::Reviewer) => 1_000,
             ("pr-babysit", Seat::Agent) => 1100,
             ("pr-babysit", Seat::Keeper) => 500,
@@ -1085,6 +1084,11 @@ pub(crate) mod tests {
         assert_eq!(skill_supplement("code-review", Seat::Orchestrator), None);
         assert_eq!(skill_supplement("code-review", Seat::Keeper), None);
         assert_eq!(skill_supplement("architecture-review", Seat::Agent), None);
+        let architecture = skill_supplement("architecture-review", Seat::Reviewer).unwrap();
+        assert!(
+            architecture.contains("A stage is a round."),
+            "{architecture}"
+        );
         assert_eq!(skill_supplement("coding", Seat::Agent), None);
         let task = skill_supplement("pr-babysit", Seat::Agent).unwrap();
         for call in [
@@ -1257,7 +1261,7 @@ pub(crate) mod tests {
         for rule in [
             "Work only in the task's worktree, on its branch.",
             "Do only the work of your current column.",
-            "Call `complete_step` when the column's work is done.",
+            "Call `complete_step` when your work is done",
             "Call `fail_step` when the previous column must fix something.",
             "Call `fail_task` when nobody can do the task as written.",
             "Never pass `--no-verify` or `-n` to git.",
@@ -1292,30 +1296,29 @@ pub(crate) mod tests {
     fn the_agreed_texts_ship_word_for_word() {
         assert_eq!(
             default_system_prompt(Seat::Orchestrator),
-            "Never write code. Plan the goal with the user. Decide no open point alone. Ask the user before you agree to a spec that an agent sends. A stage is a column. Your instructions are your briefing."
+            "Never write code. Plan the goal with the user. Decide no open point alone. Ask the user before you agree to a spec. A stage is a column. Your instructions are the briefing."
         );
         assert_eq!(
             default_system_prompt(Seat::Agent),
             "Work only in the task's worktree, on its branch. Do only the work of your current column. Read its skills first.\n\
-             - Call `complete_step` when the column's work is done. To send the report or pass the work is this call.\n\
+             - Call `complete_step` when your work is done, to send the report and pass the work.\n\
              - Call `fail_step` when the previous column must fix something.\n\
              - Call `fail_task` when nobody can do the task as written.\n\
-             - Call `get_task` for a value that your briefing does not give.\n\
+             - Call `get_task` for a missing value.\n\
              - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.\n\
-             - After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator with `post_to_session`, or call `fail_task`. A post can be refused. The refusal gives the reason.\n\
-             - A skill uses plain words. The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. To return the work is to fail the step. An update is news. Your instructions are your briefing. The primary checkout of the repository is the `Repo:` path, `<repo>`."
+             - After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator, or call `fail_task`. A post can be refused. The refusal gives the reason.\n\
+             - The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. To return the work is to fail the step. An update is news."
         );
         assert_eq!(
             default_system_prompt(Seat::Reviewer),
-            "You review one open pull or merge request that the user explicitly asks Ariadne to review. The author can be the user, another person or a bot. The user needs no GitHub review assignment. The request can be a draft. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing. The requester is the user. A stage is a review round. The report is the request body. An update is news."
+            "You review one open pull or merge request that the user explicitly asks Ariadne to review. The author can be the user, another person or a bot. The user needs no GitHub review assignment. The request can be a draft. Work only in your worktree, detached at the head of the request. Commit nothing and push nothing."
         );
         assert_eq!(
             default_system_prompt(Seat::Keeper),
-            "You keep one open request the user asked you to keep. Work only in your worktree, on its branch. When the request needs a fix, commit it and push it with the briefing's push command. Ariadne ends this session when the request merges or closes. An update is news."
+            "You keep one open request the user asked you to keep. Work only in your worktree, on its branch. When the request needs a fix, commit it and push it with the briefing's push command. Ariadne ends this session when the request merges or closes."
         );
         assert!(
-            pull_request_keeper_briefing_prompt()
-                .ends_with("Keep this request. Then end your turn.")
+            pull_request_keeper_briefing_prompt().ends_with("Keep this request. End your turn.")
         );
         assert!(
             default_prompt_text(PromptKind::StepBriefing)
@@ -1469,15 +1472,15 @@ pub(crate) mod tests {
     fn the_orchestrator_relays_an_agents_question_and_asks_before_it_agrees_to_a_spec() {
         let seat = default_system_prompt(Seat::Orchestrator);
         assert!(
-            seat.contains("Ask the user before you agree to a spec that an agent sends."),
+            seat.contains("Ask the user before you agree to a spec."),
             "{seat}"
         );
         let supplement = skill_supplement(ORCHESTRATION_SKILL, Seat::Orchestrator).unwrap();
         for rule in [
-            "Call it only after the user writes an explicit yes. Then end your turn.",
-            "Read a task with `get_task` before you post to its agent or move it.",
-            "Ask the user each question that an agent sends for the user.",
-            "Post the user's answer to that agent.",
+            "Call it only after the user writes an explicit yes. Then end the turn.",
+            "Read a task with `get_task` before a post.",
+            "Ask the user each question an agent asks of the user.",
+            "Post the answer to the agent.",
         ] {
             assert!(supplement.contains(rule), "the supplement and \"{rule}\"");
         }

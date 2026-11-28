@@ -351,7 +351,7 @@ fn each_rule_is_stated_in_exactly_one_briefing() {
         "Work only in the task's worktree",
         "Plan the goal with the user",
         "return the work with `fail_step`",
-        "A skill uses plain words.",
+        "The requester is the orchestrator.",
     ] {
         let places = all_defaults()
             .into_iter()
@@ -519,51 +519,39 @@ fn merge_and_conflict_resolution_name_no_ariadne_word() {
     }
 }
 
-/// The agent seat text binds each plain word of a shipped skill to the
-/// Ariadne word it stands for, names the orchestrator as the requester, and
-/// names `post_to_session` as the way to reach it (006 rule 21).
+/// The agent seat text ties the plain words that the task skills say to
+/// the Ariadne words they stand for, names the orchestrator as the
+/// requester, names `post_to_session` as the way to reach it, ties the two
+/// plain words of the call that passes the work to `complete_step`, and says
+/// when to call `get_task` (006 rule 21). A word only one skill says is tied
+/// in that skill's supplement, and `each_seat_ties_every_plain_word_its_skills_use`
+/// proves every tie of every seat.
 #[test]
 fn the_agent_seat_text_binds_each_plain_word_to_ariadne() {
     let agent = default_system_prompt(ariadne_core::Seat::Agent);
     let line = agent
         .lines()
-        .find(|line| line.contains("A skill uses plain words."))
+        .find(|line| line.contains("The requester is the orchestrator."))
         .expect("the agent seat text binds no plain word");
     for sentence in [
-        "The requester is the orchestrator.",
         "Reach it with `post_to_session`.",
         "A stage is a column.",
         "The report is the column report.",
         "To return the work is to fail the step.",
         "An update is news.",
-        "Your instructions are your briefing.",
-        "The primary checkout of the repository is the `Repo:` path, `<repo>`.",
     ] {
         assert!(line.contains(sentence), "the binding line and {sentence}");
     }
-    // The two plain words of the call that passes the work sit on that
-    // call's own line, and `get_task` has a line that says when to call it.
-    let pass = agent
-        .lines()
-        .find(|line| line.contains("To send the report or pass the work is this call."))
-        .expect("the agent seat text ties no plain word to the call that passes the work");
-    assert!(pass.starts_with("- Call `complete_step` when"), "{pass}");
     assert!(
-        agent.contains("- Call `get_task` for a value that your briefing does not give."),
+        agent.contains(
+            "- Call `complete_step` when your work is done, to send the report and pass the work."
+        ),
         "{agent}"
     );
-    for (ariadne, plain) in WORD_LIST {
-        if let Some(plain) = plain {
-            let plain = plain.trim_start_matches("the ").trim_start_matches("an ");
-            assert!(
-                ste::sentences(line).iter().any(|s| {
-                    let s = s.to_lowercase();
-                    s.contains(&plain.to_lowercase()) && s.contains(&ariadne.to_lowercase())
-                }),
-                "the binding line ties no sentence of {plain} to {ariadne}"
-            );
-        }
-    }
+    assert!(
+        agent.contains("- Call `get_task` for a missing value."),
+        "{agent}"
+    );
 }
 
 /// Every shipped skill reads the same in any harness (017 rule 16). The
@@ -623,23 +611,45 @@ fn says(document: &str, plain: &str) -> bool {
 }
 
 /// Whether `text` ties the plain word `plain` to a meaning: a sentence that
-/// says the word, then "is" or "are", as in "An update is news."
+/// says the word, then "is" or "are", as in "An update is news.", or a
+/// sentence that says the word and names the call it stands for, as in
+/// "Pass the work with `complete_step`."
 fn ties(text: &str, plain: &str) -> bool {
+    let names_a_call = |sentence: &str| {
+        sentence.split('`').skip(1).step_by(2).any(|span| {
+            span.contains('_') && span.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+        })
+    };
     ste::sentences(&ste::unwrapped_lines(text))
         .iter()
         .any(|sentence| {
-            let sentence = sentence.to_lowercase();
-            sentence.find(plain).is_some_and(|at| {
-                let rest = &sentence[at + plain.len()..];
-                rest.contains(" is ") || rest.contains(" are ")
+            let lowered = sentence.to_lowercase();
+            lowered.find(plain).is_some_and(|at| {
+                let rest = &lowered[at + plain.len()..];
+                rest.contains(" is ") || rest.contains(" are ") || names_a_call(sentence)
             })
         })
 }
 
+/// The shipped skill a seat loads on every session, named in code: the
+/// orchestrator's playbook, the review session's `pr-reviewer` (029) and the
+/// keeper's `pr-babysit` (032). Its supplement is in every prompt of the
+/// seat, so a tie there holds for each skill of the seat. A task agent loads
+/// only what it was staffed with.
+fn fixed_skill_of_seat(seat: ariadne_core::Seat) -> Option<&'static str> {
+    use ariadne_core::Seat;
+    match seat {
+        Seat::Orchestrator => Some(ORCHESTRATION_SKILL),
+        Seat::Reviewer => Some(PR_REVIEWER_SKILL),
+        Seat::Keeper => Some(PR_BABYSIT_SKILL),
+        Seat::Agent => None,
+    }
+}
+
 /// Each seat's own text ties every plain word that a skill of the seat says
-/// (006 rule 21). The seat text ties it, or the supplement of that skill in
-/// that seat. A word no text of the seat ties reaches the model with no
-/// Ariadne meaning.
+/// (006 rule 21). The seat text ties it, the supplement of the skill the
+/// seat always loads, or the supplement of that skill in that seat. A word
+/// no text of the seat ties reaches the model with no Ariadne meaning.
 #[test]
 fn each_seat_ties_every_plain_word_its_skills_use() {
     use ariadne_core::Seat;
@@ -647,10 +657,15 @@ fn each_seat_ties_every_plain_word_its_skills_use() {
         let seat_text = default_system_prompt(seat);
         for skill in skills_of_seat(seat) {
             let document = default_skill_document(skill).unwrap();
-            let text = format!(
-                "{seat_text}\n{}",
-                skill_supplement(skill, seat).unwrap_or_default()
-            );
+            let text = [Some(seat_text)]
+                .into_iter()
+                .chain(
+                    [fixed_skill_of_seat(seat), Some(skill)]
+                        .map(|skill| skill.and_then(|skill| skill_supplement(skill, seat))),
+                )
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("\n");
             for plain in PLAIN_WORDS
                 .into_iter()
                 .filter(|plain| says(document, plain))
@@ -668,6 +683,8 @@ fn each_seat_ties_every_plain_word_its_skills_use() {
     assert!(!says("Read the requests.", "requester"));
     assert!(ties("A rule.\nAn update is news.", "update"));
     assert!(!ties("Read each update. News is late.", "update"));
+    assert!(ties("Pass the work with `complete_step`.", "pass the work"));
+    assert!(!ties("An update opens with `- Review again:`.", "update"));
 }
 
 /// Every placeholder of the agent seat's `pr-babysit` supplement has a

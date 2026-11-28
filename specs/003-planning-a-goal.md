@@ -215,14 +215,13 @@ Out: the columns and their gates (030), the model catalog the sizing reads
     written yes, and run the plan to its end. Each Ariadne rule it held has
     one owner:
     - the orchestrator seat text keeps its three rules (rule 2, 006 rule 5),
-      asks the user before it agrees to a spec that an agent sends, and
+      asks the user before it agrees to a spec, and
       ties a stage to a column and your instructions to the briefing;
     - the orchestrator seat's `orchestration` supplement (006 rule 21)
       holds the call of each step, in the order of the steps: the hosts,
       the skills, the models, the staffing, `finalize_plan` and the end of
-      the turn after it, `get_task` before a post or a move, the posts, the
-      relay of each question an agent sends for the user and of the user's
-      answer, the failed tasks and `complete_goal`. It also holds the model rules of
+      the turn after it, `get_task` before a post, the posts, the relay of
+      each question an agent asks of the user and of the answer, the failed tasks and `complete_goal`. It also holds the model rules of
       rule 6: the ranks, `local`, and different ACP agents for the coding
       and review columns.
 

@@ -1,6 +1,6 @@
 With `pr-reviewer`:
 - Read the request with `get_pull_request`. Its `review_decision` is `approved` for an approved request. Its `checks` field gives the forge results. Its `failed_checks` field lists each failed check.
-- An update that opens with `- Review again:` gives the reason, the head and the last reviewed sha.
+- The requester is the user. An update is news. An update that opens with `- Review again:` gives the reason, the head and the last reviewed sha.
 - Read the diff with `get_diff`. Pass `since` for the last reviewed revision.
 - List the threads with `list_comments`. Read one with `get_comment`.
 - Answer a thread with `reply_comment`. Resolve it with `resolve_thread`.
