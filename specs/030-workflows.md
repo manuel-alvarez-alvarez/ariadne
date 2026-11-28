@@ -150,9 +150,13 @@ every other kebab-case word in it; the wire spells the same gate
    exists, one push at a time — a shell that returns before the hook ends
    is a push still running, waited for and never started again — then
    fast-forward the base branch in the primary checkout — the `Repo:` path
-   of the briefing — and call `complete_step` with the column report and
-   the full sha of the base branch, read with `git rev-parse`, as
-   `merge_commit`. The repository's hooks run the suite at that push, and
+   of the briefing, which the skill calls the primary checkout of the
+   repository — and pass the work with the report and the full sha of the
+   base branch, read with `git rev-parse`, as the merge commit. The skill
+   names no Ariadne word; the `agent` seat's `merge` supplement owns the
+   call: `complete_step` with that sha as `merge_commit`, and `fail_step`
+   with the check's output for a failed check on a file of the task
+   (`skill_tests/operate.rs::the_merge_supplement_holds_the_step_calls_the_skill_dropped`). The repository's hooks run the suite at that push, and
    the agent runs no check the push hook runs, except the checks
    `conflict-resolution` runs on a conflict in step 2; with no remote, the agent
    runs the checks the repository names for a landing. The squash goes
@@ -162,7 +166,7 @@ every other kebab-case word in it; the wire spells the same gate
    applying: a failed check — a hook that fails is one, never a moved base
    — that names a file of the task goes back to the previous column
    through `fail_step` with the check's output; a failed check that names
-   no file of the task goes to the orchestrator through `post_to_session`,
+   no file of the task goes to the requester, the orchestrator, through `post_to_session`,
    and nothing lands; else the base moved — a push rejected as not a
    fast-forward, a `git diff --stat` that lists a file the task did not
    touch, or a fast-forward that fails — and the agent starts again from
@@ -324,8 +328,9 @@ every other kebab-case word in it; the wire spells the same gate
    (016 rule 9). `goal_steps.ranks` is a non-null JSON array.
 10. The `pr` column of `develop-review-pr` stages `pr-babysit`. Its agent
     pushes the branch and opens the request through `open_pull_request`
-    once; a repeat returns the same URL, and a session that starts with
-    the request already open skips straight to reading its news. The
+    once, as the agent seat's `pr-babysit` supplement says; a repeat returns the
+    same URL, and a session that starts with the request already open skips
+    straight to reading its news. The
     request's news goes to that agent (026): its session is the request
     DTO's `session_id`, its tools accept that session, and an idle agent
     waits on the forge without a quiet nudge (009 rule 41) — the session
@@ -342,7 +347,7 @@ every other kebab-case word in it; the wire spells the same gate
     The first rejection of its outcome gets one answer with evidence.
     This can be a fix or one sentence on what the head does.
     This includes `Still there:` and a human's pushback.
-    The second rejection gets `escalate_comment` with a one-line reason, no reply and no further fix.
+    The second rejection goes to the user with a one-line reason, no reply and no further fix. The supplement of each seat names `escalate_comment` for it.
     It answers a comment of
     the other side on the conversation once (026 rule 16), and posts no
     status comment. It reports no readiness and marks no draft. A finding carrying a suggestion
@@ -635,6 +640,9 @@ every other kebab-case word in it; the wire spells the same gate
 
 - Conflict-only work precedes pending checks and permits resolution commits:
   `skill_tests/operate.rs::the_pr_babysit_skill_handles_conflicts_before_pending_checks`.
+- The skill names no Ariadne word, and each rule it gave up has its owner in the `pr-babysit` supplement of the agent seat and of the keeper seat:
+  `skill_tests/operate.rs::the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close`,
+  `defaults.rs::a_supplement_is_picked_by_its_skill_and_its_seat`.
 
 ## Sources
 

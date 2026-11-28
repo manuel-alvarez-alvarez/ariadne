@@ -247,6 +247,21 @@ Out: the daemon endpoints themselves (012).
     within and across the columns, and Enter picks. Escape closes the
     popover and not the form dialog around it. No screen shows an automatic
     or default model; `auto` is an effort choice only.
+    A form that offers a host list gives the picker a host column to the
+    left of the agent column; the form passes the list only while a named host
+    is listed. Each row has the host's colour dot (rule 82) and name. A host
+    the app cannot reach is a disabled row with its reason. A host pick fills
+    the agent and model columns with the models of that host and yields the
+    host with an empty model and effort. The search finds models only within
+    the selected host. The trigger shows the host dot and name before the
+    agent icon. With no host list, the picker has no host column and the
+    trigger shows no host. Tests in `ui/src/features/models/pin-picker-hosts.test.tsx`:
+    “shows a host column left of the agents, and the host on the trigger,
+    while hosts are listed”, “disables a host the app cannot reach and shows
+    its reason”, “fills the agent and model columns with the models of the
+    picked host, and yields the host”, “searches only the models of the
+    selected host”, “shows no host column and no host on the trigger without a
+    host list”.
 15. The client checks only the shape of a pin: one `:`, with text on both
     sides of it. Which agents exist is the daemon's answer, so the client
     refuses no agent id by name. Only the first `:` splits the pin; a later
@@ -1230,11 +1245,23 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     names its host by rule 74. A goal of a host whose tasks did not load, or
     have not loaded yet, says "Tasks are not loaded" and never "No tasks". The board also follows rule 80. A goal's panel
     opens on its host, with its tasks and orchestrator sessions read there. A
-    goal lives on one host. The goal dialog shows a host select once there is
-    more than one listed host. The select defaults to the picked host when the
-    app can reach it, else to `local`. It lists each listed host; a host the app
-    cannot reach is a disabled option with its reason. Its repositories, workflows and model pin picker read
-    that host, and a change of host reloads them. The pin picker takes a host.
+    goal lives on one host. The goal dialog has no host select: its model
+    picker (rule 14) has the host column while a named host is listed, and
+    stays the last field. The picker opens on the picked host when the app can
+    reach it, else on `local`. Its repositories, workflows and models read that
+    host. A host change in the picker clears the repositories and the workflow
+    and reloads them for the new host. The sync warning of a host that is not
+    in sync shows below the picker. Tests in
+    `ui/src/features/goals/create-goal-hosts.test.tsx`: “defaults the goal dialog to the
+    picked host, and reads that host only”, “reloads the lists of the new host
+    when the goal dialog's host changes”, “clears the
+    repositories and the workflow when the picker's host changes, and keeps the
+    picker last”, “clears the model and the effort when the goal dialog's host
+    changes”, “sends no effort for a model picked again after the goal dialog's host changes”, “warns in the goal dialog of a host whose sync is failed, and
+    still creates”, “opens the goal dialog on local under All”; and in
+    `ui/src/features/unreachable-hosts.test.tsx`: “opens the goal dialog on
+    local when the picked host cannot be reached”, “lists an unreachable host
+    in the goal dialog's model picker as a disabled row with its reason”.
 59. The attention strip, its count in the shell and in the window title, and its
     toasts read every reachable host for each host pick, and merge their items.
     Each row names its host whenever a named host is listed, under any pick;
@@ -2528,10 +2555,10 @@ view.
   `::clears the search on a pick and shows the columns on that agent and model`).
 - The picker offers no free-text model, and a saved pin that is not in the
   catalog still shows on the trigger as it is
-  (`ui/src/features/models/pin-picker.test.tsx::offers no free-text row, and keeps a saved pin the catalog does not carry on the trigger`).
+  (`ui/src/features/models/pin-picker-effort.test.tsx::offers no free-text row, and keeps a saved pin the catalog does not carry on the trigger`).
 - The picker works with the keyboard alone, and Escape closes the popover
   and not the form dialog around it
-  (`ui/src/features/models/pin-picker.test.tsx::picks with the keyboard alone: search, arrows, enter`,
+  (`ui/src/features/models/pin-picker-effort.test.tsx::picks with the keyboard alone: search, arrows, enter`,
   `::moves across the columns with the arrow keys`,
   `::closes on Escape, and leaves the form dialog open`).
 - Every form that pins a model picks it through this picker: the task form,
@@ -2560,11 +2587,11 @@ view.
   (`ui/src/features/sessions/sessions-list.test.tsx::keeps the effort beside a middle-cut model and gives the row a whole-pin hint`).
 - A listed model offers its own efforts, and an unlisted one takes free text
   (`ui/src/features/models/pin-picker.test.tsx::fills the effort column from the picked model, and an effort pick completes the choice`,
-  `::takes free text for a model of a known agent the catalog does not list`,
+  `ui/src/features/models/pin-picker-effort.test.tsx::takes free text for a model of a known agent the catalog does not list`,
   `::takes free text for a model nothing has discovered`).
 - An effort the new model does not take is cleared, one it takes travels,
   and a model with no efforts says so
-  (`ui/src/features/models/pin-picker.test.tsx::drops an effort the model moved to does not take`,
+  (`ui/src/features/models/pin-picker-effort.test.tsx::drops an effort the model moved to does not take`,
   `::keeps an effort the model moved to takes as well`,
   `::drops the effort of a model that takes none, and says so`,
   `::requires a model before it offers effort choices`).
@@ -3055,9 +3082,9 @@ view.
   (`ui/src/features/goals/hosts.test.tsx::merges the goals of every host under All, each goal naming its host`,
   `::reads only the picked host, and names no host on its goals`,
   `::opens a goal's panel on the host its link names`,
-  `::defaults the goal dialog to the picked host, and reloads its lists when the host changes`,
-  `::opens the goal dialog on local under All`,
-  `::shows a question a remote host's stream delivers, and answers it on that host`).
+  `::shows a question a remote host's stream delivers, and answers it on that host`,
+  `ui/src/features/goals/create-goal-hosts.test.tsx::defaults the goal dialog to the picked host, and reads that host only`,
+  `::opens the goal dialog on local under All`).
 
 - Catalog screens show a sync line per host, with skipped permissions on the
   Learned tab (`ui/src/features/permissions/permissions-hosts.test.tsx::shows a sync line per host: in sync, pending, or failed with its error`,
@@ -3111,7 +3138,7 @@ view.
   `/v1/hosts/{host}/` (`ui/dashboard/src/datasource-api.test.ts::points both datasources at the named host, or at all of them`,
   `ui/dashboard/src/page-params.test.ts::reads the daemon, the dashboard and the theme off the query string`).
 - The goal dialog follows rule 79
-  (`ui/src/features/goals/hosts.test.tsx::clears the model and the effort when the goal dialog's host changes`,
+  (`ui/src/features/goals/create-goal-hosts.test.tsx::clears the model and the effort when the goal dialog's host changes`,
   `::warns in the goal dialog of a host whose sync is failed, and still creates`,
   `::warns in the goal dialog of a host whose sync is pending, and still creates`,
   `::names the host in the toast of a goal created on a named host, and offers all hosts when the pick leaves it out`).

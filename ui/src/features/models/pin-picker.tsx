@@ -2,6 +2,13 @@
  * What an agent runs on, as one control: the model, and the effort that model
  * is run at.
  *
+ * Where a form offers more than one host, the popover has a fourth column to
+ * the left of the agents: the host the model runs on. A host the app cannot
+ * reach is listed disabled, with its reason. A host pick yields the host with
+ * an empty model and effort, and the caller hands back that host's catalog as
+ * `models`; the search then finds models of that host only. With no host list
+ * there is no column and no host on the trigger.
+ *
  * The trigger reads like a sentence — the agent's icon, the model, the effort
  * — and everything that changes it lives in one popover of three columns, in
  * the order the choice is made: the coding agent, then one model of it, then
@@ -48,6 +55,7 @@ import {
 } from "react"
 
 import type { EffortDto, Host, ModelDto } from "@/api"
+import { HostDot } from "@/components/host-dot"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -61,10 +69,19 @@ import { parseModelRef } from "./model-ref"
 
 /** The whole choice, which is what the forms hold and what a pick yields. */
 interface Pin {
+  /** The host the model runs on: the picker's own `host` unless a host was picked. */
+  host: Host
   /** `<agent>:<model>`. */
   model: string
   /** One of that model's efforts, or the empty string for the agent's own. */
   effort: string
+}
+
+/** One host the picker offers, and why it cannot be picked when it cannot. */
+interface HostChoice {
+  host: Host
+  /** Set when the host cannot be picked: shown on its row, which is disabled. */
+  reason?: string | null
 }
 
 /** What an unpinned effort is called, in the column and on the trigger. */
@@ -72,6 +89,7 @@ const AUTO_EFFORT_LABEL = "auto"
 
 export function PinPicker({
   host,
+  hosts,
   model,
   effort,
   onChange,
@@ -86,6 +104,11 @@ export function PinPicker({
    * the agents' icons are its `GET /v1/acp-agents`.
    */
   host: Host
+  /**
+   * The hosts to pick from. Without it the picker has no host column and
+   * shows no host.
+   */
+  hosts?: HostChoice[]
   /** The chosen model, or the empty string until one is chosen. */
   model: string
   /** The pinned effort, or the empty string for the agent's own. */
@@ -105,10 +128,13 @@ export function PinPicker({
   /** The agent the user browsed to, or empty for the pinned one. */
   const [browsed, setBrowsed] = useState("")
   /** The column a pick hands the keyboard to, once it has rendered. */
-  const [focusRequest, setFocusRequest] = useState<{ column: "models" | "efforts" } | null>(null)
+  const [focusRequest, setFocusRequest] = useState<{
+    column: "agents" | "models" | "efforts"
+  } | null>(null)
   const showDisabled = useSettingsStore((state) => state.showDisabledModels)
   const setShowDisabled = useSettingsStore((state) => state.setShowDisabledModels)
   const searchRef = useRef<HTMLInputElement>(null)
+  const hostsRef = useRef<HTMLDivElement>(null)
   const agentsRef = useRef<HTMLDivElement>(null)
   const modelsRef = useRef<HTMLDivElement>(null)
   const effortsRef = useRef<HTMLDivElement>(null)
@@ -160,8 +186,8 @@ export function PinPicker({
       pinChoices.kind === "none" ||
       (pinChoices.kind === "options" && !pinChoices.efforts.some((one) => one.id === effort))
     )
-      onChange({ model, effort: "" })
-  }, [pinChoices, effort, model, onChange])
+      onChange({ host, model, effort: "" })
+  }, [pinChoices, effort, host, model, onChange])
 
   // Escape answers the open popover and stops there: this picker is always
   // inside a form dialog, and that dialog closing with it would throw away
@@ -187,9 +213,22 @@ export function PinPicker({
   // takes no effort — leaves it on the model just picked.
   useEffect(() => {
     if (!focusRequest) return
-    const order = focusRequest.column === "efforts" ? [effortsRef, modelsRef] : [modelsRef]
+    const order =
+      focusRequest.column === "efforts"
+        ? [effortsRef, modelsRef]
+        : focusRequest.column === "agents"
+          ? [agentsRef]
+          : [modelsRef]
     for (const ref of order) if (focusColumn(ref)) return
   }, [focusRequest])
+
+  function pickHost(next: Host) {
+    setSearch("")
+    setBrowsed("")
+    // The model and the effort were the old host's own.
+    if (next !== host) onChange({ host: next, model: "", effort: "" })
+    setFocusRequest({ column: "agents" })
+  }
 
   function pickAgent(next: string) {
     setBrowsed(next)
@@ -205,12 +244,12 @@ export function PinPicker({
     setSearch("")
     setBrowsed(entry.agent_id)
     if (!entry.enabled) setShowDisabled(true)
-    onChange({ model: entry.id, effort: travels ? effort : "" })
+    onChange({ host, model: entry.id, effort: travels ? effort : "" })
     setFocusRequest({ column: "efforts" })
   }
 
   function pickEffort(next: string) {
-    onChange({ model: pinned, effort: next })
+    onChange({ host, model: pinned, effort: next })
     setOpen(false)
   }
 
@@ -262,6 +301,26 @@ export function PinPicker({
     }
   }
 
+  const hostRows: OptionRow[] = (hosts ?? []).map((choice) => ({
+    key: choice.host,
+    selected: choice.host === host,
+    disabled: Boolean(choice.reason),
+    onPick: () => pickHost(choice.host),
+    content: (
+      <>
+        <HostDot host={choice.host} className="mt-1" />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span data-slot="option-label" className="truncate">
+            {choice.host}
+          </span>
+          {choice.reason ? (
+            <span className="text-xs leading-snug text-muted-foreground">{choice.reason}</span>
+          ) : null}
+        </span>
+      </>
+    ),
+  }))
+
   const agentRows: OptionRow[] = agents.map((one) => ({
     key: one,
     selected: one === agent,
@@ -303,7 +362,7 @@ export function PinPicker({
         }
       >
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          <TriggerLabel model={pinned} effort={effort} icons={icons} />
+          <TriggerLabel host={hosts ? host : null} model={pinned} effort={effort} icons={icons} />
         </span>
         <ChevronsUpDownIcon className="shrink-0 opacity-50" />
       </Popover.Trigger>
@@ -312,7 +371,10 @@ export function PinPicker({
           <Popover.Popup
             initialFocus={searchRef}
             aria-label={label}
-            className="flex w-[44rem] max-w-[calc(100vw-2rem)] flex-col rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
+            className={cn(
+              "flex max-w-[calc(100vw-2rem)] flex-col rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+              hostRows.length > 0 ? "w-[53rem]" : "w-[44rem]",
+            )}
           >
             <div className="flex items-center gap-3 border-b p-2">
               <Input
@@ -332,7 +394,19 @@ export function PinPicker({
                 Show disabled
               </label>
             </div>
-            <div className="grid grid-cols-[11rem_minmax(0,1fr)_11rem] divide-x">
+            <div
+              className={cn(
+                "grid divide-x",
+                hostRows.length > 0
+                  ? "grid-cols-[9rem_11rem_minmax(0,1fr)_11rem]"
+                  : "grid-cols-[11rem_minmax(0,1fr)_11rem]",
+              )}
+            >
+              {hostRows.length > 0 ? (
+                <Column heading="Host" columnRef={hostsRef}>
+                  <OptionList label="Hosts" rows={hostRows} onRight />
+                </Column>
+              ) : null}
               {query.length > 0 ? (
                 <Column
                   heading="Model"
@@ -359,7 +433,12 @@ export function PinPicker({
                           : "Loading the catalog…"
                     }
                   >
-                    <OptionList label="Agents" rows={agentRows} onRight />
+                    <OptionList
+                      label="Agents"
+                      rows={agentRows}
+                      onLeft={hostRows.length > 0 ? () => focusColumn(hostsRef) : undefined}
+                      onRight
+                    />
                   </Column>
                   <Column
                     heading="Model"
@@ -386,7 +465,7 @@ export function PinPicker({
                   choices={choices}
                   value={effort}
                   onPick={pickEffort}
-                  onType={(next) => onChange({ model: pinned, effort: next })}
+                  onType={(next) => onChange({ host, model: pinned, effort: next })}
                   onDone={() => setOpen(false)}
                   onLeft={() => focusColumn(modelsRef)}
                 />
@@ -407,21 +486,46 @@ export function PinPicker({
  * survives the truncation of a narrow row.
  */
 function TriggerLabel({
+  host,
   model,
   effort,
   icons,
 }: {
+  /** The host to name before the model, or null where the picker offers none. */
+  host: Host | null
   model: string
   effort: string
   icons: Map<string, string | null | undefined>
 }) {
-  if (model.length === 0) return <span className="text-muted-foreground">Choose a model</span>
+  const where =
+    host === null ? null : (
+      <>
+        <HostDot host={host} />
+        <span className="shrink-0">{host}</span>
+      </>
+    )
+  if (model.length === 0) {
+    return (
+      <>
+        {where}
+        <span className="text-muted-foreground">Choose a model</span>
+      </>
+    )
+  }
   const ref = parseModelRef(model)
   // Text the daemon will judge: shown as typed, since nothing here can split
   // an id it does not recognise.
-  if (!ref) return <span className="truncate font-mono">{model}</span>
+  if (!ref) {
+    return (
+      <>
+        {where}
+        <span className="truncate font-mono">{model}</span>
+      </>
+    )
+  }
   return (
     <>
+      {where}
       <AgentIcon agentId={ref.agent} icon={icons.get(ref.agent)} />
       <span className="truncate">
         <span className="font-mono">{ref.model}</span>
@@ -483,6 +587,8 @@ interface OptionRow {
   selected: boolean
   /** A turned-off model: listed, and muted. */
   muted?: boolean
+  /** A row that cannot be picked: shown, and skipped by a pick. */
+  disabled?: boolean
   onPick: () => void
   content: ReactNode
 }
@@ -534,11 +640,11 @@ function OptionList({
         break
       case "Enter":
       case " ":
-        rows[index]?.onPick()
+        if (!rows[index]?.disabled) rows[index]?.onPick()
         break
       case "ArrowRight":
         if (!onRight) return
-        rows[index]?.onPick()
+        if (!rows[index]?.disabled) rows[index]?.onPick()
         break
       case "ArrowLeft":
         if (!onLeft) return
@@ -557,12 +663,14 @@ function OptionList({
           key={row.key}
           role="option"
           aria-selected={row.selected}
+          aria-disabled={row.disabled ? true : undefined}
           tabIndex={index === active ? 0 : -1}
-          onClick={row.onPick}
+          onClick={row.disabled ? undefined : row.onPick}
           onKeyDown={(event) => onKeyDown(event, index)}
           className={cn(
             "group flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 aria-selected:bg-accent aria-selected:text-accent-foreground",
-            row.muted && "text-muted-foreground",
+            (row.muted || row.disabled) && "text-muted-foreground",
+            row.disabled && "cursor-not-allowed",
           )}
         >
           {row.content}

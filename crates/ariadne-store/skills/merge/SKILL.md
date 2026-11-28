@@ -51,8 +51,8 @@ Use `pr-babysit` when the task lands through a request.
    fast-forward `<base>` in the primary checkout to the task branch.
 
    Done when the base holds the task.
-7. Read the full sha with `git -C <repo> rev-parse <base>`. Call
-   `complete_step` with the column report and that sha as `merge_commit`.
+7. Read the full sha with `git -C <repo> rev-parse <base>`. Pass
+   the work, with the report and that sha as the merge commit.
 
    Done when the report has been submitted.
 
@@ -60,7 +60,7 @@ Use `pr-babysit` when the task lands through a request.
 
 ### Names
 
-The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
+`<repo>` is the primary checkout of the repository. `<upstream>` is
 `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.
 
 ### Where a failure goes
@@ -68,10 +68,10 @@ The primary checkout is the `Repo:` path of your briefing. `<upstream>` is
 A hook that fails is a failed check, not a moved base. Take the first rule
 that fits.
 
-- A failed check that names a file of the task. Call `fail_step` with the
-  check's output.
-- A failed check that names no file of the task. Post it to the
-  orchestrator with `post_to_session`. Land nothing.
+- A failed check that names a file of the task. Return the work, with the
+  check's output as the return report.
+- A failed check that names no file of the task. Send it to the
+  requester. Land nothing.
 - Else the base moved: a non-fast-forward rejection, an extra file in
   `git diff --stat`, or a failed fast-forward. Start again from step 1.
 
@@ -90,7 +90,7 @@ the checks that `conflict-resolution` runs in step 2.
   Squash onto the merge base.
 - "The shell returned, so the push failed." -> The hook still runs. Wait for
   it; a second push fights the first.
-- "The check failed, so I fix it here." -> The previous column owns the fix.
-  Return the task.
+- "The check failed, so I fix it here." -> The previous stage owns the fix.
+  Return the work.
 - "I run the suite first, to be safe." -> The hook runs it once. A second run
   doubles the machine time.

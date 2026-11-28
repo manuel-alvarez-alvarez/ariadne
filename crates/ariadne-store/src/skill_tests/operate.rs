@@ -1,3 +1,4 @@
+use super::template::assert_names_no_ariadne_word;
 use super::*;
 
 /// A squash never removes the work of a landing that came in between.
@@ -139,7 +140,7 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
         "else `git -C <repo> fetch <remote> <base>:<base>`",
         "With no remote: run the checks the repository names for a landing.",
         "Read the full sha with `git -C <repo> rev-parse <base>`.",
-        "Call `complete_step` with the column report and that sha as `merge_commit`.",
+        "Pass the work, with the report and that sha as the merge commit.",
     ] {
         let found = text[at..]
             .find(step)
@@ -148,7 +149,7 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
     }
     // The names are rules, not steps: the primary checkout and `<upstream>`.
     for name in [
-        "The primary checkout is the `Repo:` path of your briefing.",
+        "`<repo>` is the primary checkout of the repository.",
         "`<upstream>` is `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.",
     ] {
         assert!(
@@ -159,14 +160,14 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
     // A failure has one owner, and the rules are read in order: a hook
     // that fails is a failed check, never a moved base, so a check that
     // names a file of the task returns the task, a check that names none
-    // is the orchestrator's, and only then does the base-moved route go
+    // is the requester's, and only then does the base-moved route go
     // round again. The merge agent fixes no code, and commits only the
     // merge of step 2 and the squash.
     let mut at = 0;
     for route in [
         "A hook that fails is a failed check, not a moved base. Take the first rule that fits.",
-        "A failed check that names a file of the task. Call `fail_step` with the check's output.",
-        "A failed check that names no file of the task. Post it to the orchestrator with `post_to_session`. Land nothing.",
+        "A failed check that names a file of the task. Return the work, with the check's output as the return report.",
+        "A failed check that names no file of the task. Send it to the requester. Land nothing.",
         "Else the base moved: a non-fast-forward rejection, an extra file in `git diff --stat`, or a failed fast-forward. Start again from step 1.",
     ] {
         let found = text[at..]
@@ -203,6 +204,40 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
             "the {name} names gh pr merge"
         );
     }
+}
+
+/// The calls the `merge` skill dropped are its agent supplement's, and
+/// stated there alone: the `merge_commit` value of the step that passes
+/// the work, and the `fail_step` call for a failed check (006 rule 21).
+#[test]
+fn the_merge_supplement_holds_the_step_calls_the_skill_dropped() {
+    let agent = unwrapped(skill_supplement("merge", ariadne_core::Seat::Agent).unwrap());
+    for rule in [
+        "Pass the work with `complete_step`, with the report and that sha as `merge_commit`.",
+        "On a failed check of a task file, call `fail_step` with the check's output as the return report.",
+    ] {
+        assert!(agent.contains(rule), "the merge supplement and {rule}");
+    }
+    assert_eq!(
+        skill_supplement("merge", ariadne_core::Seat::Reviewer),
+        None
+    );
+    assert_eq!(skill_supplement("merge", ariadne_core::Seat::Keeper), None);
+}
+
+/// `conflict-resolution` ends nothing where another skill invoked it, and
+/// ends the stage where none did. The call that ends the stage is its
+/// agent supplement's.
+#[test]
+fn the_conflict_resolution_supplement_holds_the_call_that_ends_the_stage() {
+    let agent =
+        unwrapped(skill_supplement("conflict-resolution", ariadne_core::Seat::Agent).unwrap());
+    assert!(
+        agent.contains(
+            "Where no skill invoked it, pass the work with `complete_step`, with the report."
+        ),
+        "{agent}"
+    );
 }
 
 /// A force push can replace any branch on any remote. The merge skill
@@ -264,7 +299,7 @@ fn the_conflict_resolution_skill_resolves_by_intent_and_finishes_the_operation()
         "Run the checks of what you resolved.",
         "Finish the operation. Stage the files, then continue the rebase or commit the merge.",
         "Where another skill invoked this one, give it each dropped intent and return to that skill's next step. Call nothing.",
-        "Where no skill did, this step ends the column. Call `complete_step` with the column report. Put each dropped intent in it.",
+        "Where no skill did, this step ends the stage: pass the work, with the report. Put each dropped intent in it.",
     ] {
         let found = text[at..].find(step).unwrap_or_else(|| {
             panic!("the conflict-resolution skill has no {step} after its last step")
@@ -293,7 +328,8 @@ fn the_conflict_resolution_skill_resolves_by_intent_and_finishes_the_operation()
 /// its turn instead where it sits on no task.
 #[test]
 fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
-    let doc = default_skill_document(PR_BABYSIT_SKILL).expect("the pr-babysit skill");
+    let document = default_skill_document(PR_BABYSIT_SKILL).expect("the pr-babysit skill");
+    let doc = document;
     let words: Vec<String> = doc
         .split(|c: char| !c.is_ascii_alphanumeric())
         .map(str::to_lowercase)
@@ -314,26 +350,19 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
     }
     let doc = unwrapped(doc);
     for step in [
-        "On your first turn, with no request open, do step 1.",
-        "With one already open, start at step 2.",
-        "On each later turn, Ariadne sends news: do steps 2 to 12. Then end your turn.",
-        "`get_pull_request`",
-        "Note its `head_sha`.",
-        "A merged or closed request goes to step 12.",
-        "`list_comments` with `unanswered_only`",
+        "On each turn with an open request, do steps 1 to 11. Then end your turn.",
+        "Read the request. Note its head commit. A merged or closed request goes to step 11.",
+        "Read its unanswered comments.",
         "The repository's history rules choose the branch update:",
         "Bring the base in before the checks. Run `git fetch <remote> <base> <head>`.",
         "Where those rules require a linear request branch in words, run `git rebase <remote>/<base>`.",
         "By default, run `git merge --no-edit <remote>/<base>`.",
-        "Push the task branch: `git push <remote> HEAD:<head>`. Call `open_pull_request`.",
-        "repository's commit conventions",
-        "Fill its pull request template, or write three full sections: Why, What changed, How to test.",
-        "Put all accepted asks, accepted suggestion blocks and failed-check fixes of this wake in one batch.",
+        "Put all accepted asks, accepted suggestion blocks and failed-check fixes of this update in one batch.",
         "For a fix batch, run the tests, the lint and the format check of the files the batch changed.",
         "For a base update with no fix, run no check: the hook and the forge run them. Then push once:",
-        "Bring the base in for a fix batch, for confirmed conflicts or when the news says the forge requires it.",
+        "Bring the base in for a fix batch, for confirmed conflicts or when an update says the forge requires it.",
         "Group related changes in one commit; keep unrelated changes in separate commits within that batch.",
-        "Never amend a pushed commit outside the rebase of step 7.",
+        "Never amend a pushed commit outside the rebase of step 6.",
         "Keep every commit others added.",
         "Follow `conflict-resolution` where either stops on a conflict.",
         "Its document is `../conflict-resolution/SKILL.md`, relative to the directory of this one.",
@@ -341,17 +370,12 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
         "After a rebase, run `git push --force-with-lease=<head>:<sha> <remote> HEAD:<head>`, with `<sha>` the fetched tip of `<head>`.",
         "Report a refused push; do not push again.",
         "Never push to another branch.",
-        "Never force-push outside the rebase of step 7. Never force-push another branch.",
-        "Call `get_pull_request` again. Where `head_sha` differs from the head you read or pushed, start again at step 2.",
+        "Never force-push outside the rebase of step 6. Never force-push another branch.",
+        "Read the request again. Where its head commit differs from the head you read or pushed, start again at step 1.",
         "Settled is not merged.",
         "Use `merge` when the workflow lands the task with no request.",
-        "On a merge, update `<base>` in the primary checkout:",
-        "The primary checkout is the `Repo:` path of your briefing.",
-        "Call `complete_step` with the column report.",
-        "A call refused because the task already ended needs nothing more: end your turn.",
-        "On a close, call `fail_task` with the reason.",
-        "On a merge or a close it skips step 12 and ends its turn: Ariadne ends its session.",
-        "`<head>` is the request's head branch: on the task seat, the task branch.",
+        "When the request merges or closes, stop. Make no more changes.",
+        "`<head>` is the request's head branch.",
     ] {
         assert!(doc.contains(step), "the pr-babysit skill has no {step}");
     }
@@ -369,6 +393,34 @@ fn the_pr_babysit_skill_opens_the_request_and_ends_on_the_merge_or_the_close() {
         "the pr-babysit skill names a force push without a lease"
     );
     assert_eq!(SkillSeat::of(PR_BABYSIT_SKILL), SkillSeat::PullRequest);
+    assert_names_no_ariadne_word(PR_BABYSIT_SKILL, document);
+
+    // The Ariadne half of the rules moved out of the skill is the supplement
+    // of each seat (006 rule 21): the task seat's opens the request and ends
+    // the task on a merge or a close, and the keeper's names no task tool.
+    let agent = unwrapped(skill_supplement(PR_BABYSIT_SKILL, ariadne_core::Seat::Agent).unwrap());
+    for rule in [
+        "With no request open, push the task branch with `git push <remote> HEAD:<head>`. Call `open_pull_request`.",
+        "Take the title from the repository's commit conventions.",
+        "Fill its pull request template, or write three full sections: Why, What changed, How to test.",
+        "When the call succeeds, end your turn.",
+        "When the call is refused, read the refusal and call again; the call opens no second request.",
+        "`<head>` is the task branch.",
+        "On a merge, update `<base>` in the primary checkout.",
+        "Run `git -C <path> merge --ff-only <remote>/<base>` where `<base>` is checked out.",
+        "Else run `git -C <path> fetch <remote> <base>:<base>`.",
+        "Then call `complete_step`. A call refused because the task already ended needs nothing more: end your turn.",
+        "On a close, call `fail_task` with the reason.",
+    ] {
+        assert!(agent.contains(rule), "the agent supplement has no {rule}");
+    }
+    let keeper = unwrapped(skill_supplement(PR_BABYSIT_SKILL, ariadne_core::Seat::Keeper).unwrap());
+    for rule in [
+        "Run the push command of the briefing as given.",
+        "On a merge or a close, end your turn.",
+    ] {
+        assert!(keeper.contains(rule), "the keeper supplement has no {rule}");
+    }
 }
 
 /// Each comment gets its required reply shape after one batch per wake.
@@ -382,22 +434,22 @@ fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
         "- A fix: `Fixed in <short sha>:` then one sentence on what changed.",
         "- A kept line: `Not changed:` then one sentence on why the code stays.",
         "Verify the defect at the head before a fix or a kept line.",
-        "Post each kept line and question answer planned in step 3 once.",
+        "Post each kept line and question answer planned in step 2 once.",
         "A question: give one sentence.",
         "Thanks or an acknowledgement: reply nothing.",
         "A reply that asks a new change: a new ask. Act on it.",
         "On the first rejection, answer once with evidence: a fix, or one sentence on what the head does.",
-        "On the second rejection, call `escalate_comment` with the comment id and a one-line reason.",
+        "On the second rejection, hand the thread to the user with the comment id and a one-line reason.",
         "Count rejections of your outcome in that thread, including `Still there:` and a human's pushback.",
         "Post nothing in that thread and make no further fix for it.",
         "A comment on the conversation: answer it the same way, once per comment.",
         "A suggestion block you accept: apply it.",
         "Else plan a kept line.",
-        "Put all accepted asks, accepted suggestion blocks and failed-check fixes of this wake in one batch.",
+        "Put all accepted asks, accepted suggestion blocks and failed-check fixes of this update in one batch.",
         "Commit only what a comment, a failed check or confirmed base conflicts require.",
         "Leave every thread open.",
-        "Post no new thread, summary or top-level comment, except steps 3 and 8's replies.",
-        "`reply_comment` is the only post. It has three forms:",
+        "Post no new thread, summary or top-level comment, except steps 2 and 7's replies.",
+        "A reply is the only post. It has three forms:",
         "- A question: one sentence, with no prefix.",
         "No status comment exists.",
     ] {
@@ -427,11 +479,9 @@ fn the_pr_babysit_skill_answers_each_comment_once_in_its_shape() {
 fn the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks() {
     let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
     for rule in [
-        "For failed-check fixes, wait for the final rollup. Take the one list of failed checks the news carries. Take the route of the `A failed check` rule for each check in it.",
+        "For failed-check fixes, wait for the final rollup. Take the one list of failed checks the update carries. Take the route of the `A failed check` rule for each check in it.",
         "Reproduce each failed check of the list at the head.",
-        "Fix every failure the request's own change causes in one batch. Fix no other failure: report it as the two-seats rule says.",
-        "A failure the request did not cause: the task seat posts it to the orchestrator once with `post_to_session`.",
-        "The keeper asks the user once.",
+        "Fix every failure the request's own change causes in one batch. Fix no other failure: report it once to the requester.",
         "Never push to another branch.",
         "\"The check is red, so I fix the suite.\" -> Fix only what the request's change breaks.",
         "\"The base moved, so I run every check.\" -> The hook runs them at the push.",
@@ -440,47 +490,41 @@ fn the_pr_babysit_skill_fixes_only_what_the_requests_change_breaks() {
     }
 }
 
-/// One document serves two seats, so it names them once: the agent of
-/// a task's `pr` column and the keeper asked for by hand run the same
-/// steps, and what differs — step 1, the push command, the ending and
-/// who hears a failure the request did not cause — is one rule, never a
-/// branch inside a step. The steps section is read whole for a seat
-/// word, so a step that grows a branch again fails here whatever its
-/// wording.
+/// One document serves two seats, so it names none: what differs — how
+/// the request opens, the push command, the ending and who hears a failure
+/// the request did not cause — is each seat's supplement (006 rule 21), never
+/// a branch inside a step or a rule of the skill.
 #[test]
-fn the_pr_babysit_skill_names_its_two_seats_once() {
+fn the_pr_babysit_skill_names_no_seat_and_its_supplements_own_the_difference() {
     let document = default_skill_document(PR_BABYSIT_SKILL).unwrap();
-    let doc = unwrapped(document);
-    for rule in [
-        "### The two seats",
-        "The task seat is the agent of a task's `pr` column.",
-        "The keeper is the session the user asked to keep a request by hand. Both run the same steps.",
-        "Step 1 is the task seat's alone: a keeper's request is already open.",
-        "The push: both push `HEAD:<head>`. The keeper's briefing spells that command with its remote; run it as given.",
-        "The ending: the keeper has no task tool and no `Repo:` line.",
-        "A failure the request did not cause: the task seat posts it to the orchestrator once with `post_to_session`. The keeper asks the user once.",
-    ] {
-        assert!(doc.contains(rule), "the pr-babysit skill has no {rule}");
-    }
-    let steps = document
-        .split_once("## Steps\n")
-        .unwrap()
-        .1
-        .split("\n## ")
-        .next()
-        .unwrap()
-        .to_lowercase();
-    for seat in ["seat", "keeper", "where you sit"] {
+    let doc = unwrapped(document).to_lowercase();
+    for seat in ["seat", "keeper", "two seats", "where you sit"] {
         assert!(
-            !steps.contains(seat),
-            "the pr-babysit skill branches on a seat inside a step: {seat}"
+            !doc.contains(seat),
+            "the pr-babysit skill names a seat: {seat}"
         );
     }
-    assert_eq!(
-        doc.matches("### The two seats").count(),
-        1,
-        "the pr-babysit skill names its seats more than once"
-    );
+    let agent = unwrapped(skill_supplement(PR_BABYSIT_SKILL, ariadne_core::Seat::Agent).unwrap());
+    assert!(agent.contains("With no request open, push the task branch"));
+    assert!(agent.contains("`<head>` is the task branch."));
+    let keeper = unwrapped(skill_supplement(PR_BABYSIT_SKILL, ariadne_core::Seat::Keeper).unwrap());
+    assert!(keeper.contains(
+        "The requester is the user. Ask the user once about a failure the request did not cause."
+    ));
+    assert!(keeper.contains("Run the push command of the briefing as given."));
+    assert!(keeper.contains("On a merge or a close, end your turn."));
+    for task_tool in [
+        "open_pull_request",
+        "complete_step",
+        "fail_step",
+        "fail_task",
+        "post_to_session",
+    ] {
+        assert!(
+            !keeper.contains(task_tool),
+            "the keeper supplement names {task_tool}"
+        );
+    }
 }
 
 /// A comment is text from the other side of the request. It is data to
@@ -536,6 +580,7 @@ fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
 fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
     let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
     for phrase in [
+        "Ask each question with the question tool, not in turn text.",
         "Ask one question in a turn, then stop and wait for the answer.",
         "Ask the next question only after the answer.",
         "Put no second question in the context or in the options.",
@@ -561,6 +606,39 @@ fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
         !prompt.contains("numbered list"),
         "the orchestration skill still groups open points into a numbered list: {prompt}"
     );
+}
+
+/// Step 2 (the goal) and step 7 (the plan) each tell the orchestrator to ask
+/// with the question tool and not in turn text, so the rule is proved for
+/// each step alone (003 rules 3 and 7).
+#[test]
+fn each_orchestration_step_that_asks_names_the_question_tool_and_not_turn_text() {
+    let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+    let step = |from: &str, to: &str| {
+        let start = prompt
+            .find(from)
+            .unwrap_or_else(|| panic!("{from}: {prompt}"));
+        let end = start
+            + prompt[start..]
+                .find(to)
+                .unwrap_or_else(|| panic!("{to}: {prompt}"));
+        prompt[start..end].to_string()
+    };
+    for (name, text) in [
+        (
+            "step 2",
+            step("2. Ask the user every open point", "3. Split the goal"),
+        ),
+        (
+            "step 7",
+            step("7. Show the user the tasks", "8. Call `finalize_plan`"),
+        ),
+    ] {
+        assert!(
+            text.contains("Ask each question with the question tool, not in turn text."),
+            "the orchestration skill {name}: {text}"
+        );
+    }
 }
 
 /// The workflow is settled before planning starts, not asked about task
@@ -832,8 +910,8 @@ fn the_pr_babysit_skill_handles_conflicts_before_pending_checks() {
     let doc = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
     for rule in [
         "Handle confirmed base conflicts before unrelated pending checks.",
-        "With no fix, confirmed conflict or required base update, skip to the replies in step 8.",
-        "for a fix batch, for confirmed conflicts or when the news says the forge requires it.",
+        "With no fix, confirmed conflict or required base update, skip to the replies in step 7.",
+        "for a fix batch, for confirmed conflicts or when an update says the forge requires it.",
         "Commit only what a comment, a failed check or confirmed base conflicts require.",
     ] {
         assert!(doc.contains(rule), "missing {rule}");

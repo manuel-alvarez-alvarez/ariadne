@@ -16,6 +16,7 @@ tests:
   - ui/src/features/agents/agents-page.test.tsx
   - ui/src/features/models/model-ref.test.ts
   - ui/src/features/models/pin-picker.test.tsx
+  - ui/src/features/models/pin-picker-effort.test.tsx
 ---
 
 # Models, effort and pins
@@ -241,7 +242,7 @@ orchestrator decides (003).
   matching model in a search whatever the switch says
   (`::replaces the agent and model columns with one list of every matching model, on and off`),
   and takes a free-text effort for a model the catalog does not list
-  (`::takes free text for a model of a known agent the catalog does not list`);
+  (`pin-picker-effort.test.tsx::takes free text for a model of a known agent the catalog does not list`);
   and the pin's shape is checked on the field
   (`model-ref.test.ts::refuses one half on its own by showing where the other goes`).
 
