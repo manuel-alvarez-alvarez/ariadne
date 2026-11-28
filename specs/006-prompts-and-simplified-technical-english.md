@@ -140,9 +140,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      poll;
    - the column report a column ends on, and the return report a column is
      sent back with: the `complete_step` and `fail_step` descriptions
-     alone (013 rule 4). No skill restates a field of either; `coding` names its own report
-     only as "the report", and `merge` and `pr-babysit` as "the
-     column report";
+     alone (013 rule 4). No skill restates a field of either; `coding` and
+     `merge` name their own report only as "the report", and `pr-babysit` as
+     "the column report";
    - stopping a fix loop: the agent seat text alone, which stops an agent
      after three failed attempts at one fix;
    - what a plain word of a shipped skill stands for in Ariadne — the
@@ -160,7 +160,13 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    - that a review session posts each `code-review` finding as
      `pr-reviewer` says, and that `pr-reviewer` ends the round: the
      `reviewer` seat's `code-review` supplement alone, which names no step
-     call.
+     call;
+   - the `merge_commit` value of the call that passes the work, and the
+     `fail_step` call for a failed check, for `merge`: the `agent` seat's
+     `merge` supplement alone;
+   - the call that ends the stage where no skill invoked
+     `conflict-resolution`: the `agent` seat's `conflict-resolution`
+     supplement alone.
 6. `coding` uses test-first development for a code behavior change: it runs
    the new seam test failing before implementation. Prose changes and
    behavior-preserving refactors use verification that fits their risk.
@@ -358,14 +364,18 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       supplement repeats the binding.
     - Each supplement has a cap of its own and obeys the STE rules of rule
       11, the same as a default text (rule 13).
-    - Four ship, and `coding`, `documentation`, `research` and `spec-writing`
+    - Six ship, and `coding`, `documentation`, `research` and `spec-writing`
       have none, since each holds no Ariadne rule of its own: the seat text
       owns their report call and the binding of the requester. `code-review`
       in the `agent` seat holds the `get_diff` call
       for the whole change, and the `fail_step` and `complete_step` calls
       that return and pass the work. `code-review` in the `reviewer` seat
       hands the round to `pr-reviewer` and names no step call.
-      `architecture-review` has none: the seat text binds its plain words.
+      `merge` in the `agent` seat holds the `complete_step` call with its
+      `merge_commit` and the `fail_step` call for a failed check.
+      `conflict-resolution` in the `agent` seat holds the `complete_step`
+      call for where no skill invoked it. `architecture-review` has none:
+      the seat text binds its plain words.
       `pr-babysit` in the `agent` seat holds the open of the request (the push,
       `open_pull_request`, the title and the body), the read, reply and
       `escalate_comment` calls, the update of the base in the primary checkout
@@ -403,6 +413,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   `fail_step` and `complete_step` rules, and the reviewer seat's names no
   step call
   (`skill_tests/review.rs::the_review_skill_reviews_in_place_and_ends_on_a_step_call`).
+  `merge` and `conflict-resolution` name no Ariadne word either
+  (`skill_tests/template.rs::merge_and_conflict_resolution_name_no_ariadne_word`),
+  and their supplements hold the calls the skills dropped
+  (`skill_tests/operate.rs::the_merge_supplement_holds_the_step_calls_the_skill_dropped`,
+  `skill_tests/operate.rs::the_conflict_resolution_supplement_holds_the_call_that_ends_the_stage`).
   Each supplement is within its cap and the total
   (`defaults.rs::supplement_size_caps_hold`), is STE
   (`defaults.rs::every_default_text_is_simplified_technical_english`), and

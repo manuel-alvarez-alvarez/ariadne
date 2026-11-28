@@ -172,7 +172,7 @@ pub(crate) struct SkillSupplement {
 
 /// Every supplement Ariadne ships. A pair of skill and seat that is not here
 /// adds no text.
-pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 4] = [
+pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 6] = [
     SkillSupplement {
         skill: "code-review",
         seat: Seat::Agent,
@@ -192,6 +192,16 @@ pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 4] = [
         skill: "pr-babysit",
         seat: Seat::Keeper,
         text: include_str!("../supplements/pr-babysit/keeper.md"),
+    },
+    SkillSupplement {
+        skill: "merge",
+        seat: Seat::Agent,
+        text: include_str!("../supplements/merge/agent.md"),
+    },
+    SkillSupplement {
+        skill: "conflict-resolution",
+        seat: Seat::Agent,
+        text: include_str!("../supplements/conflict-resolution/agent.md"),
     },
 ];
 
@@ -962,17 +972,23 @@ pub(crate) mod tests {
     /// which holds the turn open until the call succeeds. The keeper seat's is 500: the same
     /// read, reply and escalation calls, the push command of the briefing,
     /// the user as the requester, and an end of turn, with no task tool. The
-    /// total rose from 500 to 2,000, the four caps with a sentence of room.
+    /// agent seat's `merge` supplement is 260: the
+    /// step call that passes the work with its `merge_commit`, and the
+    /// `fail_step` call for a failed check. Its `conflict-resolution`
+    /// supplement is 140: the one step call, for where no skill invoked it. The
+    /// total is 2,850, the six caps with a sentence of room.
     /// A new pair needs a cap of its own here, argued the same way, and the
     /// total holds them all.
     #[test]
     fn supplement_size_caps_hold() {
-        const TOTAL: usize = 2_000;
+        const TOTAL: usize = 2_850;
         let cap = |skill: &str, seat: Seat| match (skill, seat) {
             ("code-review", Seat::Agent) => 300,
             ("code-review", Seat::Reviewer) => 200,
             ("pr-babysit", Seat::Agent) => 1100,
             ("pr-babysit", Seat::Keeper) => 500,
+            ("merge", Seat::Agent) => 260,
+            ("conflict-resolution", Seat::Agent) => 140,
             _ => panic!(
                 "the {skill} supplement of the {} seat has no cap",
                 seat.as_str()

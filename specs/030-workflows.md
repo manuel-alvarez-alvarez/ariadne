@@ -150,9 +150,13 @@ every other kebab-case word in it; the wire spells the same gate
    exists, one push at a time — a shell that returns before the hook ends
    is a push still running, waited for and never started again — then
    fast-forward the base branch in the primary checkout — the `Repo:` path
-   of the briefing — and call `complete_step` with the column report and
-   the full sha of the base branch, read with `git rev-parse`, as
-   `merge_commit`. The repository's hooks run the suite at that push, and
+   of the briefing, which the skill calls the primary checkout of the
+   repository — and pass the work with the report and the full sha of the
+   base branch, read with `git rev-parse`, as the merge commit. The skill
+   names no Ariadne word; the `agent` seat's `merge` supplement owns the
+   call: `complete_step` with that sha as `merge_commit`, and `fail_step`
+   with the check's output for a failed check on a file of the task
+   (`skill_tests/operate.rs::the_merge_supplement_holds_the_step_calls_the_skill_dropped`). The repository's hooks run the suite at that push, and
    the agent runs no check the push hook runs, except the checks
    `conflict-resolution` runs on a conflict in step 2; with no remote, the agent
    runs the checks the repository names for a landing. The squash goes
@@ -162,7 +166,7 @@ every other kebab-case word in it; the wire spells the same gate
    applying: a failed check — a hook that fails is one, never a moved base
    — that names a file of the task goes back to the previous column
    through `fail_step` with the check's output; a failed check that names
-   no file of the task goes to the orchestrator through `post_to_session`,
+   no file of the task goes to the requester, the orchestrator, through `post_to_session`,
    and nothing lands; else the base moved — a push rejected as not a
    fast-forward, a `git diff --stat` that lists a file the task did not
    touch, or a fast-forward that fails — and the agent starts again from
