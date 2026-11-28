@@ -1,8 +1,9 @@
 /**
  * The transition audit log — the `task history` equivalent.
  *
- * Every status change the store accepted, in order, with who asked for it —
- * and for a stepped task every move between workflow columns, by column. It
+ * Every status change the store accepted, most recent first, with who asked
+ * for it — and for a stepped task every move between workflow columns, by
+ * column. The daemon sends them oldest first, so the panel reverses them. It
  * is the answer to "why is this task where it is", so the reason the daemon
  * recorded is shown in full rather than truncated, and as the Markdown the
  * agents write it in.
@@ -79,7 +80,7 @@ export function TaskHistory({
         />
       ) : null}
       <ol className="relative space-y-0 border-l pl-5">
-        {transitions.data.map((transition) => (
+        {transitions.data.toReversed().map((transition) => (
           <TransitionRow key={transition.id} transition={transition} steps={steps} />
         ))}
       </ol>

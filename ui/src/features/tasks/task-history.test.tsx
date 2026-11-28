@@ -67,3 +67,35 @@ it("renders a transition's reason as Markdown", async () => {
   expect(link.getAttribute("target")).toBe("_blank")
   expect(screen.queryByText(/`cargo fmt`/)).toBeNull()
 })
+
+it("lists the most recent transition first", async () => {
+  stubTransitions([
+    aTransition({
+      id: "01JTRANSITION000000000001",
+      from_status: "pending",
+      to_status: "ready",
+      reason: "first move",
+      created_at: "2026-01-01T00:00:00Z",
+    }),
+    aTransition({
+      id: "01JTRANSITION000000000002",
+      from_status: "ready",
+      to_status: "in_progress",
+      reason: "second move",
+      created_at: "2026-01-02T00:00:00Z",
+    }),
+    aTransition({
+      id: "01JTRANSITION000000000003",
+      from_status: "in_progress",
+      to_status: "done",
+      reason: "third move",
+      created_at: "2026-01-03T00:00:00Z",
+    }),
+  ])
+
+  renderHistory()
+
+  await screen.findByText("third move")
+  const reasons = screen.getAllByText(/^(first|second|third) move$/).map((node) => node.textContent)
+  expect(reasons).toEqual(["third move", "second move", "first move"])
+})

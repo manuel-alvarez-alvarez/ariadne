@@ -1024,6 +1024,8 @@ all models are selected (`ui/src/features/tasks/task-form-dialog.test.tsx::shows
     a failed task with its reason`, `::links a live session that waits for
     permission`). A dependency whose status has not loaded is not a
     blocker, and unfinished dependencies show in every non-finished status.
+45b. The task panel's History tab lists the most recent transition first.
+    The daemon sends transitions oldest first, and the tab reverses them.
 46. The packaged webview has a content security policy that permits scripts,
     styles, fonts and images from the app, and images from the ACP registry's CDN
     (`https://cdn.agentclientprotocol.com`) alone. It permits HTTP, HTTPS, WebSocket
@@ -3030,6 +3032,9 @@ view.
   code and links, a link opening outside the app
   (`ui/src/features/tasks/task-history.test.tsx::renders a transition's
   reason as Markdown`).
+- The History tab lists the most recent transition first
+  (`ui/src/features/tasks/task-history.test.tsx::lists the most recent
+  transition first`).
 - On Linux every scroll area is restyled thin and in theme colours, scoped to a
   `data-platform="linux"` marker that macOS and Android never get
   (`ui/src/lib/platform.test.ts::marks <html> on Linux and leaves macOS and Android unmarked`,
