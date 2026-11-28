@@ -175,3 +175,48 @@ async fn replaying_one_relay_effect_keeps_one_event_and_one_usage_record() {
         (12, 4, 3)
     );
 }
+
+#[tokio::test]
+async fn a_replayed_relay_effect_does_not_move_the_session_status_again() {
+    use ariadne_api::events::IngestEventRequest;
+    use ariadne_core::SessionStatus;
+    use ariadne_daemon::http::ingest_relay_event;
+    let home = tempfile::tempdir().unwrap();
+    let store = Store::open(home.path().join("store.db")).await.unwrap();
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    let event = |kind: &str| IngestEventRequest {
+        session_id: session.id.clone(),
+        launch: Some("launch".into()),
+        kind: kind.into(),
+        payload: json!({"session_id": "conversation"}),
+    };
+    ingest_relay_event(&store, &event("session_start"), "setup", 1)
+        .await
+        .unwrap();
+    ingest_relay_event(&store, &event("stop"), "output:9", 0)
+        .await
+        .unwrap();
+    let idle = store.get_session(&session.id).await.unwrap();
+    assert_eq!(idle.status(), SessionStatus::Idle);
+
+    // A reconnect replays the launch's setup.
+    ingest_relay_event(&store, &event("session_start"), "setup", 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_session(&session.id).await.unwrap().status(),
+        SessionStatus::Idle
+    );
+}

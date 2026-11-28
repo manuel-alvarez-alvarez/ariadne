@@ -422,6 +422,7 @@ impl super::Scheduler {
     async fn tell_orchestrator(&mut self, goal: &Goal, tasks: &[Task]) -> anyhow::Result<()> {
         let Some(situation) = goal_attention(tasks) else {
             self.goal_told.remove(&goal.id);
+            self.goal_held.remove(&goal.id);
             return Ok(());
         };
         // Tagged with exactly the failed tasks this prompt would name,
@@ -449,6 +450,11 @@ impl super::Scheduler {
             // Nothing to tell: an orchestrator still starting, or one
             // mid-turn. The situation is not written down, so the pass that
             // finds it idle says it then.
+            let reason = match orchestrators.first() {
+                Some(live) => format!("the orchestrator is {}, not idle", live.status().as_str()),
+                None => "the goal has no live orchestrator".to_string(),
+            };
+            self.hold_goal_attention(&goal.id, &situation, reason);
             return Ok(());
         };
         // Locked against `acp::prompt_once` confirming this exact goal's
@@ -473,6 +479,11 @@ impl super::Scheduler {
             .unwrap_or_default();
         let all_confirmed = failed_tasks.iter().all(|pair| confirmed.contains(pair));
         if self.goal_told.get(&goal.id) == Some(&situation) && all_confirmed {
+            self.hold_goal_attention(
+                &goal.id,
+                &situation,
+                "the orchestrator was already told this situation".to_string(),
+            );
             return Ok(());
         }
         let template = prompts::template_for(PromptKind::GoalAttention);
@@ -487,7 +498,19 @@ impl super::Scheduler {
         }
         info!(goal = %goal.id, session = %orchestrator.id, "the goal's tasks need the orchestrator");
         self.goal_told.insert(goal.id.clone(), situation.clone());
+        self.goal_held.remove(&goal.id);
         Ok(())
+    }
+
+    /// Say why this goal's situation is not sent to its orchestrator now:
+    /// once for each reason and situation, never once per pass.
+    fn hold_goal_attention(&mut self, goal_id: &str, situation: &str, reason: String) {
+        let held = (situation.to_string(), reason);
+        if self.goal_held.get(goal_id) == Some(&held) {
+            return;
+        }
+        info!(goal = %goal_id, reason = %held.1, "the daemon holds back the goal's message to the orchestrator");
+        self.goal_held.insert(goal_id.to_string(), held);
     }
 
     /// Every live session of a goal, whatever ended it.

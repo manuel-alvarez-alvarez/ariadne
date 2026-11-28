@@ -1,7 +1,7 @@
 ---
 id: acp-runtime
 status: current
-updated: 2026-11-27
+updated: 2026-11-28
 areas: [daemon]
 commits: [8163676d, e078d730, c47870a8, b8cfd6bb, 21a4d426, 90f6a584, 354c0aaa, 04dd0fed, 47b8acdf, efb3e62a, 7b19d49a, b2c18f4f, 87db0081]
 tests:
@@ -558,6 +558,7 @@ it leaves nothing to delete.
     Retain processed frames to reconstruct buffered text during replay.
     Identify normalized effects by session, launch, source, and ordinal.
     Replaying an effect keeps its existing event identity and usage source.
+    A replayed effect moves no session status, attention or activity clock again.
     Mark a permission request processed only after its answer reaches the durable input ledger.
 20. With herdr selected, start `ariadned relay` in a herdr pane through the herdr socket API.
     The socket is `HERDR_SOCKET_PATH`, then the session socket for `HERDR_SESSION`, then `~/.config/herdr/herdr.sock`.
@@ -857,6 +858,8 @@ it leaves nothing to delete.
   `acp_runtime.rs::reconnect_restores_offline_text_usage_and_an_answered_permission_without_repeating_input`.
 - Repeated normalized effects keep one event and one usage record:
   `acp_recovery.rs::replaying_one_relay_effect_keeps_one_event_and_one_usage_record`.
+- A replayed effect does not move the session status again:
+  `acp_recovery.rs::a_replayed_relay_effect_does_not_move_the_session_status_again`.
 - An unanswered permission returns to the console:
   `acp_runtime.rs::an_unanswered_permission_returns_to_the_console_after_reconnect`.
 - Resume starts a new pane and retains the stored conversation:

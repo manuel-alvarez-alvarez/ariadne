@@ -122,8 +122,16 @@ async fn ingest_event_inner(
         kind: req.kind.clone(),
         payload: req.payload.clone(),
     };
+    // A relay replay of an effect already stored is old news: the first
+    // ingest moved the row for it. A reconnect replays the setup of its
+    // launch, `session_start` among it, and read again that would put an
+    // idle agent back to `running` with no turn to end it — a goal's
+    // orchestrator would then never hear what its tasks need (009).
     let event = match relay_key {
-        Some(key) => store.create_event_once(new, key).await?,
+        Some(key) => match store.create_event_once(new, key).await? {
+            (event, true) => event,
+            (event, false) => return Ok(Some(event)),
+        },
         None => store.create_event(new).await?,
     };
 
