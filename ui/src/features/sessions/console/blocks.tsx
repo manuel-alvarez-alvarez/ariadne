@@ -56,7 +56,7 @@ export function PromptBox({
           <div className="min-w-0 flex-1">
             {shut ? (
               <p className="whitespace-pre-wrap break-words text-sm">
-                <PlainPreview text={lines.slice(0, FOLDED_LINES).join("\n")} />
+                <PlainPreview text={text} length={lines.slice(0, FOLDED_LINES).join("\n").length} />
               </p>
             ) : (
               <Markdown>{text}</Markdown>

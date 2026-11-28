@@ -2143,7 +2143,8 @@ view.
 - Streaming keeps an open span highlighted and fenced code markers literal
   (`ui/src/components/markdown.test.tsx::updates an open untrusted span as text streams and keeps code markers literal`).
 - Folded prompts retain the highlight
-  (`ui/src/features/sessions/console/blocks.test.tsx::keeps untrusted text highlighted in a folded prompt`).
+  (`ui/src/features/sessions/console/blocks.test.tsx::keeps untrusted text highlighted in a folded prompt`,
+  `ui/src/features/sessions/console/blocks.test.tsx::preserves Markdown code boundaries in a folded prompt`).
 - Daemon prompts and agent questions highlight untrusted prose
   (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::highlights untrusted text in a daemon prompt without its seat brief`,
   `ui/src/features/goals/attention-forms.test.tsx::highlights untrusted prose in an agent question`).

@@ -9,6 +9,7 @@
  * were thought of.
  */
 
+import { markdownLanguage } from "@codemirror/lang-markdown"
 import { Children, isValidElement, type ReactNode } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -160,25 +161,38 @@ function UntrustedMark({ children }: { children: ReactNode }) {
 }
 
 /** Keep a folded prompt plain while retaining its trust indication. */
-export function PlainPreview({ text }: { text: string }) {
-  const parts = text.split(/(`+|<<<untrusted>>>|<<<end untrusted>>>)/g)
-  let code = ""
+export function PlainPreview({ text, length = text.length }: { text: string; length?: number }) {
+  const code: Array<{ from: number; to: number }> = []
+  markdownLanguage.parser.parse(text).iterate({
+    enter(node) {
+      if (["FencedCode", "CodeBlock", "InlineCode"].includes(node.name)) {
+        code.push({ from: node.from, to: node.to })
+        return false
+      }
+    },
+  })
+  const parts: Array<{ text: string; untrusted: boolean }> = []
   let untrusted = false
+  let start = 0
+  const markers = /<<<untrusted>>>|<<<end untrusted>>>/g
+  for (const match of text.matchAll(markers)) {
+    const at = match.index
+    if (at >= length) break
+    if (code.some((range) => at >= range.from && at < range.to)) continue
+    parts.push({ text: text.slice(start, at), untrusted })
+    untrusted = match[0] === "<<<untrusted>>>"
+    start = at + match[0].length
+  }
+  parts.push({ text: text.slice(start, length), untrusted })
   return (
     <>
       {parts.map((part, index) => {
-        if (/^`+$/.test(part)) {
-          if (!code) code = part
-          else if (code === part) code = ""
-        } else if (!code && part === "<<<untrusted>>>") {
-          untrusted = true
-          return null
-        } else if (!code && part === "<<<end untrusted>>>") {
-          untrusted = false
-          return null
-        }
-        // biome-ignore lint/suspicious/noArrayIndexKey: The parts have no stable identity.
-        return untrusted && part ? <UntrustedMark key={index}>{part}</UntrustedMark> : part
+        return part.untrusted && part.text ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: The parts have no stable identity.
+          <UntrustedMark key={index}>{part.text}</UntrustedMark>
+        ) : (
+          part.text
+        )
       })}
     </>
   )

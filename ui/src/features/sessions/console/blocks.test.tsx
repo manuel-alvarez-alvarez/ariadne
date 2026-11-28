@@ -63,3 +63,19 @@ it("keeps untrusted text highlighted in a folded prompt", () => {
   expect(container.querySelector("mark")?.textContent).toContain("unsafe")
   expect(container.textContent).not.toContain("<<<untrusted>>>")
 })
+
+it("preserves Markdown code boundaries in a folded prompt", () => {
+  const fold = { open: false, onToggle: vi.fn() }
+  const markers = "<<<untrusted>>>example<<<end untrusted>>>"
+  const view = render(<PromptBox text={`~~~\n${markers}\n~~~\nmore\nend`} fold={fold} />)
+  expect(view.container.textContent).toContain(markers)
+  expect(view.container.querySelector("mark")).toBeNull()
+
+  view.rerender(<PromptBox text={`unmatched \` ${markers}\nmore\nmore\nmore\nend`} fold={fold} />)
+  expect(view.container.querySelector("mark")?.textContent).toBe("example")
+  expect(view.container.textContent).not.toContain("<<<untrusted>>>")
+
+  view.rerender(<PromptBox text={`\`code\n${markers}\nmore\nmore\nend\``} fold={fold} />)
+  expect(view.container.textContent).toContain(markers)
+  expect(view.container.querySelector("mark")).toBeNull()
+})
