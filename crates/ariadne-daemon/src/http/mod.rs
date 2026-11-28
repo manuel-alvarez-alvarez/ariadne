@@ -23,7 +23,7 @@ mod permissions;
 mod pins;
 mod posts;
 pub(crate) use posts::agent_sender;
-mod pull_requests;
+pub(crate) mod pull_requests;
 mod query;
 mod questions;
 use query::QueryRoutes;

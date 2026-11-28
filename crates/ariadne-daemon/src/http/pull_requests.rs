@@ -190,7 +190,7 @@ async fn read_now(state: &AppState, row: PullRequestRow) -> ApiResult<PullReques
 
 /// A request Ariadne works on, as the last read found it, or read now where
 /// nothing has read it yet.
-async fn read_held(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
+pub(crate) async fn read_held(state: &AppState, row: PullRequestRow) -> ApiResult<PullRequest> {
     match live::of_row(&state.store, &state.launcher.live, row.clone()).await? {
         Some(pull) => Ok(pull),
         None => read_now(state, row).await,

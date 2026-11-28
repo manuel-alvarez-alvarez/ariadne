@@ -161,7 +161,7 @@ async fn name_of(state: &AppState, id: &str) -> String {
     let Ok(session) = state.store.get_session(id).await else {
         return String::new();
     };
-    let title = crate::acp_sessions::title_of(&state.store, &state.launcher.live, &session).await;
+    let title = crate::acp_sessions::title_of(state, &session).await;
     match session_dto_of(&state.store, session).await {
         Ok(row) => session_name(title.as_deref(), row.seat, row.step.as_deref()),
         Err(_) => String::new(),

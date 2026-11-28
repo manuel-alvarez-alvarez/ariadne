@@ -186,16 +186,15 @@ impl Titles {
 /// alone: [`Titles::of`], and for a pull request session the request's title
 /// with its URL beside it, as the CLI sets it.
 pub(crate) async fn title_of(
-    store: &Store,
-    live: &crate::forge::live::LivePulls,
+    state: &crate::http::AppState,
     session: &AgentSession,
 ) -> Option<String> {
+    let store = &state.store;
+    // The request as `GET /v1/pull-requests/{id}` reads it: held, or read
+    // off the forge where nothing has read it yet.
     let pull = match &session.pull_request_id {
         Some(id) => match store.get_pull_request(id).await {
-            Ok(row) => crate::forge::live::of_row(store, live, row)
-                .await
-                .ok()
-                .flatten(),
+            Ok(row) => crate::http::pull_requests::read_held(state, row).await.ok(),
             Err(_) => None,
         },
         None => None,
