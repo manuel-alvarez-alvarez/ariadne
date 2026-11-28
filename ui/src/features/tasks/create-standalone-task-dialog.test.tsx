@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it, vi } from "vitest"
 
@@ -166,16 +166,16 @@ it("shows the daemon's reason when it refuses the host", async () => {
   renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} onCreated={onCreated} />)
 
   await user.type(await screen.findByLabelText("Title"), "Far task")
-  await user.click(screen.getByRole("combobox", { name: "Repository" }))
-  await user.click(await screen.findByRole("option", { name: "/work/ariadne" }))
+  fireEvent.click(screen.getByRole("combobox", { name: "Repository" }))
+  fireEvent.click(await screen.findByRole("option", { name: "/work/ariadne" }))
   await user.click(screen.getByRole("combobox", { name: "Host" }))
   await user.click(await screen.findByRole("option", { name: "box" }))
-  await user.click(screen.getByRole("button", { name: "Agent runs on" }))
-  await user.click(
+  fireEvent.click(screen.getByRole("button", { name: "Agent runs on" }))
+  fireEvent.click(
     within(await screen.findByRole("listbox", { name: "Models" })).getByText(MODEL.id),
   )
-  await user.click(within(screen.getByRole("listbox", { name: "Efforts" })).getByText("high"))
-  await user.click(screen.getByRole("button", { name: "Create task" }))
+  fireEvent.click(within(screen.getByRole("listbox", { name: "Efforts" })).getByText("high"))
+  fireEvent.click(screen.getByRole("button", { name: "Create task" }))
 
   expect(await screen.findByText(/a goal-less task requires the local host/)).toBeTruthy()
   expect(onCreated).not.toHaveBeenCalled()
@@ -214,7 +214,7 @@ it("offers the models of the picked host in each staffing row", async () => {
 
   await user.click(await screen.findByRole("combobox", { name: "Host" }))
   await user.click(await screen.findByRole("option", { name: "box" }))
-  await user.click(screen.getByRole("button", { name: "Agent runs on" }))
+  fireEvent.click(screen.getByRole("button", { name: "Agent runs on" }))
 
   const models = within(await screen.findByRole("listbox", { name: "Models" }))
   expect(models.getByText(BOX_MODEL.id)).toBeTruthy()
@@ -238,13 +238,15 @@ it("clears the picked model and effort of each row when the host changes", async
   const user = userEvent.setup()
   renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} />)
 
-  await user.click(await screen.findByRole("button", { name: "Agent runs on" }))
-  await user.click(
+  // Setup only: pick a model and effort, then close the picker.
+  const pin = await screen.findByRole("button", { name: "Agent runs on" })
+  fireEvent.click(pin)
+  fireEvent.click(
     within(await screen.findByRole("listbox", { name: "Models" })).getByText(MODEL.id),
   )
-  await user.click(within(screen.getByRole("listbox", { name: "Efforts" })).getByText("high"))
-  await user.click(screen.getByRole("button", { name: "Agent runs on" }))
-  expect(screen.getByRole("button", { name: "Agent runs on" }).textContent).toContain("high")
+  fireEvent.click(within(screen.getByRole("listbox", { name: "Efforts" })).getByText("high"))
+  fireEvent.click(pin)
+  expect(pin.textContent).toContain("high")
 
   await user.click(screen.getByRole("combobox", { name: "Host" }))
   await user.click(await screen.findByRole("option", { name: "box" }))
