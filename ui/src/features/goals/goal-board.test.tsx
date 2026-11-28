@@ -439,6 +439,23 @@ it("names a goal-less task's host in its row, as a goal line names its goal's", 
   expect(cell.textContent).toBe("local")
 })
 
+it("names the host that lists a goal-less task, not the task's own host", async () => {
+  const EMPTY = { "/v1/attention": { items: [], complete: true }, "/v1/sessions": aSessionPage([]) }
+  stubHosts({
+    local: { ...EMPTY, "/v1/tasks": [] },
+    box: {
+      ...EMPTY,
+      "/v1/tasks": [
+        aTask({ id: "n1", goal_id: null, title: "Loose there", host: "local", steps: [] }),
+      ],
+    },
+  })
+  renderScreen(<GoalBoard hosts={["local", "box"]} goals={[]} showHost />)
+
+  const row = (await screen.findByText("Loose there")).closest("[data-task-row]") as HTMLElement
+  expect(row.querySelector("[data-column=host]")?.textContent).toBe("box")
+})
+
 it("names no host on a goal-less task's row while the goals name none", async () => {
   stubDaemon([aTask({ id: "n1", goal_id: null, title: "Loose here", host: "local", steps: [] })])
   board([])

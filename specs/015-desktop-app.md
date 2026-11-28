@@ -2088,6 +2088,8 @@ view.
   included. Where the goals name no host, the row names none for a task that runs on its own host
   (`ui/src/features/goals/goal-board.test.tsx::names a goal-less task's host in its row, as a goal line names its goal's`;
   `::names no host on a goal-less task's row while the goals name none`).
+- A goal-less task's row names the host that lists it, not the task's own `local`
+  (`ui/src/features/goals/goal-board.test.tsx::names the host that lists a goal-less task, not the task's own host`).
 - A far goal-less task that its source and its worker both list is on the board once
   (`ui/src/features/goals/goal-board.test.tsx::shows a far goal-less task once, though its source and its worker both list it`).
 - A `task_created` event adds a goal-less task's row, and a `task_updated` event moves a row into its goal
