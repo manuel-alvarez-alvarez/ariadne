@@ -191,6 +191,7 @@ const OPENS_TURN: &[&str] = &[
     "session.pin_fallback",
     "notice",
     "compaction_update",
+    "subagent_update",
 ];
 
 /// The starts of a session's turns up to `upper`: each prompt, and the
@@ -418,8 +419,32 @@ async fn read_turns_within(
         // No turn yet: the lifecycle notes wait for the first prompt, and a
         // fold built now holds them for it.
         let (_, waiting) = queued_lifecycle(store, session_id, upper).await?;
+        // A plan opens no turn: the snapshot carries it all the same.
+        let plans = store
+            .session_event_heads(
+                session_id,
+                None,
+                Some(upper),
+                &["plan", "plan_update", "plan_removed"],
+            )
+            .await?;
+        let mut picks = Picks {
+            ids: BTreeSet::new(),
+            budget,
+        };
+        for rows in rows_per_plan(&plans) {
+            picks.take(rows);
+        }
+        let loaded = store
+            .events_by_ids(&picks.ids.into_iter().collect::<Vec<_>>())
+            .await?;
         return Ok(Read {
+            items: loaded
+                .into_iter()
+                .map(|event| Item::Full(Box::new(event)))
+                .collect(),
             upper: Some(upper.to_string()),
+            plan_firsts: first_per_plan(&plans),
             lifecycle: waiting,
             ..Read::default()
         });
@@ -2189,6 +2214,42 @@ mod tests {
         }
         let quiet = fold.held_steps(&turn, MAIN_LANE).len();
         assert_eq!(quiet, 1, "the prompt takes the startup note");
+    }
+
+    /// A subagent announced before the first prompt opens the turn the warm
+    /// fold shows, and a plan before it reaches a snapshot with no turn
+    /// (rules 30, 32, 44).
+    #[tokio::test]
+    async fn a_cold_read_holds_a_subagent_and_a_plan_that_came_before_a_prompt() {
+        let (store, id, _dir) = session().await;
+        commit(&store, &id, "session_start", json!({})).await;
+        let child = json!({"id": "child-1", "title": "explorer", "description": "Look"});
+        let opened = commit(
+            &store,
+            &id,
+            "subagent_update",
+            json!({"subagent": child, "state": "running"}),
+        )
+        .await;
+        let page = read_steps(&store, &id, &opened, MAIN_LANE, None, 10, 500)
+            .await
+            .unwrap();
+        assert!(page.is_some(), "the announced turn has a steps page");
+        let read = read_turns(&store, &id, None, 5, None, 500).await.unwrap();
+        let snapshot = folded(&id, read).snapshot(0, 20, None);
+        assert_eq!(snapshot.subagents.len(), 1);
+
+        let (store, id, _dir) = session().await;
+        commit(
+            &store,
+            &id,
+            "plan_update",
+            json!({"plan": {"type": "markdown", "plan_id": "p-1", "content": "# Plan"}}),
+        )
+        .await;
+        let read = read_turns(&store, &id, None, 5, None, 500).await.unwrap();
+        let snapshot = folded(&id, read).snapshot(0, 20, None);
+        assert_eq!(snapshot.plans.len(), 1);
     }
 
     /// The newest turn's step window comes before the subagents of the

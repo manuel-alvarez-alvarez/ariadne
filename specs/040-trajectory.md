@@ -780,6 +780,8 @@ Out:
     event that opens a turn starts the turn before the first prompt, and a
     fold built before it holds the lifecycle notes for it:
     `read.rs::a_quiet_event_opens_no_turn_and_a_cold_fold_keeps_the_startup_note`.
+    A subagent announced before it, and a plan, reach a cold snapshot:
+    `read.rs::a_cold_read_holds_a_subagent_and_a_plan_that_came_before_a_prompt`.
 88. The detail of a pending call reads `running` or `pending` as its row
     does, and a call that opens after its turn ended stays `pending`
     (rules 21, 49):
