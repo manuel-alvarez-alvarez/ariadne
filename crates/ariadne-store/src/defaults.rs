@@ -172,7 +172,7 @@ pub(crate) struct SkillSupplement {
 
 /// Every supplement Ariadne ships. A pair of skill and seat that is not here
 /// adds no text.
-pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 9] = [
+pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 8] = [
     SkillSupplement {
         skill: ORCHESTRATION_SKILL,
         seat: Seat::Orchestrator,
@@ -187,11 +187,6 @@ pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 9] = [
         skill: "code-review",
         seat: Seat::Reviewer,
         text: include_str!("../supplements/code-review/reviewer.md"),
-    },
-    SkillSupplement {
-        skill: "architecture-review",
-        seat: Seat::Reviewer,
-        text: include_str!("../supplements/architecture-review/reviewer.md"),
     },
     SkillSupplement {
         skill: PR_REVIEWER_SKILL,
@@ -977,8 +972,8 @@ pub(crate) mod tests {
     /// a sentence of room, so a rule that creeps back from the skill shows
     /// up here. The agent seat's `code-review` supplement is 300: the diff
     /// call and the two step calls the skill dropped. The reviewer seat's is
-    /// 200: one line that hands the round to `pr-reviewer`, one that ties
-    /// the stage and the report, and one that ties the step call to none. The agent seat's `pr-babysit` supplement is 1,100:
+    /// 200: one line that hands the round to `pr-reviewer`, and one that
+    /// skips the step call. The agent seat's `pr-babysit` supplement is 1,100:
     /// it holds every Ariadne rule the skill gave up for the task seat, which
     /// is how to open the request (the push, the open call, the title and the
     /// body), the read and reply calls, the escalation call, the update of
@@ -1001,10 +996,8 @@ pub(crate) mod tests {
     /// column ranks, `local` and the ACP agents. The skill dropped all of it
     /// to name no Ariadne word, and the orchestrator seat text is 200, so the
     /// seat still pays less than the 1,750 its text once carried with the
-    /// playbook in it. The reviewer seat's `architecture-review` supplement
-    /// is 100: the one line that ties the two plain words the skill says to
-    /// the review round and the request body. The total is 5,650, the nine
-    /// caps with room: it rose from 3,750 by the first 1,800.
+    /// playbook in it. The total is 5,650, the eight caps with a sentence of
+    /// room: it rose from 3,750 by those 1,800.
     /// A new pair needs a cap of its own here, argued the same way, and the
     /// total holds them all.
     #[test]
@@ -1014,7 +1007,6 @@ pub(crate) mod tests {
             (ORCHESTRATION_SKILL, Seat::Orchestrator) => 1_800,
             ("code-review", Seat::Agent) => 300,
             ("code-review", Seat::Reviewer) => 200,
-            ("architecture-review", Seat::Reviewer) => 100,
             (PR_REVIEWER_SKILL, Seat::Reviewer) => 1_000,
             ("pr-babysit", Seat::Agent) => 1100,
             ("pr-babysit", Seat::Keeper) => 500,
@@ -1084,11 +1076,6 @@ pub(crate) mod tests {
         assert_eq!(skill_supplement("code-review", Seat::Orchestrator), None);
         assert_eq!(skill_supplement("code-review", Seat::Keeper), None);
         assert_eq!(skill_supplement("architecture-review", Seat::Agent), None);
-        let architecture = skill_supplement("architecture-review", Seat::Reviewer).unwrap();
-        assert!(
-            architecture.contains("A stage is a round."),
-            "{architecture}"
-        );
         assert_eq!(skill_supplement("coding", Seat::Agent), None);
         let task = skill_supplement("pr-babysit", Seat::Agent).unwrap();
         for call in [

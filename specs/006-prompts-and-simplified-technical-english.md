@@ -110,8 +110,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    neither its skill, which the skill index does for every seat, nor the end
    of its turn, which its briefing and the news prompt each end on. The
    `keeper` seat text is the session's that keeps a request of the user's
-   own asked for by hand (032). Neither text ties a plain word: the
-   supplements of their skills do (rule 21).
+   own asked for by hand (032). Neither text ties a plain word: one block
+   of their session rules does (rule 21).
 4. The skill index is one line per skill — its name, the summary its
    frontmatter states, and the path of its document in the run directory — and
    the instruction to read a document before doing the work it covers. That
@@ -171,13 +171,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
        and its `pr-babysit` supplement names `<repo>` as that path;
      - the orchestrator seat text: a stage is a column, and your
        instructions are the briefing;
-     - the reviewer seat: its `pr-reviewer` supplement ties the requester
-       to the user and an update to news. Its `code-review` and
-       `architecture-review` supplements tie a stage to a round and the
-       report to the request body, and its `code-review` supplement says
-       that to return or pass the work is no call;
-     - the keeper seat: its `pr-babysit` supplement ties the requester to
-       the user and an update to news;
+     - the reviewer and keeper seats: one block of their session rules
+       (`request_words_rule`), written once for both. The requester is the
+       user, a stage is one turn on the request, the report is the request
+       body, and an update is news. To send the report, pass the work or
+       return the work is to end the turn. The primary checkout is the
+       repository path from `get_pull_request`;
    - which call reads the whole change and which calls return and pass the
      work, for `code-review` in the `agent` seat — `get_diff`, `fail_step`
      with the return report, `complete_step` with the verdict: that seat's
@@ -397,18 +396,18 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       | seat, keeper | not used in a skill |
       | task, ticket, goal | unchanged |
 
-      Each seat ties every plain word that a skill it loads says (rule 5).
-      The tie is in the seat text, in the supplement of the skill the seat
-      loads on every session, or in that skill's own supplement for the
-      seat. A tie says the word, then "is" or "are", or names the call the
-      word stands for. The orchestrator loads `orchestration` every
-      session. The agent loads every task skill and `pr-babysit`, as
-      staffed. The reviewer loads `pr-reviewer` every session, and can load
-      `code-review` and `architecture-review`. The keeper loads `pr-babysit`
-      every session. No skill states a tie.
+      Each seat ties every plain word that a skill it can load says (rule
+      5). The tie is in the session rules, the seat text, the supplement of
+      the skill the seat loads on every session, or that skill's own
+      supplement for the seat. A tie says the word, then "is" or "are", or
+      names the call the word stands for. The orchestrator loads
+      `orchestration` every session. The agent loads every task skill and
+      `pr-babysit`, as staffed. The reviewer loads `pr-reviewer` and the
+      keeper loads `pr-babysit` every session, and each also loads any
+      task skill the user picks (029, 032). No skill states a tie.
     - Each supplement has a cap of its own and obeys the STE rules of rule
       11, the same as a default text (rule 13).
-    - Nine ship, and `coding`, `documentation`, `research` and `spec-writing`
+    - Eight ship, and `coding`, `documentation`, `research` and `spec-writing`
       have none, since each skill holds no Ariadne rule of its own: the seat
       text owns their report call and the tie of the requester. No skill
       holds a call below. Each call is in the supplement named, and the skill
@@ -418,9 +417,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       - The `code-review` supplement of the `agent` seat holds the `get_diff`
         call for the whole change, and the `fail_step` and `complete_step`
         calls that return and pass the work. The `code-review` supplement of
-        the `reviewer` seat hands the round to `pr-reviewer`, ties a stage to
-        a round and the report to the request body, says that to return or
-        pass the work is no call, and names no step call.
+        the `reviewer` seat hands the round to `pr-reviewer` and names no
+        step call.
       - The `orchestration` supplement of the `orchestrator` seat holds the
         call of each playbook step in order, and the model rules (003 rule
         19). It also ends the turn after `finalize_plan`, reads a task with
@@ -433,9 +431,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
         check.
       - The `conflict-resolution` supplement of the `agent` seat holds the
         `complete_step` call for where no skill invoked it.
-      - The `architecture-review` supplement of the `reviewer` seat ties a
-        stage to a round and the report to the request body. The agent seat
-        text ties its plain words in the `agent` seat.
+      - `architecture-review` has none: the agent seat text and the request
+        block of the session rules tie its plain words.
       - The `pr-babysit` supplement of the `agent` seat holds the open of the
         request (the push, `open_pull_request`, the title and the body), the
         read, reply and `escalate_comment` calls, the update of the base in
@@ -444,8 +441,7 @@ they describe (003, 030) — what a skill is (017), and the switch itself
         says "`<repo>` is the `Repo:` path."), and the ends, `complete_step` on a
         merge and `fail_task` on a close.
       - The `pr-babysit` supplement of the `keeper` seat holds the same read,
-        reply and `escalate_comment` calls, the user as the requester, an
-        update as news, the
+        reply and `escalate_comment` calls, the
         push command of the briefing and the end of turn, and names no task
         tool.
 
@@ -469,14 +465,16 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   index (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`).
   The agent seat text binds each plain word of the word list
   (`skill_tests/template.rs::the_agent_seat_text_binds_each_plain_word_to_ariadne`).
-  Each seat ties every plain word that a skill it loads says, and the test
-  fails on a word no text of the seat ties
-  (`skill_tests/template.rs::each_seat_ties_every_plain_word_its_skills_use`).
+  Each seat ties every plain word that a skill it can load says, and the
+  test fails on a word no text of the seat ties
+  (`mcp.rs::each_seat_ties_every_plain_word_its_skills_use`). The reviewer
+  and keeper seats read one block of ties, and no other seat reads it
+  (`mcp.rs::the_request_seats_share_one_block_of_ties`).
   The four seat texts and the end of the keeper briefing ship word for
-  word (`defaults.rs::the_agreed_texts_ship_word_for_word`). Each
-  supplement keeps the cap it had, and the new `architecture-review`
-  supplement of the `reviewer` seat has a cap of its own
-  (`defaults.rs::supplement_size_caps_hold`). The agent seat's
+  word (`defaults.rs::the_agreed_texts_ship_word_for_word`). Every size
+  cap keeps its value (`defaults.rs::size_caps_hold`,
+  `defaults.rs::supplement_size_caps_hold`,
+  `mcp.rs::the_shared_rules_stay_small`). The agent seat's
   `pr-babysit` supplement names only placeholders the agent reads a
   meaning of
   (`skill_tests/template.rs::the_agent_babysit_supplement_names_only_placeholders_the_agent_text_defines`).

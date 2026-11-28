@@ -39,7 +39,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
 2. The server's instructions, which every session receives before its first
    prompt, open with "Ariadne tools for this {seat} session." and name no
    session, goal, task, column or pull request id. They carry the session rules
-   that hold for every seat alike (006). After the rules come the seat's own text, picked
+   that hold for every seat alike (006). The reviewer and keeper seats
+   also get one block that ties the plain words of a skill (006 rule 21).
+   After the rules come the seat's own text, picked
    by the seat, then the supplement of each skill the session loads, which
    the launcher hands the server as `ARIADNE_SKILL_SUPPLEMENTS` (006 rule
    21), then the index of those skills, which the launcher hands the server

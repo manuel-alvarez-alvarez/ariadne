@@ -508,9 +508,7 @@ fn the_pr_babysit_skill_names_no_seat_and_its_supplements_own_the_difference() {
     assert!(agent.contains("With no request open, push the task branch"));
     assert!(agent.contains("`<head>` is the task branch."));
     let keeper = unwrapped(skill_supplement(PR_BABYSIT_SKILL, ariadne_core::Seat::Keeper).unwrap());
-    assert!(keeper.contains(
-        "The requester is the user. Ask the user once about a failure the request did not cause."
-    ));
+    assert!(keeper.contains("Ask the user once about a failure the request did not cause."));
     assert!(keeper.contains("Run the push command of the briefing as given."));
     assert!(keeper.contains("On a merge or a close, end your turn."));
     for task_tool in [

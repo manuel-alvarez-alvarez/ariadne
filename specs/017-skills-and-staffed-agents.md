@@ -306,7 +306,8 @@ written into the system prompt (006), and the lifecycle the seats sit in
     a failure the request did not cause — is the `pr-babysit` supplement of
     each seat (006 rule 21): the agent seat's opens the request, updates the
     base in the primary checkout and ends the task, and the keeper seat's
-    names the user as the requester and names no task tool. `orchestration`
+    names no task tool. The keeper's session rules name the user as the
+    requester (006 rule 21). `orchestration`
     names no forge.
 
     A skill document holds one text. The launcher links the run directory's
@@ -430,7 +431,9 @@ written into the system prompt (006), and the lifecycle the seats sit in
     no exception. The
     four produce skills keep the ticket and report contract in plain words,
     and none has a supplement: the agent seat text owns the report call and
-    the binding of the requester, the stage and the report (006 rule 21).
+    the tie of the requester, the stage and the report, and the request
+    block of the session rules owns them for a review or keeper session (006
+    rule 21).
     The body stays under 500 lines and within the caps of 006 rule 13.
     The template is proven by structure and words
     (`skill_tests/template.rs::every_skill_obeys_the_template`,
