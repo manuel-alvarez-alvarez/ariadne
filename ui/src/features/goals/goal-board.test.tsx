@@ -443,6 +443,40 @@ it("draws each goal-less task as a group of one row, in no goal's group", async 
   expect(screen.getByRole("heading", { name: "Tasks (3)" })).toBeTruthy()
 })
 
+it("names a goal-less task's host in its row, as a goal line names its goal's", async () => {
+  stubDaemon([aTask({ id: "n1", goal_id: null, title: "Loose here", host: "local", steps: [] })])
+  board([], { showHost: true })
+
+  const row = (await screen.findByText("Loose here")).closest("[data-task-row]") as HTMLElement
+  const cell = row.querySelector("[data-column=host]") as HTMLElement
+  expect(cell.textContent).toBe("local")
+})
+
+it("names the host that lists a goal-less task, not the task's own host", async () => {
+  const EMPTY = { "/v1/attention": { items: [], complete: true }, "/v1/sessions": aSessionPage([]) }
+  stubHosts({
+    local: { ...EMPTY, "/v1/tasks": [] },
+    box: {
+      ...EMPTY,
+      "/v1/tasks": [
+        aTask({ id: "n1", goal_id: null, title: "Loose there", host: "local", steps: [] }),
+      ],
+    },
+  })
+  renderScreen(<GoalBoard hosts={["local", "box"]} goals={[]} showHost />)
+
+  const row = (await screen.findByText("Loose there")).closest("[data-task-row]") as HTMLElement
+  expect(row.querySelector("[data-column=host]")?.textContent).toBe("box")
+})
+
+it("names no host on a goal-less task's row while the goals name none", async () => {
+  stubDaemon([aTask({ id: "n1", goal_id: null, title: "Loose here", host: "local", steps: [] })])
+  board([])
+
+  const row = (await screen.findByText("Loose here")).closest("[data-task-row]") as HTMLElement
+  expect(row.querySelector("[data-column=host]")?.textContent).toBe("")
+})
+
 it("sorts the groups: what needs the user, then live, then finished, newest change first", async () => {
   const live = aGoal({ id: "g-live", title: "Live goal", updated_at: "2026-01-02T00:00:00Z" })
   const done = aGoal({

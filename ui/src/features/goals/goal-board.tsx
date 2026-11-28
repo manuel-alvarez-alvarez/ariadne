@@ -130,7 +130,7 @@ export function GoalBoard({
   activeOnly?: boolean
   /** The title search, which narrows the tasks with no goal too. */
   query?: string
-  /** Name each goal's host: the board shows goals of more than one. */
+  /** Name each goal's host, and each goal-less task's: the board shows more than one. */
   showHost?: boolean
   /** Drawn in place of the list once the board has read that it has nothing. */
   empty?: ReactNode
@@ -265,6 +265,7 @@ export function GoalBoard({
                     steps={row.steps ?? []}
                     attention={own.byTask.get(row.id)}
                     lastActivityAt={own.lastActivity.get(row.id)}
+                    showHost={showHost}
                   />
                 )
                 // A task with no goal is a group of one: its blocks stay with its row.
