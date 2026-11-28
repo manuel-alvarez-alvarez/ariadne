@@ -231,6 +231,49 @@ async fn two_subscribers_receive_the_same_rev_sequence() {
     assert_eq!(first_updates, second_updates);
 }
 
+/// The state names the seat, the step, the host, the agent, the model and
+/// the effort of the session. A switch to another model of the same agent
+/// reaches the stream as a patch.
+#[tokio::test]
+async fn the_session_state_names_where_it_runs_and_a_switch_patches_it() {
+    let t = Held::start().await;
+    let snapshot = t.trajectory("").await;
+    let state = &snapshot["session"];
+    assert_eq!(state["seat"], "agent");
+    assert_eq!(state["step"], "develop");
+    assert_eq!(state["host"], "local", "the task has no other host");
+    assert_eq!(state["agent"], "stub");
+    assert_eq!(state["model"], "test-model");
+    assert_eq!(
+        state["effort"], "low",
+        "the effort option's value, for a pin with no effort"
+    );
+
+    let mut body = t.stream().await;
+    expect_sse(&mut body, "snapshot").await;
+    let (status, _) =
+        t.h.send(post_json(
+            &format!("/v1/sessions/{}/switch", t.session.id),
+            json!({"model": "stub:other-model", "effort": "high"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    loop {
+        let update = expect_sse(&mut body, "update").await;
+        let patched = ops(&[update], "session_patch")
+            .into_iter()
+            .map(|op| op["session"].clone())
+            .find(|session| session["model"] == "other-model" && session["effort"] == "high");
+        if let Some(session) = patched {
+            assert_eq!(session["agent"], "stub");
+            assert_eq!(session["seat"], "agent");
+            assert_eq!(session["step"], "develop");
+            assert_eq!(session["host"], "local");
+            return;
+        }
+    }
+}
+
 /// A closed turn is its prompt, its counts and its answer; its steps and
 /// the turns older than the newest come in pages.
 #[tokio::test]

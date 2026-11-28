@@ -1093,18 +1093,7 @@ mod tests {
         let opens = |id: &str| {
             let fold = Fold::new(
                 "session",
-                ariadne_api::trajectory::SessionStateDto {
-                    status: ariadne_core::SessionStatus::Running,
-                    attention_reason: None,
-                    running_turn_id: None,
-                    title: None,
-                    mode: None,
-                    config_options: Vec::new(),
-                    context: None,
-                    usage: Default::default(),
-                    cost: None,
-                    commands: Vec::new(),
-                },
+                crate::trajectory::blank_session(ariadne_core::SessionStatus::Running),
             );
             opens_a_step(fold, &heads, id)
         };

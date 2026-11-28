@@ -20,6 +20,7 @@ use tokio::sync::{Notify, broadcast, mpsc};
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::stream::{DomainEvent, ResyncDto};
+use ariadne_api::tasks::LOCAL_HOST;
 use ariadne_api::trajectory::{
     MAIN_LANE, ToolCallDetailDto, TrajectoryItemQuery, TrajectoryOpDto, TrajectoryQuery,
     TrajectorySnapshotDto, TrajectoryStepsDto, TrajectoryStepsQuery, TrajectoryStreamQuery,
@@ -224,7 +225,8 @@ impl Hub {
             if merge.lagged() && tries < OPEN_TRIES {
                 continue;
             }
-            let mut fold = Fold::new(session_id, session_state(&row, display.as_ref()));
+            let host = host_of(&state.store, row.task_id.as_deref()).await?;
+            let mut fold = Fold::new(session_id, session_state(&row, display.as_ref(), &host));
             fold.set_cwd(state.store.get_session(session_id).await?.worktree_path);
             fold.set_display_reported(display.is_some());
             read.fold_into(&mut fold, so_far);
@@ -436,6 +438,19 @@ fn turn_not_found(turn_id: &str) -> ApiError {
     )
 }
 
+/// The host that runs a session's task: `local` for a session with no task,
+/// and for a task that names no host.
+async fn host_of(
+    store: &ariadne_store::Store,
+    task_id: Option<&str>,
+) -> Result<String, StoreError> {
+    Ok(match task_id {
+        Some(id) => store.get_task(id).await?.host,
+        None => None,
+    }
+    .unwrap_or_else(|| LOCAL_HOST.into()))
+}
+
 fn turns_of(limit: Option<u32>) -> usize {
     limit.map_or(DEFAULT_TURNS, |limit| (limit as usize).clamp(1, MAX_TURNS))
 }
@@ -445,7 +460,8 @@ fn turns_of(limit: Option<u32>) -> usize {
 async fn fold_of(state: &AppState, session_id: &str, read: Read) -> Result<Fold, StoreError> {
     let row = session_dto_of(&state.store, state.store.get_session(session_id).await?).await?;
     let display = state.store.reported_display_state(session_id).await?;
-    let mut fold = Fold::new(session_id, session_state(&row, display.as_ref()));
+    let host = host_of(&state.store, row.task_id.as_deref()).await?;
+    let mut fold = Fold::new(session_id, session_state(&row, display.as_ref(), &host));
     fold.set_cwd(state.store.get_session(session_id).await?.worktree_path);
     fold.set_display_reported(display.is_some());
     read.fold_into(&mut fold, Vec::new());
@@ -626,7 +642,7 @@ pub(super) async fn item(
         .ok_or_else(not_found)?;
     let row = session_dto_of(&state.store, state.store.get_session(&id).await?).await?;
     if !opens_a_step(
-        Fold::new(&id, session_state(&row, None)),
+        Fold::new(&id, session_state(&row, None, LOCAL_HOST)),
         &heads[..=at],
         &item_id,
     ) {
@@ -710,18 +726,7 @@ mod tests {
     /// A hub's fold that counts one waiting question it does not hold: what
     /// a cold read past the waiting limit leaves to fill.
     fn hub_lacking_one_question() -> HubState {
-        let state = ariadne_api::trajectory::SessionStateDto {
-            status: ariadne_core::SessionStatus::Running,
-            attention_reason: None,
-            running_turn_id: None,
-            title: None,
-            mode: None,
-            config_options: Vec::new(),
-            context: None,
-            usage: Default::default(),
-            cost: None,
-            commands: Vec::new(),
-        };
+        let state = crate::trajectory::blank_session(ariadne_core::SessionStatus::Running);
         let mut fold = Fold::new("session", state);
         let head = |id: &str, kind: &str, facts: &str| ariadne_store::EventHead {
             id: id.into(),

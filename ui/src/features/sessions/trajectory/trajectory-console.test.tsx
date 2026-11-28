@@ -307,7 +307,7 @@ it("sends a prompt as queued, and drops the queued block once a turn holds it", 
           turn: aTurn({
             state: "running",
             ended_at: null,
-            prompt: { id: "p", content: text("Add a test"), source: "console" },
+            prompt: { brief: null, id: "p", content: text("Add a test"), source: "console" },
           }),
         },
       ]),
@@ -872,7 +872,9 @@ it("shows the state of a turn line as an icon, with the time and the counts", ()
 
 it("shows the author of each turn part as an icon, its word as the name", () => {
   const turn = aTurn()
-  const daemon = aTurn({ prompt: { id: anId(), content: text("Resume"), source: "daemon" } })
+  const daemon = aTurn({
+    prompt: { brief: null, id: anId(), content: text("Resume"), source: "daemon" },
+  })
   renderConsole(aSnapshot([turn, daemon]))
 
   for (const role of ["You", "Developer"]) {
@@ -888,6 +890,7 @@ const BRIEF_LINES = ["# Resume", "line two", "line three", "line four", "line fi
 function aDaemonTurn(body: string) {
   return aTurn({
     prompt: {
+      brief: null,
       id: anId(),
       content: text(`Seat brief\n\n${body}`),
       text: body,
@@ -973,7 +976,7 @@ it("folds a daemon prompt of more than 4 lines, and keeps its fold off the scree
 
 it("shows a typed prompt whole, and a daemon prompt of 4 lines whole", () => {
   const typed = aTurn({
-    prompt: { id: anId(), content: text("1\n2\n3\n4\n5\n6"), source: "console" },
+    prompt: { brief: null, id: anId(), content: text("1\n2\n3\n4\n5\n6"), source: "console" },
   })
   const short = aDaemonTurn("a\nb\nc\nd")
   renderConsole(aSnapshot([typed, short]))

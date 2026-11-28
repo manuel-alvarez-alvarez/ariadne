@@ -169,6 +169,12 @@ fn scratch(session_id: &str) -> Fold {
             usage: Default::default(),
             cost: None,
             commands: Vec::new(),
+            seat: None,
+            step: None,
+            host: ariadne_api::tasks::LOCAL_HOST.into(),
+            agent: String::new(),
+            model: None,
+            effort: None,
         },
     )
 }
