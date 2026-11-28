@@ -172,7 +172,7 @@ pub(crate) struct SkillSupplement {
 
 /// Every supplement Ariadne ships. A pair of skill and seat that is not here
 /// adds no text.
-pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 6] = [
+pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 7] = [
     SkillSupplement {
         skill: "code-review",
         seat: Seat::Agent,
@@ -182,6 +182,11 @@ pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 6] = [
         skill: "code-review",
         seat: Seat::Reviewer,
         text: include_str!("../supplements/code-review/reviewer.md"),
+    },
+    SkillSupplement {
+        skill: PR_REVIEWER_SKILL,
+        seat: Seat::Reviewer,
+        text: include_str!("../supplements/pr-reviewer/reviewer.md"),
     },
     SkillSupplement {
         skill: "pr-babysit",
@@ -975,16 +980,21 @@ pub(crate) mod tests {
     /// agent seat's `merge` supplement is 260: the
     /// step call that passes the work with its `merge_commit`, and the
     /// `fail_step` call for a failed check. Its `conflict-resolution`
-    /// supplement is 140: the one step call, for where no skill invoked it. The
-    /// total is 2,850, the six caps with a sentence of room.
+    /// supplement is 140: the one step call, for where no skill invoked it.
+    /// The reviewer seat's `pr-reviewer` supplement is 900: the calls that
+    /// read the request, the diff and the threads, the call that answers a
+    /// thread, and the one that submits the round, which the skill dropped
+    /// with every other Ariadne word. The total is 3,750, the seven caps with
+    /// a sentence of room: it rose from 2,850 by those 900.
     /// A new pair needs a cap of its own here, argued the same way, and the
     /// total holds them all.
     #[test]
     fn supplement_size_caps_hold() {
-        const TOTAL: usize = 2_850;
+        const TOTAL: usize = 3_750;
         let cap = |skill: &str, seat: Seat| match (skill, seat) {
             ("code-review", Seat::Agent) => 300,
             ("code-review", Seat::Reviewer) => 200,
+            (PR_REVIEWER_SKILL, Seat::Reviewer) => 900,
             ("pr-babysit", Seat::Agent) => 1100,
             ("pr-babysit", Seat::Keeper) => 500,
             ("merge", Seat::Agent) => 260,
@@ -1029,6 +1039,19 @@ pub(crate) mod tests {
                 "the reviewer supplement and {call}"
             );
         }
+        let pr = skill_supplement(PR_REVIEWER_SKILL, Seat::Reviewer).unwrap();
+        for call in [
+            "`get_pull_request`",
+            "`get_diff`",
+            "`list_comments`",
+            "`reply_comment`",
+            "`resolve_thread`",
+            "`escalate_comment`",
+            "`submit_review`",
+        ] {
+            assert!(pr.contains(call), "the pr-reviewer supplement and {call}");
+        }
+        assert_eq!(skill_supplement(PR_REVIEWER_SKILL, Seat::Agent), None);
         assert_eq!(skill_supplement("code-review", Seat::Orchestrator), None);
         assert_eq!(skill_supplement("code-review", Seat::Keeper), None);
         assert_eq!(skill_supplement("architecture-review", Seat::Agent), None);

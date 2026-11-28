@@ -304,7 +304,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     (`pull_request_reviews.rs::a_submitted_review_stores_the_checkout_head_when_the_forge_head_moved`).
     No session reports readiness. The daemon decides from forge evidence (031 rule 15).
     A finding the `pr-reviewer` skill writes follows these rules:
-    - The skill gives the title in the `title` field of `submit_review` only.
+    - The skill gives the title apart from the body; the reviewer seat's
+      `pr-reviewer` supplement names that the `title` field of `submit_review` holds it.
     - The daemon posts `**[Pn] Title**` from it (rule 13), so the body repeats no title.
     - The body opens with a concise description and has `To reproduce:` steps where needed.
     - A reproduction is a code block of at most 10 lines, or prose steps.
@@ -329,7 +330,8 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 
 ## Verdict and attention
 
-17. `pr-reviewer` posts every round as a `comment`, and never names
+17. `pr-reviewer` posts every round as a `comment` review (the supplement
+    names the event), and never names
     `request_changes`: the closing sentence of the round body says whether
     the author must change the code. P0 is a critical risk to behavior,
     data or security. P1 is a proven defect, unmet requirement, or written
@@ -383,15 +385,16 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     Leave threads another login opened.
     Escalated threads reach Needs attention (031 rule 17).
 
-    A draft gets the same round. News of a head equal to the reviewed
-    revision needs no tool call. Where the head moves during a round, the
+    A draft gets the same round. An update of a head equal to the reviewed
+    revision needs no call. Where the head moves during a round, the
     daemon records the revision the round reviewed. The round ends on one result
     in the turn text, in a literal shape: `Reviewed <sha>: comment with <n>
     findings.`, with `0` for a round with no new finding, then one line per
     finding, ending `unverified` where its reproduction failed, settled
     thread, check, failed tool call and defect outside the diff. That text
     is all the user reads of a round that posts nothing. The round ends on
-    `submit_review` alone: the skill states that
+    `submit_review` alone: the reviewer seat's `pr-reviewer` supplement
+    (006 rule 21) states that
     a step call another skill names — `complete_step` or `fail_step` in a
     picked `code-review` or `documentation` — is the task seat's, and that
     this seat has none, since the seat lists neither tool (rule 11).
