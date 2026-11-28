@@ -68,7 +68,7 @@ The session task's tests prove that rule for a prompt.
    A missed delivery costs nothing more than the next one.
    Concurrent wakes follow the coalescing rule in 026; a burst of deliveries for one push — `check_run`, `check_suite` and `status` events alike — folds into that rule's one fixed debounce window, so it costs one fetch rather than one per delivery.
 5. `forge_integrations` holds `webhook_id`, `webhook_secret`, `webhook_url`, `webhook_state`,
-   `webhook_error`, `webhook_last_delivery_at`, and `webhook_rights_refused` (0 or 1, default 0). `webhook_state` defaults to `polling`; the rest are nullable.
+   `webhook_error`, `webhook_last_delivery_at`, and `webhook_rights_refused` (0 or 1, default 0). `webhook_state` defaults to `polling`, and `webhook_rights_refused` is never null; the rest are nullable.
    Each integration receives 32 cryptographically random bytes, encoded as 64 hexadecimal characters.
    The secret is stored before creation because the forge can immediately send a ping.
    Public DTOs exclude it, and hook errors redact it.
