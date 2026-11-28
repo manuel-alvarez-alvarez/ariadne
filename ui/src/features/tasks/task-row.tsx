@@ -90,6 +90,7 @@ export function TaskRow({
   steps,
   attention,
   lastActivityAt,
+  showHost = false,
 }: {
   /** The host the task runs on, which its panel link carries. */
   host: Host
@@ -100,11 +101,21 @@ export function TaskRow({
   attention?: SessionAttention | null
   /** The latest session activity of the task, as on the card. */
   lastActivityAt?: string | null
+  /**
+   * Name the row's host also where it runs on that host itself, as a goal
+   * line names its goal's: a task with no goal has no goal line to do it.
+   */
+  showHost?: boolean
 }) {
   const executionHost = useSourceHost(task.execution_context?.execution_owner)
+  const runsHere = !task.host || task.host === "local"
   const displayedHost = task.execution_context
     ? (executionHost ?? "Unconfigured worker")
-    : task.host
+    : runsHere && showHost
+      ? host
+      : task.host
+  // A task that runs on its own host names none, unless the caller asks.
+  const labelled = task.execution_context || !runsHere || showHost
   const activity =
     lastActivityAt && Date.parse(lastActivityAt) > Date.parse(task.updated_at)
       ? lastActivityAt
@@ -175,7 +186,7 @@ export function TaskRow({
         <span data-column="host" className={cn(HOST_CELL, "min-w-0")}>
           {task.execution_context && !executionHost ? (
             <span className="block truncate">Unconfigured worker</span>
-          ) : displayedHost && (displayedHost !== "local" || task.execution_context) ? (
+          ) : displayedHost && labelled ? (
             <HostLabel
               host={displayedHost}
               className="block max-w-full truncate"

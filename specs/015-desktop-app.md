@@ -805,7 +805,8 @@ Out: the daemon endpoints themselves (012).
     the border colour when the card has none. The rows of one goal are
     adjacent, in a named group (`<goal>: Tasks`), so their segments join into
     one rail. A gap separates one group from the next. A task with no goal is
-    a group of one row, with its own segment.
+    a group of one row, with its own segment. Its row names its host by
+    rule 74, as a goal line does.
     From 33.9rem wide up, the board never scrolls sideways. Below 33.9rem it
     scrolls sideways and cuts no column. It is a CSS container, so its own width
     decides the columns, and a pinned inspector narrows it like a narrow
@@ -1889,6 +1890,10 @@ view.
 
 - Each goal-less task is a group of one row, in no goal's group
   (`ui/src/features/goals/goal-board.test.tsx::draws each goal-less task as a group of one row, in no goal's group`).
+- A goal-less task's row names its host by rule 74, as a goal line does, `local`
+  included. Where the goals name no host, the row names none for a task that runs on its own host
+  (`ui/src/features/goals/goal-board.test.tsx::names a goal-less task's host in its row, as a goal line names its goal's`;
+  `::names no host on a goal-less task's row while the goals name none`).
 - A far goal-less task that its source and its worker both list is on the board once
   (`ui/src/features/goals/goal-board.test.tsx::shows a far goal-less task once, though its source and its worker both list it`).
 - A `task_created` event adds a goal-less task's row, and a `task_updated` event moves a row into its goal
