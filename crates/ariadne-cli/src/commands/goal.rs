@@ -818,6 +818,7 @@ mod tests {
                     error: None,
                     last_delivery_at: None,
                     fetch_error: None,
+                    rights_refused: false,
                 },
                 kind: ariadne_core::ForgeKind::Github,
                 host: "github.com".into(),

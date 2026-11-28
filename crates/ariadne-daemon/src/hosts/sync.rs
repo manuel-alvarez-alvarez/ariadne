@@ -979,6 +979,7 @@ mod tests {
                     error: None,
                     last_delivery_at: None,
                     fetch_error: None,
+                    rights_refused: false,
                 },
                 kind: ForgeKind::Github,
                 host: "github.com".into(),

@@ -36,7 +36,7 @@ test that proves it. Conventions for writing and changing one are in
 | 024 | [Advisory failure diagnosis](024-advisory-failure-diagnosis.md) | the optional local classifier beside a failed session's error, and why it never changes recovery |
 | 025 | [Forge integration](025-forge-integration.md) | the forge a repository's remote is on, enabling it, and the `gh` client |
 | 026 | [Pull requests](026-pull-requests.md) | request identity, draft task requests, held fetch lists, ledger, the request session and its news, CLI, and screen |
-| 027 | [Webhooks and tunnel](027-webhooks-and-tunnel.md) | separate signed ingress, hook lifecycle, public URL handle, fetch modes, the per-repository webhook switch and poll interval, and the tunnel with its switch |
+| 027 | [Webhooks and tunnel](027-webhooks-and-tunnel.md) | separate signed ingress, hook lifecycle, public URL handle, fetch modes, the per-repository webhook switch and poll interval, the retry of a hook refused for rights, and the tunnel with its switch |
 | 028 | [Issues and goals](028-issues-and-goals.md) | live forge issues and goals created from them |
 | 029 | [Reviewing a request](029-reviewing-a-request.md) | the reviewer session on any explicitly requested PR, its detached worktree, its news, one review by priority, asking by hand regardless of authorship or review assignment, no Ariadne approval of its own, and no forge approval |
 | 030 | [Workflows](030-workflows.md) | the workflow every goal runs on: the document, the catalog, the routes, one agent per column, step moves and gates, and the `pr` column; saved remote task workflows |

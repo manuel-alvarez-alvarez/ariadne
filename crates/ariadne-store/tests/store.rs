@@ -5061,6 +5061,41 @@ fn widgets(repository_id: &str) -> SetForgeIntegration {
     }
 }
 
+/// A hook refused for rights is recorded on the row (027 rule 8), and a new
+/// forge identity clears it with the rest of the hook metadata.
+#[tokio::test]
+async fn a_rights_refusal_is_stored_and_a_new_forge_identity_clears_it() {
+    let (store, _dir) = test_store().await;
+    let repo = seed_repository(&store).await;
+    store
+        .set_forge_integration(SetForgeIntegration {
+            enabled: true,
+            ..widgets(&repo.id)
+        })
+        .await
+        .unwrap();
+    let mut row = store.forge_integration(&repo.id).await.unwrap().unwrap();
+    assert!(!row.webhook_rights_refused, "a new row has no refusal");
+    row.webhook_rights_refused = true;
+    row.webhook_error = Some("gh: Not Found (HTTP 404)".into());
+    assert!(store.set_webhook(&row).await.unwrap());
+    let read = store.forge_integration(&repo.id).await.unwrap().unwrap();
+    assert!(read.webhook_rights_refused);
+    store
+        .set_forge_integration(SetForgeIntegration {
+            enabled: true,
+            name: "Gadgets".into(),
+            ..widgets(&repo.id)
+        })
+        .await
+        .unwrap();
+    let read = store.forge_integration(&repo.id).await.unwrap().unwrap();
+    assert!(
+        !read.webhook_rights_refused,
+        "a new identity has no refusal"
+    );
+}
+
 /// How the last fetch went is written only on a change (026): a failure and
 /// its error, then the fetch that works again. A fetch that works on and on
 /// writes nothing, so a timer fetch every 5 minutes publishes nothing. A

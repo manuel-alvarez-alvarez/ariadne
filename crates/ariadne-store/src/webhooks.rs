@@ -40,16 +40,16 @@ impl Store {
     pub async fn set_webhook(&self, row: &ForgeIntegration) -> Result<bool> {
         let changed = sqlx::query(
             "UPDATE forge_integrations SET webhook_id = ?, webhook_secret = ?, webhook_url = ?,
-             webhook_state = ?, webhook_error = ?, updated_at = ?
+             webhook_state = ?, webhook_error = ?, webhook_rights_refused = ?, updated_at = ?
              WHERE repository_id = ? AND kind = ? AND host = ? AND owner = ? AND name = ? AND enabled = ?
              AND (webhook_id IS NOT ? OR webhook_secret IS NOT ? OR webhook_url IS NOT ?
-                  OR webhook_state IS NOT ? OR webhook_error IS NOT ?)",
+                  OR webhook_state IS NOT ? OR webhook_error IS NOT ? OR webhook_rights_refused IS NOT ?)",
         )
         .bind(row.webhook_id).bind(&row.webhook_secret).bind(&row.webhook_url)
-        .bind(&row.webhook_state).bind(&row.webhook_error).bind(now())
+        .bind(&row.webhook_state).bind(&row.webhook_error).bind(row.webhook_rights_refused).bind(now())
         .bind(&row.repository_id).bind(&row.kind).bind(&row.host).bind(&row.owner).bind(&row.name).bind(row.enabled)
         .bind(row.webhook_id).bind(&row.webhook_secret).bind(&row.webhook_url)
-        .bind(&row.webhook_state).bind(&row.webhook_error)
+        .bind(&row.webhook_state).bind(&row.webhook_error).bind(row.webhook_rights_refused)
         .execute(self.w()).await?.rows_affected() > 0;
         if changed {
             self.publish(Change::RepositoryUpdated(

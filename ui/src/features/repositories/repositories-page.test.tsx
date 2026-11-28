@@ -255,6 +255,74 @@ describe("RepositoriesPage", () => {
     expect(await screen.findByText(/every 15 minutes/)).toBeDefined()
   })
 
+  it("shows amber polling when the forge refused the hook for rights, and says how to fix it", async () => {
+    const user = userEvent.setup()
+    stubDaemon([
+      {
+        ...ARIADNE,
+        forge: aForge({
+          enabled: true,
+          host: "github.example.com",
+          webhook: {
+            state: "polling",
+            url: null,
+            error:
+              'gh: Not Found (HTTP 404)\nThis API operation needs the "admin:repo_hook" scope.',
+            last_delivery_at: null,
+            fetch_error: null,
+            rights_refused: true,
+          },
+        }),
+      },
+    ])
+    // The tunnel is up, yet the forge refused the hook.
+    renderScreen(<RepositoriesPage />)
+
+    const pill = await screen.findByRole("img", { name: "polling: no webhook rights" })
+    expect(pill.textContent).toBe("polling")
+    expect(pill.className).toContain("bg-status-warn-soft")
+    expect(screen.queryByRole("img", { name: /smee/ })).toBeNull()
+    await user.hover(pill)
+    expect(await screen.findByText(/admin rights on the repository/)).toBeDefined()
+    expect(await screen.findByText(/admin:repo_hook scope on the gh token/)).toBeDefined()
+    expect(
+      await screen.findByText("gh auth refresh -h github.example.com -s admin:repo_hook"),
+    ).toBeDefined()
+    expect(await screen.findByText(/Turn off the webhook for this repository/)).toBeDefined()
+  })
+
+  it("shows amber polling for a rights refusal while the tunnel cannot be read", async () => {
+    stubDaemon([
+      {
+        ...ARIADNE,
+        forge: aForge({
+          enabled: true,
+          webhook: {
+            state: "polling",
+            url: null,
+            error: "HTTP 404: Not Found",
+            last_delivery_at: null,
+            fetch_error: null,
+            rights_refused: true,
+          },
+        }),
+      },
+    ])
+    const answer = daemonFetch.getMockImplementation()
+    daemonFetch.mockImplementation(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      if (new URL(request.url).pathname === "/v1/forge/tunnel") {
+        return errorResponse(500, "internal", "no tunnel")
+      }
+      return (answer as NonNullable<typeof answer>)(input, init)
+    })
+    renderScreen(<RepositoriesPage />)
+
+    const pill = await screen.findByRole("img", { name: "polling: no webhook rights" })
+    expect(pill.className).toContain("bg-status-warn-soft")
+    expect(screen.queryByTitle("The tunnel could not be read")).toBeNull()
+  })
+
   it("shows the forge each remote is on over two lines, and whether it is enabled", async () => {
     stubDaemon([
       { ...ARIADNE, forge: aForge({ enabled: true, login: "octocat" }) },

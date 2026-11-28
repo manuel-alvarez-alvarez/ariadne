@@ -61,6 +61,8 @@ enum Command {
     Wake(String),
     Mode(String, Mode),
     Changed(String, oneshot::Sender<()>),
+    /// A retry made the hook live. The loop checks that it still is.
+    HookLive(String),
 }
 #[derive(Clone)]
 pub struct ForgePoll {
@@ -105,6 +107,47 @@ struct Handoff {
     live: LivePulls,
     /// Caps how many of this fetch's host's repositories run at once.
     host_limits: HostFetchLimits,
+    /// Where a worker reports a hook that went live. Weak, so the poll still
+    /// ends once its handle is dropped.
+    commands: mpsc::WeakUnboundedSender<Command>,
+    /// The current public URL, read by a hook retry at the moment it runs.
+    urls: watch::Receiver<Public>,
+    /// One lock per repository: its hook registrations run one at a time.
+    hook_locks: Arc<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+}
+impl Handoff {
+    fn hook_lock(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.hook_locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(id.into())
+            .or_default()
+            .clone()
+    }
+    /// Wait for the turn of a repository's hook registration. Only a
+    /// repository's own worker waits: the shared loop never does.
+    async fn hook_turn(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        self.hook_lock(id).lock_owned().await
+    }
+    /// Take the turn at once, or none. Where a retry holds it, a task waits
+    /// for it and asks the loop to sync the repository again, so the loop
+    /// answers every other repository meanwhile.
+    fn hook_turn_now(&self, id: &str) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let lock = self.hook_lock(id);
+        if let Ok(turn) = lock.clone().try_lock_owned() {
+            return Some(turn);
+        }
+        let commands = self.commands.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            drop(lock.lock_owned().await);
+            if let Some(commands) = commands.upgrade() {
+                let (done, _) = oneshot::channel();
+                let _ = commands.send(Command::Changed(id, done));
+            }
+        });
+        None
+    }
 }
 struct Worker {
     identity: (String, String, String, String),
@@ -205,6 +248,8 @@ pub fn start(
 ) -> ForgePoll {
     let scheduler: Waker = Arc::default();
     let pulls_seen: Arc<std::sync::Mutex<HashMap<String, u64>>> = Arc::default();
+    let (commands, mut requests) = mpsc::unbounded_channel();
+    let webhook_url = crate::webhooks::WebhookUrl::new(cfg.webhook_public_url.clone());
     let handoff = Handoff {
         details: timeouts.forge_details,
         scheduler: scheduler.clone(),
@@ -213,11 +258,12 @@ pub fn start(
         pulls_seen: pulls_seen.clone(),
         live,
         host_limits: HostFetchLimits::default(),
+        commands: commands.downgrade(),
+        urls: webhook_url.subscribe(),
+        hook_locks: Arc::default(),
     };
-    let webhook_url = crate::webhooks::WebhookUrl::new(cfg.webhook_public_url.clone());
     let mut urls = webhook_url.subscribe();
     let mut events = events.subscribe();
-    let (commands, mut requests) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         let mut workers = HashMap::new();
         let mut public_url = urls.borrow_and_update().clone();
@@ -239,6 +285,14 @@ pub fn start(
                         let existed = workers.contains_key(&id);
                         sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
                         if existed && let Some(worker) = workers.get(&id) { worker.wake.notify_one(); }
+                    }
+                    Some(Command::HookLive(id)) => {
+                        sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
+                        let live = matches!(
+                            store.forge_integration(&id).await,
+                            Ok(Some(row)) if row.enabled && row.webhook_enabled && row.webhook_state == "live"
+                        );
+                        if live && let Some(worker) = workers.get(&id) { worker.mode.send_replace(Mode::WakeOnly); }
                     }
                     Some(Command::Mode(id, mode)) => {
                         sync(&store, &cfg, timeouts, &mut workers, &id, &public_url, &handoff).await;
@@ -313,11 +367,18 @@ async fn sync(
                 .remove(id);
             handoff.bus.pull_requests_changed(id);
         }
-        if let Some(row) = row
-            && row.webhook_id.is_some()
-            && let Err(error) = super::hooks::reconcile(store, cfg, row, &Public::default()).await
-        {
-            warn!(%error, repository = id, "cannot remove forge hook");
+        if row.is_some() {
+            let Some(_turn) = handoff.hook_turn_now(id) else {
+                return;
+            };
+            // Read again under the turn: a retry may have saved a hook.
+            if let Ok(Some(row)) = store.forge_integration(id).await
+                && row.webhook_id.is_some()
+                && let Err(error) =
+                    super::hooks::reconcile(store, cfg, row, &Public::default()).await
+            {
+                warn!(%error, repository = id, "cannot remove forge hook");
+            }
         }
         // With the integration off nothing reads the forge for its
         // requests: the scheduler ends the work of each but a task's,
@@ -360,7 +421,7 @@ async fn sync(
             .remove(id);
         handoff.bus.pull_requests_changed(id);
     }
-    let before = (
+    let mut before = (
         row.webhook_state.clone(),
         row.webhook_url.clone(),
         row.webhook_id,
@@ -371,7 +432,25 @@ async fn sync(
     let interval = poll_interval(&row, &timeouts);
     let webhook_enabled = row.webhook_enabled;
     if reconcile_hook {
-        match super::hooks::reconcile(store, cfg, row, public_url).await {
+        let Some(_turn) = handoff.hook_turn_now(id) else {
+            return;
+        };
+        // A retry that held the turn may have saved a hook since the read
+        // above: reconcile what the store holds now, or a second hook is made.
+        let fresh = match store.forge_integration(id).await {
+            Ok(Some(fresh)) => fresh,
+            Ok(None) => return,
+            Err(error) => {
+                warn!(%error, repository = id, "cannot read forge integration");
+                return;
+            }
+        };
+        before = (
+            fresh.webhook_state.clone(),
+            fresh.webhook_url.clone(),
+            fresh.webhook_id,
+        );
+        match super::hooks::reconcile(store, cfg, fresh, public_url).await {
             Ok(current) => row = current,
             Err(error) => {
                 warn!(%error, repository = id, "cannot reconcile forge hook");
@@ -431,6 +510,34 @@ async fn sync(
     }
 }
 
+/// Register again a hook the forge refused for rights (rule 8 of 027), while
+/// the integration is enabled with its webhook switch on. It runs in the
+/// repository's own worker, never in the shared loop, and reads the integration
+/// and the public URL once it holds the repository's turn, so a withdrawal that
+/// came first is never undone. A hook that goes live puts the worker in
+/// `WakeOnly`. The timer fetch that follows is the catch-up fetch.
+async fn retry_hook(store: &Store, cfg: &Arc<Config>, handoff: &Handoff, id: &str) {
+    let _turn = handoff.hook_turn(id).await;
+    let row = match store.forge_integration(id).await {
+        Ok(Some(row)) if row.enabled && row.webhook_enabled && row.webhook_rights_refused => row,
+        Ok(_) => return,
+        Err(error) => {
+            warn!(%error, repository = id, "cannot read forge integration");
+            return;
+        }
+    };
+    let public_url = handoff.urls.borrow().clone();
+    match super::hooks::reconcile(store, cfg, row, &public_url).await {
+        Ok(current) if current.webhook_state == "live" => {
+            if let Some(commands) = handoff.commands.upgrade() {
+                let _ = commands.send(Command::HookLive(id.into()));
+            }
+        }
+        Ok(_) => {}
+        Err(error) => warn!(%error, repository = id, "cannot retry forge hook"),
+    }
+}
+
 /// End a repository's fetch worker before deleting its held list. A worker
 /// can complete a list read while shutdown begins, so clearing first would
 /// let that completing worker restore the list after its integration changed.
@@ -468,7 +575,12 @@ async fn worker(
         mut interval,
     } = signals;
     let mut backoff = *interval.borrow_and_update();
+    // Whether the timer, not a wake, started this fetch.
+    let mut timed = false;
     loop {
+        if std::mem::take(&mut timed) {
+            retry_hook(&store, &cfg, &handoff, &id).await;
+        }
         let base = *interval.borrow();
         // `fetch` itself acquires its host's permit, on the integration it
         // rereads there and then — never on a host captured here, which a
@@ -537,7 +649,10 @@ async fn worker(
                     debounce(&wake, timeouts.forge_wake_debounce).await;
                     break;
                 },
-                _ = tokio::time::sleep(backoff), if timer => break,
+                _ = tokio::time::sleep(backoff), if timer => {
+                    timed = true;
+                    break;
+                },
                 changed = mode.changed() => if changed.is_err() { return; },
                 changed = interval.changed() => {
                     if changed.is_err() { return; }
@@ -1080,6 +1195,7 @@ mod tests {
             fetch_error: None,
             webhook_enabled: true,
             poll_interval_minutes: None,
+            webhook_rights_refused: false,
             detected_at: String::new(),
             updated_at: String::new(),
         }

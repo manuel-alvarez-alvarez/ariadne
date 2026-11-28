@@ -39,6 +39,11 @@ pub struct WebhookDto {
     /// one works: what says polling works, where no hook is live.
     #[serde(default)]
     pub fetch_error: Option<String>,
+    /// Whether the forge refused the last hook registration for rights: the
+    /// account lacks admin rights on the repository, or the forge token lacks
+    /// the hook scope. The repository polls, and each timer fetch retries it.
+    #[serde(default)]
+    pub rights_refused: bool,
 }
 
 /// Where the webhook tunnel stands (027).

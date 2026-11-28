@@ -94,6 +94,7 @@ dto! {
             error: f.webhook_error,
             last_delivery_at: f.webhook_last_delivery_at,
             fetch_error: f.fetch_error,
+            rights_refused: f.webhook_rights_refused,
         },
         webhook_enabled: f.webhook_enabled,
         poll_interval_minutes: f.poll_interval_minutes.and_then(|m| u32::try_from(m).ok()),

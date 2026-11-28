@@ -10,6 +10,7 @@ tests:
   - crates/ariadne-daemon/tests/it/forge_host_limit.rs
   - crates/ariadne-daemon/tests/it/tunnel.rs
   - crates/ariadne-daemon/src/config.rs
+  - crates/ariadne-daemon/src/forge/hooks.rs
   - crates/ariadne-store/src/lib.rs
   - crates/ariadne-store/tests/store.rs
   - crates/ariadne-cli/src/commands/repo.rs
@@ -67,7 +68,7 @@ The session task's tests prove that rule for a prompt.
    A missed delivery costs nothing more than the next one.
    Concurrent wakes follow the coalescing rule in 026; a burst of deliveries for one push — `check_run`, `check_suite` and `status` events alike — folds into that rule's one fixed debounce window, so it costs one fetch rather than one per delivery.
 5. `forge_integrations` holds `webhook_id`, `webhook_secret`, `webhook_url`, `webhook_state`,
-   `webhook_error`, and `webhook_last_delivery_at`. `webhook_state` defaults to `polling`; the rest are nullable.
+   `webhook_error`, `webhook_last_delivery_at`, and `webhook_rights_refused` (0 or 1, default 0). `webhook_state` defaults to `polling`, and `webhook_rights_refused` is never null; the rest are nullable.
    Each integration receives 32 cryptographically random bytes, encoded as 64 hexadecimal characters.
    The secret is stored before creation because the forge can immediately send a ping.
    Public DTOs exclude it, and hook errors redact it.
@@ -85,7 +86,15 @@ The session task's tests prove that rule for a prompt.
    The worker enters `WakeOnly` and fetches once to catch earlier changes.
    Startup and enable also fetch once, without a duplicate registration fetch.
    Delivery timestamps and other repository events do not recreate the hook.
-8. A creation refusal enters `polling` and preserves the forge's message in `webhook_error`.
+8. A creation refusal enters `polling` and preserves the forge's message in `webhook_error`, with the secret redacted.
+   A creation refusal is a rights refusal when the forge answers 404 or names a missing scope or admin rights.
+   `gh` gives "Not Found (HTTP 404)" with a hint about the `admin:repo_hook` scope.
+   A scope the request gets wrong, such as "invalid scope", is no rights refusal.
+   A rights refusal also sets `webhook_rights_refused`, and every other reconcile result clears it.
+   While it holds with the integration enabled and its switch on (rule 22),
+   each timer fetch first retries the registration through the same reconcile.
+   A retry that succeeds enters `live` and `WakeOnly` with no restart, and that timer fetch is its catch-up fetch.
+   A retry with the URL withdrawn creates no hook. Other refusals get no retry.
    No public URL means `polling`, with the reason the URL was withdrawn as the error, or no error.
    A withdrawn URL clears the public address, restores `Timer`, and wakes one fetch.
    The hook ID remains stored for an update when a public URL returns.
@@ -93,7 +102,7 @@ The session task's tests prove that rule for a prompt.
    That transition also restores `Timer` and wakes one fetch.
    Another update or deletion failure enters `failed`, retaining the hook ID and error for recovery.
    `failed` also uses `Timer`.
-   URL changes or a subsequent enable retry reconciliation; no hook registration timer runs.
+   URL changes or a subsequent enable retry reconciliation; only a rights refusal is retried on the timer.
 9. Disabling cancels the worker and deletes the stored hook.
    A missing hook counts as a successful deletion.
    The secret stays private, and a disabled integration rejects deliveries.
@@ -101,7 +110,8 @@ The session task's tests prove that rule for a prompt.
    Replacement or repository deletion removes the old hook using its original forge coordinates.
    A cleanup failure logs an error; it cannot authorize old deliveries against the new identity.
    Each changed hook status or delivery timestamp emits `repository_updated` under [012](012-http-api-events-and-usage.md).
-10. `ForgeDto.webhook` contains `state`, `url`, `error`, `last_delivery_at`, and `fetch_error`.
+10. `ForgeDto.webhook` contains `state`, `url`, `error`, `last_delivery_at`, `fetch_error`, and `rights_refused`.
+    `rights_refused` is true while the last registration was a rights refusal (rule 8).
     `fetch_error` is why the last fetch of the repository's requests failed, and null once one works.
     While a rate limit pauses the worker (026 rule 6), it reads `rate limited until <RFC 3339 time>` instead, whatever delivered the wake that found it.
     The poll worker writes it after every fetch, and only a change publishes `repository_updated`.
@@ -114,6 +124,10 @@ The session task's tests prove that rule for a prompt.
     A disabled integration shows `-`.
     A repository whose webhook is off (rule 22) reads `polling` whatever the tunnel does: green while the last fetch worked,
     with a tooltip that says the webhook is off for this repository and gives its interval.
+    A rights refusal with the switch on reads `polling` whatever the tunnel does: amber while the last fetch worked,
+    red otherwise. Its tooltip says a webhook needs admin rights on the repository and the `admin:repo_hook` scope
+    on the gh token, gives `gh auth refresh -h <host> -s admin:repo_hook`,
+    and says to turn off the webhook for this repository to stop the retries.
     The repository form shows the switch and the interval for an enabled integration only.
 
 | State | Enabled repository fetch mode |
@@ -231,8 +245,19 @@ A disabled integration has no worker, regardless of its retained hook status.
   `forge_rate_limit.rs::a_past_rate_limit_reset_waits_for_the_poll_interval`.
 - Changed URLs update hooks, withdrawal wakes a fetch, and disable deletes:
   `webhooks.rs::url_changes_update_hooks_withdrawal_restores_timer_and_disable_deletes`.
-- Creation refusal retains the forge's message and timer fetches:
+- A refusal that names no rights retains the forge's message, timer fetches, and gets no retry:
   `webhooks.rs::a_refused_hook_keeps_the_forge_message_and_timer_fetches`.
+- A create refusal is a rights refusal on 404, a missing scope or admin rights, and not on an invalid scope:
+  `hooks.rs::tests::a_create_refusal_for_rights_names_404_the_hook_scope_or_admin_rights`.
+- A rights refusal polls with the redacted message and `rights_refused`, each timer fetch retries it,
+  and a retry that works goes `live` and `WakeOnly` with no restart:
+  `webhooks.rs::a_rights_refusal_polls_and_a_timer_retry_goes_live_without_a_restart`.
+- A rights refusal retries no hook with the URL withdrawn, the switch off, or the integration disabled:
+  `webhooks.rs::a_rights_refusal_retries_no_hook_with_the_url_withdrawn_the_switch_off_or_disabled`.
+- The row stores a rights refusal, and a new forge identity clears it:
+  `store.rs::a_rights_refusal_is_stored_and_a_new_forge_identity_clears_it`.
+- The table shows amber `polling` on a rights refusal, with both causes, the refresh command and the switch:
+  `repositories-page.test.tsx::shows amber polling when the forge refused the hook for rights, and says how to fix it`.
 - Startup checks a stored hook without another creation and fetches once:
   `webhooks.rs::startup_checks_a_stored_hook_without_creating_another_and_fetches_once`.
 - A missing stored hook restores timer fetching:
@@ -324,6 +349,7 @@ A disabled integration has no worker, regardless of its retained hook status.
 `crates/ariadne-daemon/src/webhooks.rs`, `crates/ariadne-daemon/src/forge/hooks.rs`,
 `crates/ariadne-daemon/src/forge/github/hooks.rs`,
 `crates/ariadne-store/migrations/0001_init.sql`, `crates/ariadne-store/migrations/0013_tunnel_channel.sql`,
+`crates/ariadne-store/migrations/0035_forge_webhook_rights_refused.sql`,
 `crates/ariadne-store/src/webhooks.rs`,
 `crates/ariadne-daemon/src/forge/tunnel.rs`, `crates/ariadne-daemon/src/http/forge.rs`.
 

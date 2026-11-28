@@ -1098,6 +1098,7 @@ exit \"$(cat \"$dir/exit\")\"\n";
             fetch_error: None,
             webhook_enabled: true,
             poll_interval_minutes: None,
+            webhook_rights_refused: false,
             repository_id: "repository".into(),
             kind: "github".into(),
             host: "github.com".into(),

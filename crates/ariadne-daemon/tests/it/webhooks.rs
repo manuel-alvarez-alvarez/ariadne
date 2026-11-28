@@ -439,20 +439,31 @@ async fn url_changes() {
     );
 }
 
-#[tokio::test]
-async fn a_refused_hook_keeps_the_forge_message_and_timer_fetches() {
+/// How `gh` refuses a hook create for a token without the hook scope.
+const RIGHTS_REFUSAL: &str = "gh: Not Found (HTTP 404)\n\
+    This API operation needs the \"admin:repo_hook\" scope. \
+    To request it, run:  gh auth refresh -h github.com -s admin:repo_hook";
+
+/// [`script`] with every hook call refused by `stderr`.
+fn refusing(stderr: &str) -> Value {
     let mut entries = script().as_array().unwrap().clone();
     entries.pop();
-    entries.push(json!({"args":["api"],"exit":1,"stderr":"HTTP 403: needs admin rights"}));
-    let stub = stub_forge_cli(Value::Array(entries));
-    let h = harness()
-        .forge_cli(&stub)
-        .timeouts(ariadne_daemon::timeouts::Timeouts {
-            forge_poll: crate::common::RUNS_OUT,
-            forge_wake_debounce: crate::common::RUNS_OUT / 10,
-            ..Default::default()
-        })
-        .await;
+    entries.push(json!({"args":["api"],"exit":1,"stderr":stderr}));
+    Value::Array(entries)
+}
+
+fn creates(stub: &StubForgeCli) -> usize {
+    stub.invocations()
+        .iter()
+        .filter(|c| c.args.iter().any(|a| a == "POST"))
+        .count()
+}
+
+#[tokio::test]
+async fn a_refused_hook_keeps_the_forge_message_and_timer_fetches() {
+    // A refusal that names no rights: no retry follows it.
+    let stub = stub_forge_cli(refusing("HTTP 422: Validation Failed"));
+    let h = harness().forge_cli(&stub).timeouts(timer_timeouts()).await;
     h.state
         .forge_poll
         .webhook_url()
@@ -460,18 +471,147 @@ async fn a_refused_hook_keeps_the_forge_message_and_timer_fetches() {
     let id = enable(&h).await;
     let row = h.store.forge_integration(&id).await.unwrap().unwrap();
     assert_eq!(row.webhook_state, "polling");
-    assert!(row.webhook_error.unwrap().contains("needs admin rights"));
-    eventually(TIMEOUT, "webhook state or fetch", async || {
-        fetches(&stub) >= 2
+    assert!(row.webhook_error.unwrap().contains("Validation Failed"));
+    let dto: Value = h.get(&format!("/v1/repositories/{id}")).await;
+    assert_eq!(dto["forge"]["webhook"]["rights_refused"], false);
+    eventually(TIMEOUT, "timer fetches", async || fetches(&stub) >= 3).await;
+    assert_eq!(creates(&stub), 1, "no timer fetch retries the hook");
+}
+
+#[tokio::test]
+async fn a_rights_refusal_polls_and_a_timer_retry_goes_live_without_a_restart() {
+    let stub = stub_forge_cli(refusing(RIGHTS_REFUSAL));
+    let h = harness().forge_cli(&stub).timeouts(timer_timeouts()).await;
+    h.state
+        .forge_poll
+        .webhook_url()
+        .set(Some("https://hooks.example".into()));
+    let id = enable(&h).await;
+    let refused = row(&h, &id).await;
+    assert_eq!(refused.webhook_state, "polling");
+    let error = refused.webhook_error.unwrap();
+    assert!(error.contains("admin:repo_hook"), "{error}");
+    assert!(!error.contains(refused.webhook_secret.as_deref().unwrap()));
+    let dto: Value = h.get(&format!("/v1/repositories/{id}")).await;
+    assert_eq!(dto["forge"]["webhook"]["state"], "polling");
+    assert_eq!(dto["forge"]["webhook"]["rights_refused"], true);
+
+    eventually(TIMEOUT, "a timer fetch retries the hook", async || {
+        creates(&stub) >= 3
     })
     .await;
-    assert_eq!(
-        stub.invocations()
-            .iter()
-            .filter(|c| c.args.iter().any(|a| a == "POST"))
-            .count(),
-        1
-    );
+    assert_eq!(row(&h, &id).await.webhook_state, "polling");
+
+    // The user grants the scope: the next retry registers the hook.
+    stub.reprogram(script());
+    eventually(TIMEOUT, "the retried hook goes live", async || {
+        let row = row(&h, &id).await;
+        row.webhook_state == "live" && row.webhook_id == Some(17)
+    })
+    .await;
+    let dto: Value = h.get(&format!("/v1/repositories/{id}")).await;
+    assert_eq!(dto["forge"]["webhook"]["rights_refused"], false);
+    assert!(dto["forge"]["webhook"]["error"].is_null());
+    // Wake-only: the timer (100 ms here) fetches no more.
+    let mut settled = 0;
+    eventually(TIMEOUT, "the timer to stop", async || {
+        let count = fetches(&stub);
+        let held = tokio::time::timeout(QUIET, async {
+            while fetches(&stub) == count {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .is_err();
+        if held {
+            settled = count;
+        }
+        held
+    })
+    .await;
+    let created = creates(&stub);
+    quiet(&stub, settled).await;
+    assert_eq!(creates(&stub), created, "a live hook is not created again");
+}
+
+#[tokio::test]
+async fn a_rights_refusal_retries_no_hook_with_the_url_withdrawn_the_switch_off_or_disabled() {
+    let stub = stub_forge_cli(refusing(RIGHTS_REFUSAL));
+    let h = harness().forge_cli(&stub).timeouts(timer_timeouts()).await;
+    let public = h.state.forge_poll.webhook_url();
+    public.set(Some("https://hooks.example".into()));
+    let id = enable(&h).await;
+    assert_eq!(creates(&stub), 1);
+
+    // The URL is withdrawn: the timer fetches and creates nothing.
+    public.set(None);
+    eventually(TIMEOUT, "the withdrawn URL is polling", async || {
+        row(&h, &id).await.webhook_error.is_none()
+    })
+    .await;
+    let created = creates(&stub);
+    let before = fetches(&stub);
+    eventually(TIMEOUT, "timer fetches", async || {
+        fetches(&stub) >= before + 3
+    })
+    .await;
+    assert_eq!(creates(&stub), created, "no retry without a URL");
+
+    // The URL returns and is refused again, then the switch goes off.
+    public.set(Some("https://hooks.example".into()));
+    eventually(TIMEOUT, "the returned URL is refused", async || {
+        row(&h, &id)
+            .await
+            .webhook_error
+            .is_some_and(|e| e.contains("admin:repo_hook"))
+    })
+    .await;
+    let _: Value = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{id}"),
+                json!({"forge":{"webhook":false}}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let dto: Value = h.get(&format!("/v1/repositories/{id}")).await;
+    assert_eq!(dto["forge"]["webhook"]["rights_refused"], false);
+    let created = creates(&stub);
+    let before = fetches(&stub);
+    eventually(TIMEOUT, "timer fetches", async || {
+        fetches(&stub) >= before + 3
+    })
+    .await;
+    assert_eq!(creates(&stub), created, "no retry with the switch off");
+
+    // On again and refused again, then the integration is disabled.
+    let _: Value = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{id}"),
+                json!({"forge":{"webhook":true}}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    eventually(TIMEOUT, "the switch on is refused again", async || {
+        row(&h, &id).await.webhook_rights_refused
+    })
+    .await;
+    let _: Value = h
+        .json(
+            put_json(
+                &format!("/v1/repositories/{id}"),
+                json!({"forge":{"enabled":false}}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    let created = creates(&stub);
+    let before = fetches(&stub);
+    quiet(&stub, before).await;
+    assert_eq!(creates(&stub), created, "no retry while disabled");
 }
 
 #[tokio::test]
