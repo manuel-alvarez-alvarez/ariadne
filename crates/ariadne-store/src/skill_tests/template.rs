@@ -537,7 +537,6 @@ fn the_agent_seat_text_binds_each_plain_word_to_ariadne() {
         "Reach it with `post_to_session`.",
         "A stage is a column.",
         "The report is the column report.",
-        "To return the work is to fail the step.",
         "An update is news.",
     ] {
         assert!(line.contains(sentence), "the binding line and {sentence}");
@@ -545,6 +544,12 @@ fn the_agent_seat_text_binds_each_plain_word_to_ariadne() {
     assert!(
         agent.contains(
             "- Call `complete_step` when your work is done, to send the report and pass the work."
+        ),
+        "{agent}"
+    );
+    assert!(
+        agent.contains(
+            "- Call `fail_step` when the previous column must fix something, to return the work."
         ),
         "{agent}"
     );

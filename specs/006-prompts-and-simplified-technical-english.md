@@ -165,18 +165,20 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      in each seat:
      - the agent seat text: the requester is the orchestrator, reached with
        `post_to_session`, a stage is a column, the report is the column
-       report, `complete_step` sends the report and passes the work, to
-       return the work is to fail the step, and an update is news. Its
+       report, `complete_step` sends the report and passes the work,
+       `fail_step` returns the work, and an update is news. Its
        `merge` supplement ties the primary checkout to the `Repo:` path,
        and its `pr-babysit` supplement names `<repo>` as that path;
      - the orchestrator seat text: a stage is a column, and your
        instructions are the briefing;
      - the reviewer and keeper seats: one block of their session rules
        (`request_words_rule`), written once for both. The requester is the
-       user, a stage is one turn on the request, the report is the request
-       body, and an update is news. To send the report, pass the work or
-       return the work is to end the turn. The primary checkout is the
-       repository path from `get_pull_request`;
+       user, a stage is one turn, the report is the request body, an update
+       is news, and the primary checkout is the repository path from
+       `get_pull_request`. Only the end of work differs by seat. The
+       reviewer sends the report, passes the work or returns the work by
+       submitting the round with `submit_review`. The keeper, which lists
+       no call that delivers work, writes the result in its turn text;
    - which call reads the whole change and which calls return and pass the
      work, for `code-review` in the `agent` seat — `get_diff`, `fail_step`
      with the return report, `complete_step` with the verdict: that seat's
@@ -400,7 +402,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       5). The tie is in the session rules, the seat text, the supplement of
       the skill the seat loads on every session, or that skill's own
       supplement for the seat. A tie says the word, then "is" or "are", or
-      names the call the word stands for. The orchestrator loads
+      names the call the word stands for. A tie of a word that ends the
+      work — send the report, pass the work, return the work — names an
+      action the seat can take: a call that the seat lists and that
+      delivers the work (`complete_step`, `fail_step` or `submit_review`),
+      or the turn text where the seat lists none of them. It names no call
+      that the seat does not list. The orchestrator loads
       `orchestration` every session. The agent loads every task skill and
       `pr-babysit`, as staffed. The reviewer loads `pr-reviewer` and the
       keeper loads `pr-babysit` every session, and each also loads any
@@ -467,7 +474,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`skill_tests/template.rs::the_agent_seat_text_binds_each_plain_word_to_ariadne`).
   Each seat ties every plain word that a skill it can load says, and the
   test fails on a word no text of the seat ties
-  (`mcp.rs::each_seat_ties_every_plain_word_its_skills_use`). The reviewer
+  (`mcp.rs::each_seat_ties_every_plain_word_its_skills_use`), and the
+  test fails on an end of work that names no action the seat can take,
+  such as a reviewer told only to end its turn. The reviewer
   and keeper seats read one block of ties, and no other seat reads it
   (`mcp.rs::the_request_seats_share_one_block_of_ties`).
   The four seat texts and the end of the keeper briefing ship word for

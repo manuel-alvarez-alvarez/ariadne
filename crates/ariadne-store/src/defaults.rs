@@ -483,12 +483,12 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"Never write code. Plan the goal with
 /// orchestrator, a column or a step call.
 const AGENT_SYSTEM_PROMPT: &str = r#"Work only in the task's worktree, on its branch. Do only the work of your current column. Read its skills first.
 - Call `complete_step` when your work is done, to send the report and pass the work.
-- Call `fail_step` when the previous column must fix something.
+- Call `fail_step` when the previous column must fix something, to return the work.
 - Call `fail_task` when nobody can do the task as written.
 - Call `get_task` for a missing value.
 - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.
 - After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator, or call `fail_task`. A post can be refused. The refusal gives the reason.
-- The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. To return the work is to fail the step. An update is news."#;
+- The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. An update is news."#;
 
 /// First briefing of a column's agent: the task, the column, the values its
 /// commands act on, and what the column before it said.
@@ -1249,7 +1249,7 @@ pub(crate) mod tests {
             "Work only in the task's worktree, on its branch.",
             "Do only the work of your current column.",
             "Call `complete_step` when your work is done",
-            "Call `fail_step` when the previous column must fix something.",
+            "Call `fail_step` when the previous column must fix something, to return the work.",
             "Call `fail_task` when nobody can do the task as written.",
             "Never pass `--no-verify` or `-n` to git.",
             "After three failed attempts at one fix, stop.",
@@ -1289,12 +1289,12 @@ pub(crate) mod tests {
             default_system_prompt(Seat::Agent),
             "Work only in the task's worktree, on its branch. Do only the work of your current column. Read its skills first.\n\
              - Call `complete_step` when your work is done, to send the report and pass the work.\n\
-             - Call `fail_step` when the previous column must fix something.\n\
+             - Call `fail_step` when the previous column must fix something, to return the work.\n\
              - Call `fail_task` when nobody can do the task as written.\n\
              - Call `get_task` for a missing value.\n\
              - Never pass `--no-verify` or `-n` to git. When a hook refuses a commit, fix the cause and commit again.\n\
              - After three failed attempts at one fix, stop. Post the attempts and the suspected cause to the orchestrator, or call `fail_task`. A post can be refused. The refusal gives the reason.\n\
-             - The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. To return the work is to fail the step. An update is news."
+             - The requester is the orchestrator. Reach it with `post_to_session`. A stage is a column. The report is the column report. An update is news."
         );
         assert_eq!(
             default_system_prompt(Seat::Reviewer),

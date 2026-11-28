@@ -416,16 +416,20 @@ Write no trailer anywhere: no `Co-Authored-By`, no "Generated with", no tool nam
 /// What the plain words of a shipped skill stand for in a session of a
 /// request (006 rule 21). The reviewer and the keeper load their own skill
 /// and any task skill the user picks (029, 032), so either seat can read
-/// every plain word, and the meaning is the same in both. One block, written
-/// once here, gives it to both. The orchestrator and the agent have the
-/// ties in their own seat texts.
-fn request_words_rule(seat: &McpSeat) -> &'static str {
-    match seat {
-        McpSeat::Orchestrator | McpSeat::Agent => "",
-        McpSeat::PullRequestReviewer | McpSeat::PullRequestKeeper => {
-            "\n\nThe requester is the user. A stage is one turn on the request. The report is the request body. An update is news. To send the report, pass the work or return the work is to end your turn. The primary checkout is the repository path from `get_pull_request`."
-        }
-    }
+/// every plain word. One block, written once here, gives both the meanings
+/// they share. Only the end of work differs: the reviewer ends it with the
+/// call that submits the round, and the keeper, which has no such call,
+/// with the result in its turn text. The orchestrator and the agent have
+/// the ties in their own seat texts.
+fn request_words_rule(seat: &McpSeat) -> String {
+    let end = match seat {
+        McpSeat::Orchestrator | McpSeat::Agent => return String::new(),
+        McpSeat::PullRequestReviewer => "submit the round with `submit_review`",
+        McpSeat::PullRequestKeeper => "write the result in your turn text",
+    };
+    format!(
+        "\n\nThe requester is the user. A stage is one turn. The report is the request body. An update is news. The primary checkout is the repository path from `get_pull_request`. To send the report, pass the work or return the work is to {end}."
+    )
 }
 
 /// How a check runs. The orchestrator runs none, so its seat has no block.
@@ -1290,24 +1294,74 @@ pub(crate) mod tests {
             .any(|word| word == plain || word.strip_suffix('s') == Some(plain))
     }
 
-    /// Whether `text` ties the plain word `plain` to a meaning: a sentence
-    /// that says the word, then "is" or "are", as in "An update is news.",
-    /// or a sentence that says the word and names the call it stands for,
-    /// as in "Pass the work with `complete_step`."
-    fn ties(text: &str, plain: &str) -> bool {
-        let names_a_call = |sentence: &str| {
-            sentence.split('`').skip(1).step_by(2).any(|span| {
-                span.contains('_') && span.chars().all(|c| c.is_ascii_lowercase() || c == '_')
-            })
-        };
+    /// The calls a sentence names: each backticked name that is a tool of
+    /// this server, for any seat. A field such as `merge_commit` is no call.
+    fn calls_in(sentence: &str) -> Vec<String> {
+        let tools: Vec<String> = AriadneMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        sentence
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .filter(|span| tools.iter().any(|tool| tool == span))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// The sentences of `text` that tie the plain word `plain` to a meaning:
+    /// a sentence that says the word, then "is" or "are", as in "An update
+    /// is news.", or a sentence that says the word and names the call it
+    /// stands for, as in "Pass the work with `complete_step`."
+    fn tying_sentences<'a>(text: &'a str, plain: &str) -> Vec<&'a str> {
         ariadne_store::defaults::ste::sentences(text)
-            .iter()
-            .any(|sentence| {
+            .into_iter()
+            .filter(|sentence| {
                 let lowered = sentence.to_lowercase();
                 lowered.find(plain).is_some_and(|at| {
                     let rest = &lowered[at + plain.len()..];
-                    rest.contains(" is ") || rest.contains(" are ") || names_a_call(sentence)
+                    rest.contains(" is ")
+                        || rest.contains(" are ")
+                        || !calls_in(sentence).is_empty()
                 })
+            })
+            .collect()
+    }
+
+    fn ties(text: &str, plain: &str) -> bool {
+        !tying_sentences(text, plain).is_empty()
+    }
+
+    /// The plain words that end a stage's work: each stands for the action
+    /// that delivers the work, not for a meaning alone.
+    const END_OF_WORK: [&str; 3] = ["send the report", "pass the work", "return the work"];
+
+    /// The calls that deliver the work of a stage: the step calls of a task
+    /// and the submit of a review round. A seat that lists none delivers its
+    /// result in its turn text.
+    const DELIVERING_CALLS: [&str; 3] = ["complete_step", "fail_step", "submit_review"];
+
+    /// Whether the ties of the end-of-work word `plain` in `text` name an
+    /// action the seat can take: every call they name is one the seat lists,
+    /// one of them names a delivering call the seat lists, and a seat that
+    /// lists no delivering call is told to give the result in its turn text.
+    fn ends_with_an_action(text: &str, plain: &str, listed: &[String]) -> bool {
+        let lists = |call: &str| listed.iter().any(|tool| tool == call);
+        let sentences = tying_sentences(text, plain);
+        let delivers = DELIVERING_CALLS.into_iter().any(lists);
+        sentences
+            .iter()
+            .all(|sentence| calls_in(sentence).iter().all(|call| lists(call)))
+            && sentences.iter().any(|sentence| {
+                if delivers {
+                    calls_in(sentence)
+                        .into_iter()
+                        .any(|call| DELIVERING_CALLS.contains(&call.as_str()))
+                } else {
+                    sentence.contains("turn text")
+                }
             })
     }
 
@@ -1322,6 +1376,14 @@ pub(crate) mod tests {
         use ariadne_store::defaults::{default_skill_document, skill_supplement};
         for seat in SEATS {
             let store = store_seat(&seat);
+            let listed: Vec<String> = server_at(
+                seat.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            )
+            .listed_tools()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
             for skill in skills_of(&seat) {
                 let document = default_skill_document(skill).unwrap();
                 let text = [session_rules(&seat), seat_text(&seat).to_string()]
@@ -1343,6 +1405,13 @@ pub(crate) mod tests {
                         ties(&text, plain),
                         "the {skill} skill says \"{plain}\", and the {seat:?} seat ties it to nothing"
                     );
+                    if END_OF_WORK.contains(&plain) {
+                        assert!(
+                            ends_with_an_action(&text, plain, &listed),
+                            "the {skill} skill says \"{plain}\", and the {seat:?} seat ties it to no action it can take: {:?}",
+                            tying_sentences(&text, plain)
+                        );
+                    }
                 }
             }
         }
@@ -1353,6 +1422,30 @@ pub(crate) mod tests {
         assert!(!ties("Read each update. News is late.", "update"));
         assert!(ties("Pass the work with `complete_step`.", "pass the work"));
         assert!(!ties("An update opens with `- Review again:`.", "update"));
+        // An end of work names a call the seat lists, or the turn text where
+        // it lists no delivering call.
+        let reviewer = ["submit_review".to_string()];
+        let none: [String; 0] = [];
+        assert!(ends_with_an_action(
+            "To pass the work is to submit the round with `submit_review`.",
+            "pass the work",
+            &reviewer
+        ));
+        assert!(!ends_with_an_action(
+            "To pass the work is to end your turn.",
+            "pass the work",
+            &reviewer
+        ));
+        assert!(!ends_with_an_action(
+            "Pass the work with `complete_step`.",
+            "pass the work",
+            &reviewer
+        ));
+        assert!(ends_with_an_action(
+            "To pass the work is to write the result in your turn text.",
+            "pass the work",
+            &none
+        ));
     }
 
     /// The reviewer and the keeper read one block of ties, and no other seat
