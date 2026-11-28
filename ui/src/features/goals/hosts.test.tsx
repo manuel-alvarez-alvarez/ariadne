@@ -14,7 +14,7 @@ import { DetailPanels } from "@/components/detail-panels"
 import { EventStreamProvider } from "@/events/provider"
 import { useSettingsStore } from "@/stores/settings"
 import { FakeEventSource, stubEventSource } from "@/test/event-source"
-import { aGoal, aModel, anEffort, aRepository, aSessionPage } from "@/test/fixtures"
+import { aGoal, aModel, anEffort, aRepository, aSessionPage, aWorkflow } from "@/test/fixtures"
 import { errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { BOX, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { byContent, contentOf } from "@/test/text-content"
@@ -272,7 +272,7 @@ it("clears the model and the effort when the goal dialog's host changes", async 
     "/v1/goals": (_url: URL, request: Request) =>
       request.method === "POST" ? jsonResponse(aGoal({ title: "On box" }), 201) : undefined,
   }
-  const seen = stubHosts({ local: answers, box: answers })
+  stubHosts({ local: answers, box: answers })
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
   const dialog = await screen.findByRole("dialog", { name: "New goal" })
   const pin = within(dialog).getByRole("button", { name: "Orchestrator runs on" })
@@ -297,8 +297,22 @@ it("clears the model and the effort when the goal dialog's host changes", async 
   expect(within(dialog).getByRole("button", { name: "Create goal" }).hasAttribute("disabled")).toBe(
     true,
   )
+})
 
-  // The same model again, with no effort picked: none is sent.
+it("sends no effort for a model picked again after the goal dialog's host changes", async () => {
+  const user = userEvent.setup()
+  const answers = {
+    "/v1/repositories": [aRepository({ id: "r-box", path: "/src/box-repo" })],
+    "/v1/models": [EFFORT_MODEL],
+    "/v1/workflows": [],
+    "/v1/goals": (_url: URL, request: Request) =>
+      request.method === "POST" ? jsonResponse(aGoal({ title: "On box" }), 201) : undefined,
+  }
+  const seen = stubHosts({ local: answers, box: answers })
+  renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
+  const dialog = await screen.findByRole("dialog", { name: "New goal" })
+  await pickHost(user, "box")
+  const pin = within(dialog).getByRole("button", { name: "Orchestrator runs on" })
   await user.click(pin)
   await user.click(
     within(await screen.findByRole("listbox", { name: "Models" })).getByText(EFFORT_MODEL.id),
@@ -393,22 +407,28 @@ it("names the host in the toast of a goal created on a named host, and offers al
 it("clears the repositories and the workflow when the picker's host changes, and keeps the picker last", async () => {
   const user = userEvent.setup()
   const answers = {
-    "/v1/repositories": [aRepository({ id: "r-one", path: "/src/one-repo" })],
+    "/v1/repositories": [
+      aRepository({ id: "r-one", path: "/src/one-repo", default_workflow: "wf-one" }),
+    ],
     "/v1/models": [aModel()],
-    "/v1/workflows": [],
+    "/v1/workflows": [aWorkflow({ name: "wf-one" })],
   }
   const seen = stubHosts({ local: answers, box: answers })
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
   const dialog = await screen.findByRole("dialog", { name: "New goal" })
+  const workflow = within(dialog).getByRole("combobox", { name: "Workflow" })
   const repositories = await within(dialog).findByRole("combobox", { name: "Repositories" })
   await user.click(repositories)
   await user.click(await screen.findByText(/one-repo/))
   await user.keyboard("{Escape}")
   expect(await within(dialog).findByText(/one-repo/)).toBeDefined()
+  await waitFor(() => expect(workflow.textContent).toContain("wf-one"))
 
   await pickHost(user, "box")
 
   await waitFor(() => expect(within(dialog).queryByText(/one-repo/)).toBeNull())
+  await waitFor(() => expect(workflow.textContent).not.toContain("wf-one"))
+  expect(workflow.textContent).toContain("Repository default")
   await waitFor(() => expect(reads(seen, "box")).toContain("/v1/repositories"))
   const fields = [...dialog.querySelectorAll("label")].map((label) => label.textContent)
   expect(fields.at(-1)).toBe("Orchestrator runs on")
