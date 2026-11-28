@@ -7,7 +7,7 @@ import type { AttentionListDto, GoalDto, SessionDto, TaskDto, WorkflowStepDto } 
 import { dispatchDomainEvent } from "@/events/dispatch"
 import { aGoal, aSession, aSessionPage, aTask, aWorkflow } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
-import { forgetHosts, stubHosts } from "@/test/hosts"
+import { BOX as BOX_HOST, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { GoalBoard } from "./goal-board"
 
 const GOAL_TITLE = "Ship the board"
@@ -786,4 +786,32 @@ it("withholds far copies and the task count until daemon identities arrive", asy
   )
   expect(screen.queryByText("Pending far work")).toBeNull()
   expect(screen.getByLabelText("Loading task count")).toBeTruthy()
+})
+
+it("keeps a far task when another host has no identity", async () => {
+  const far = aTask({
+    id: "far",
+    goal_id: null,
+    title: "Kept far work",
+    execution_context: {
+      source_goal: null,
+      source_daemon_id: "source",
+      execution_owner: "worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  stubHosts(
+    {
+      local: {
+        "/v1/tasks": [far],
+        "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "source" },
+      },
+    },
+    [LOCAL, { ...BOX_HOST, name: "offline", status: "down", error: "down" }],
+  )
+  renderScreen(<GoalBoard hosts={["local", "offline"]} goals={[]} />)
+  expect(await screen.findByText("Kept far work")).toBeTruthy()
 })

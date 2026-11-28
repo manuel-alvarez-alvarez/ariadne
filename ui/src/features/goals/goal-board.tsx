@@ -60,6 +60,7 @@ import {
 import { AttentionBlock } from "./attention-block"
 import { useCollapsedLanes } from "./collapsed-lanes"
 import { type GroupOrder, goalCounts, goallessTasks, goalSummary, orderGroups } from "./groups"
+import { useIdentitiesPending } from "./identities-pending"
 import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 
 /**
@@ -162,23 +163,19 @@ export function GoalBoard({
   // A far task with no goal is listed by its source and by its worker, both
   // with no goal: the board shows the source's copy alone.
   const daemonIds = useDaemonIdentities(true)
-  const identitiesPending =
-    tasks.rows.some((row) => !!row.execution_context) &&
-    [...daemonIds.values()].some((id) => id === undefined)
+  const identitiesLoading = useIdentitiesPending(true)
+  const identitiesPending = identitiesLoading && tasks.rows.some((row) => !!row.execution_context)
   const noGoal = useMemo(
     () =>
       goallessTasks(
         withoutWorkerCopies(
-          tasks.rows.filter(
-            (row) =>
-              !row.execution_context || [...daemonIds.values()].every((id) => id !== undefined),
-          ),
+          tasks.rows.filter((row) => !row.execution_context || !identitiesLoading),
           daemonIds,
         ),
         activeOnly,
         query,
       ),
-    [tasks.rows, daemonIds, activeOnly, query],
+    [tasks.rows, daemonIds, identitiesLoading, activeOnly, query],
   )
   // Active work first: what is asking for a person, then what is still
   // running, then what is done with — goals and goal-less tasks by one rule.
