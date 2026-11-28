@@ -284,9 +284,15 @@ the ACP runtime that takes a prompt (021).
   (`scheduler_attention.rs::an_orchestrator_that_outlives_a_daemon_restart_hears_every_task_is_done`).
   A replayed relay effect does not move the session status again
   (`acp_recovery.rs::a_replayed_relay_effect_does_not_move_the_session_status_again`).
+  A replayed event that is still the newest of its session finishes the
+  update a stop left half done
+  (`acp_recovery.rs::a_replayed_stop_left_half_applied_still_moves_the_session_to_idle`).
 - A situation held back from a busy orchestrator is logged once with its
   reason, however many passes find it
   (`scheduler_attention.rs::a_held_back_goal_message_is_logged_once_with_its_reason`).
+  The daemon keeps every reason it logged for the current situation, so a
+  reason that returns is not logged again
+  (`scheduler_attention.rs::a_reason_logged_for_a_situation_is_not_logged_again_when_it_returns`).
 - A nudge to an idle agent arrives as a `session/prompt`
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`),
   with the wording 006 rule 10 owns

@@ -220,3 +220,60 @@ async fn a_replayed_relay_effect_does_not_move_the_session_status_again() {
         SessionStatus::Idle
     );
 }
+
+#[tokio::test]
+async fn a_replayed_stop_left_half_applied_still_moves_the_session_to_idle() {
+    use ariadne_api::events::IngestEventRequest;
+    use ariadne_core::SessionStatus;
+    use ariadne_daemon::http::ingest_relay_event;
+    use ariadne_store::NewAgentEvent;
+    let home = tempfile::tempdir().unwrap();
+    let store = Store::open(home.path().join("store.db")).await.unwrap();
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    let event = |kind: &str| IngestEventRequest {
+        session_id: session.id.clone(),
+        launch: Some("launch".into()),
+        kind: kind.into(),
+        payload: json!({"session_id": "conversation"}),
+    };
+    ingest_relay_event(&store, &event("session_start"), "setup", 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_session(&session.id).await.unwrap().status(),
+        SessionStatus::Running
+    );
+
+    // The daemon stored the stop and went down before it moved the row.
+    store
+        .create_event_once(
+            NewAgentEvent {
+                session_id: Some(session.id.clone()),
+                task_id: None,
+                kind: "stop".into(),
+                payload: json!({"session_id": "conversation"}),
+            },
+            &format!("{}:launch:output:9", session.id),
+        )
+        .await
+        .unwrap();
+    ingest_relay_event(&store, &event("stop"), "output:9", 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_session(&session.id).await.unwrap().status(),
+        SessionStatus::Idle
+    );
+}

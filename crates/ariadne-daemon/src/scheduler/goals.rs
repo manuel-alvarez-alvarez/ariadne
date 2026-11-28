@@ -1,6 +1,8 @@
 //! What a goal wants, by status: an orchestrator while it is being planned, its
 //! tasks while it is active, and nothing running once it is over.
 
+use std::collections::HashSet;
+
 use tracing::{info, warn};
 
 use ariadne_core::{
@@ -505,12 +507,17 @@ impl super::Scheduler {
     /// Say why this goal's situation is not sent to its orchestrator now:
     /// once for each reason and situation, never once per pass.
     fn hold_goal_attention(&mut self, goal_id: &str, situation: &str, reason: String) {
-        let held = (situation.to_string(), reason);
-        if self.goal_held.get(goal_id) == Some(&held) {
+        let held = self
+            .goal_held
+            .entry(goal_id.to_string())
+            .or_insert_with(|| (situation.to_string(), HashSet::new()));
+        if held.0 != situation {
+            *held = (situation.to_string(), HashSet::new());
+        }
+        if !held.1.insert(reason.clone()) {
             return;
         }
-        info!(goal = %goal_id, reason = %held.1, "the daemon holds back the goal's message to the orchestrator");
-        self.goal_held.insert(goal_id.to_string(), held);
+        info!(goal = %goal_id, reason = %reason, "the daemon holds back the goal's message to the orchestrator");
     }
 
     /// Every live session of a goal, whatever ended it.

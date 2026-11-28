@@ -126,11 +126,21 @@ async fn ingest_event_inner(
     // ingest moved the row for it. A reconnect replays the setup of its
     // launch, `session_start` among it, and read again that would put an
     // idle agent back to `running` with no turn to end it — a goal's
-    // orchestrator would then never hear what its tasks need (009).
+    // orchestrator would then never hear what its tasks need (009). Only an
+    // event that is still the newest of its session is applied again.
     let event = match relay_key {
         Some(key) => match store.create_event_once(new, key).await? {
             (event, true) => event,
-            (event, false) => return Ok(Some(event)),
+            (event, false) => {
+                // The one exception is the session's newest event: a write
+                // the daemon left half done is finished by its replay, so a
+                // stored `stop` still moves the row to idle.
+                let newest = store.newest_session_event_id(&session.id, None).await?;
+                if newest.as_deref() != Some(event.id.as_str()) {
+                    return Ok(Some(event));
+                }
+                event
+            }
         },
         None => store.create_event(new).await?,
     };

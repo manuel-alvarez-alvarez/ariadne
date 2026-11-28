@@ -1984,6 +1984,51 @@ async fn a_held_back_goal_message_is_logged_once_with_its_reason() {
     assert!(!w.prompted(&orchestrator).contains("Every task is done."));
 }
 
+/// A reason the daemon already logged for a situation stays logged: an
+/// orchestrator that goes from running to starting and back to running does not
+/// have the first reason said again.
+#[tokio::test]
+async fn a_reason_logged_for_a_situation_is_not_logged_again_when_it_returns() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.advance_to(&w.task, "merge").await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Finished,
+            Actor::Agent,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
+
+    let _capture = capture(&w);
+    let sched = w.scheduler();
+    for status in [
+        SessionStatus::Running,
+        SessionStatus::Starting,
+        SessionStatus::Running,
+    ] {
+        w.store
+            .set_session_status(&orchestrator.id, status)
+            .await
+            .unwrap();
+        sched.goal(&w.goal);
+        sched.flush().await;
+    }
+    let held: Vec<String> = captured_messages(&w)
+        .await
+        .into_iter()
+        .filter(|message| {
+            message.starts_with("the daemon holds back the goal's message to the orchestrator")
+                && message.contains(&w.goal.id)
+        })
+        .collect();
+    assert_eq!(held.len(), 2, "{held:?}");
+}
+
 // -- deliveries and relaunches ----------------------------------------------
 
 /// Three agents to nudge in one pass, and the pass hands all three their

@@ -185,7 +185,7 @@ pub(crate) struct Scheduler {
     /// Why each goal's situation was last held back from its orchestrator,
     /// with the situation, by goal id: what keeps the log to one line per
     /// reason and situation rather than one per pass.
-    goal_held: HashMap<String, (String, String)>,
+    goal_held: HashMap<String, (String, HashSet<String>)>,
     /// Exhausted switches the task's orchestrator has not received yet.
     exhausted_notices: HashMap<String, ExhaustedNotice>,
     pull_request_cleanup_retry: HashMap<String, std::time::Instant>,
