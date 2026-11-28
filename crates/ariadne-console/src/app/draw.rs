@@ -10,7 +10,7 @@ use ratatui::widgets::{Clear, Paragraph};
 
 use ariadne_api::trajectory::{
     CompactionStatus, ContentBlockDto, MAIN_LANE, NoteSeverity, PermissionState, PermissionStepDto,
-    QuestionState, StepDto, SubagentStepDto, ToolCallStatus, TurnDto, TurnState,
+    QuestionState, StepDto, SubagentStepDto, ToolCallStatus, ToolDetailDto, TurnDto, TurnState,
 };
 
 use crate::markdown;
@@ -532,6 +532,25 @@ impl App {
         };
         let body = |text: &str| indent(Line::styled(format!("{BODY_INDENT}{text}"), DIM));
         let room_of_body = room.saturating_sub(BODY_INDENT.len());
+        // The answer of the permission of a call, and who decided, under its
+        // detail or the reason the detail failed.
+        let permission_body = |turn: &str| -> Vec<Line<'static>> {
+            let StepDto::ToolCall(call) = step else {
+                return Vec::new();
+            };
+            let Some(permission) = call
+                .permission
+                .as_deref()
+                .and_then(|id| self.permission_of(turn, id))
+            else {
+                return Vec::new();
+            };
+            permission_detail(permission)
+                .iter()
+                .flat_map(|said| wrap::wrap(said, room_of_body))
+                .map(|part| body(&part))
+                .collect()
+        };
         match step {
             StepDto::ToolCall(call) => match self.details.get(&call.id) {
                 Some(Detail::Read(read)) => {
@@ -542,7 +561,12 @@ impl App {
                     let gap = BODY_INDENT.len() - 4;
                     // The command shows in its detail only where its row
                     // cut it.
-                    let cut = self.row_cut(item.turn(), step, depth, width);
+                    let cut = match &read.detail {
+                        ToolDetailDto::Command(command) => !self
+                            .row_text(item.turn(), step, depth, width)
+                            .contains(command.command.as_str()),
+                        _ => false,
+                    };
                     let mut lines: Vec<Line<'static>> =
                         detail::lines(read, raw, whole, room.saturating_sub(gap), cut)
                             .into_iter()
@@ -552,23 +576,14 @@ impl App {
                                 indent(Line::from(spans).style(line.style))
                             })
                             .collect();
-                    if let Some(permission) = call
-                        .permission
-                        .as_deref()
-                        .and_then(|id| self.permission_of(item.turn(), id))
-                    {
-                        for said in permission_detail(permission) {
-                            for part in wrap::wrap(&said, room_of_body) {
-                                lines.push(body(&part));
-                            }
-                        }
-                    }
+                    lines.extend(permission_body(item.turn()));
                     lines
                 }
                 Some(Detail::Failed(reason)) => {
                     let mut lines: Vec<Line<'static>> =
                         step_body(step, room).into_iter().map(indent).collect();
                     lines.push(body(&wrap::clip(reason, room_of_body)));
+                    lines.extend(permission_body(item.turn()));
                     lines
                 }
                 None => vec![body("reading the detail…")],
@@ -681,12 +696,13 @@ impl App {
         self.step_parts(turn, step, depth, width, is_answer).0
     }
 
-    /// Whether the row of a step cut its subject to fit the width.
-    pub(super) fn row_cut(&self, turn: &str, step: &StepDto, depth: usize, width: usize) -> bool {
+    /// The text of the subject that the row of a step shows, cut to the
+    /// width.
+    fn row_text(&self, turn: &str, step: &StepDto, depth: usize, width: usize) -> String {
         self.step_parts(turn, step, depth, width, false).1
     }
 
-    /// The row of a step, and whether it cut the subject.
+    /// The row of a step, and the text of its subject as the row shows it.
     fn step_parts(
         &self,
         turn: &str,
@@ -694,7 +710,7 @@ impl App {
         depth: usize,
         width: usize,
         is_answer: bool,
-    ) -> (Line<'static>, bool) {
+    ) -> (Line<'static>, String) {
         let (mark, style) = step_mark(step);
         // A tool call shows the icon of its kind; every other step names its
         // kind.
@@ -758,22 +774,18 @@ impl App {
         };
         let first = subject.lines().next().unwrap_or_default();
         let shown = wrap::clip(first, room);
-        // A title of many lines lost its later lines to the first-line subject.
-        let title_cut =
-            matches!(step, StepDto::ToolCall(call) if call.title.trim().lines().nth(1).is_some());
-        let cut = title_cut || subject.lines().nth(1).is_some() || shown != first;
         let mut spans = vec![
             Span::raw(indent),
             Span::styled(format!("{mark} "), style),
             Span::styled(kind, kind_style),
         ];
         let pad = room.saturating_sub(wrap::width(&shown));
-        spans.push(Span::raw(shown));
+        spans.push(Span::raw(shown.clone()));
         if tail_width > 0 {
             spans.push(Span::raw(" ".repeat(pad + gap)));
             spans.extend(tail);
         }
-        (Line::from(spans), cut)
+        (Line::from(spans), shown)
     }
 
     /// The pending permission or the open question, above the input.

@@ -162,7 +162,7 @@ answer shows under the turn.
 Open a step to see its detail in place, under its row. The console reads it
 from the daemon. What it shows depends on the kind of the call:
 
-- A command shows `$ <command>` only where its row cut it, then its working
+- A command shows `$ <command>` only where its row does not show the whole command, then its working
   directory, its output and its exit code. The output keeps its last 12 lines.
 - An edit shows each file as a diff: the file name, then the hunks with the
   added lines green and the removed lines red. Where a hunk replaces as many

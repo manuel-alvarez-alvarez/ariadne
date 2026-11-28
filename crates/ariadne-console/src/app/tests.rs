@@ -1495,7 +1495,9 @@ async fn an_open_command_shows_the_command_and_its_output_folded_then_whole() {
         )],
         ..Stub::default()
     };
-    let calls = vec![call("c1", "t1", "Bash", "completed")];
+    let mut bash = call("c1", "t1", "Bash", "completed");
+    bash["subject"] = json!("cargo test");
+    let calls = vec![bash];
 
     let (_, screen) = opened(&mut stub, calls.clone(), vec![key(KeyCode::Enter)]).await;
     // The row shows the whole command, so the detail does not say it again.
@@ -3455,4 +3457,56 @@ async fn the_raw_view_of_a_call_still_shows_its_permission_answer_and_deciders()
         raw.iter().any(|row| row.contains("learned: command")),
         "{raw:#?}"
     );
+}
+
+#[tokio::test]
+async fn an_unrelated_second_title_line_does_not_make_the_detail_repeat_a_whole_command() {
+    let mut run = call("c1", "t1", "Run\nadditional context", "completed");
+    run["subject"] = json!("cargo test");
+    let mut stub = Stub {
+        details: vec![detail_of(
+            "c1",
+            "execute",
+            json!({"type": "command", "command": "cargo test", "cwd": null,
+                   "output": null, "exit_code": 0, "truncated": false}),
+        )],
+        ..Stub::default()
+    };
+
+    let (_, screen) = opened(&mut stub, vec![run], vec![key(KeyCode::Enter)]).await;
+
+    assert_eq!(count(&screen, "$ cargo test"), 0, "{screen:#?}");
+    assert_eq!(count(&screen, "cargo test"), 1, "{screen:#?}");
+}
+
+#[tokio::test]
+async fn a_call_whose_detail_failed_still_shows_its_permission_answer_and_deciders() {
+    let mut bash = call("c1", "t1", "Bash", "completed");
+    bash["permission"] = json!("p1");
+    let answered = step(
+        "permission",
+        "p1",
+        "t1",
+        json!({"tool_call_id": "c1", "state": "answered",
+               "options": [{"id": "yes", "name": "Allow", "kind": "allow_once"}],
+               "answer": {"option_id": "yes", "label": "Allow", "decided_by": "ai"},
+               "ai": "the command only reads", "learned": "command"}),
+    );
+
+    // The stub holds no detail for the call, so the read fails.
+    let (_, screen) = opened(
+        &mut Stub::default(),
+        vec![bash, answered],
+        vec![key(KeyCode::Enter)],
+    )
+    .await;
+
+    assert_eq!(count(&screen, "no detail for c1"), 1, "{screen:#?}");
+    for line in [
+        "      permission: Allow · by ai",
+        "      ai: the command only reads",
+        "      learned: command",
+    ] {
+        assert!(screen.iter().any(|row| row == line), "{line}: {screen:#?}");
+    }
 }
