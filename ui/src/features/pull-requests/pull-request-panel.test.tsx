@@ -196,6 +196,8 @@ it("starts and stops a review of a Dependabot request without a review assignmen
 
   await user.click(within(dialog).getByRole("button", { name: "Model" }))
   const models = await screen.findByRole("listbox", { name: "Models" })
+  // One host has the repository: the picker has no host column.
+  expect(screen.queryByRole("listbox", { name: "Hosts" })).toBeNull()
   await user.click(within(models).getByText("stub:review-model"))
   await user.keyboard("{Escape}")
   const skills = within(dialog).getByRole("group", { name: "Skills" })

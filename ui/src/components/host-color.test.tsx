@@ -13,7 +13,6 @@ import { HostPicker } from "@/components/host-picker"
 import { HostSync } from "@/components/host-sync"
 import { dispatchDomainEvent } from "@/events/dispatch"
 import { HostsPage } from "@/features/hosts/hosts-page"
-import { ReviewHostSelect } from "@/features/pull-requests/review-hosts"
 import { hostColor } from "@/lib/host-color"
 import { HOST_COLORS } from "@/lib/host-colors"
 import { renderScreen } from "@/test/harness"
@@ -124,29 +123,6 @@ it("repaints every place a host name is drawn when host_updated changes its colo
   })
   await waitFor(() => expect(document.querySelectorAll('[data-host-color="red"]').length).toBe(0))
   expect(document.querySelectorAll('[data-host-color="blue"]').length).toBeGreaterThanOrEqual(3)
-})
-
-it("draws the host select of the review dialogs with each host's dot", async () => {
-  const user = userEvent.setup()
-  stubHosts({}, [LOCAL, { ...BOX, color: "pink" }])
-  renderScreen(
-    <ReviewHostSelect
-      id="host"
-      targets={[
-        { host: "local", repository_id: "r1" },
-        { host: "box", repository_id: "r2" },
-      ]}
-      value="box"
-      onChange={() => {}}
-    />,
-  )
-  const select = await screen.findByRole("combobox", { name: "Host" })
-  await waitFor(() => expect(select.querySelector('[data-host-color="pink"]')).not.toBeNull())
-  await user.click(select)
-  const hues = (await screen.findAllByRole("option")).map((option) =>
-    option.querySelector("[data-host-color]")?.getAttribute("data-host-color"),
-  )
-  expect(hues).toEqual(["grey", "pink"])
 })
 
 it("draws the host name of each error, warning and message in its colour, and repaints it live", async () => {

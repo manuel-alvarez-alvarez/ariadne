@@ -939,11 +939,11 @@ it("shows the duration, then the steps, then each count above zero", () => {
   expect(activityLine(plain).textContent?.trim()).toBe("1m 04s·3 steps")
 })
 
-it("shows a daemon prompt without its seat brief and its untrusted marks", () => {
+it("highlights untrusted text in a daemon prompt without its seat brief", () => {
   const turn = aDaemonTurn("Fix <<<untrusted>>>the bug<<<end untrusted>>> now")
   renderConsole(aSnapshot([turn]))
 
-  within(transcript()).getByText("Fix the bug now")
+  expect(transcript().querySelector("mark")?.textContent).toBe("the bug")
   expect(transcript().textContent).not.toContain("Seat brief")
   expect(transcript().textContent).not.toContain("untrusted")
 })
