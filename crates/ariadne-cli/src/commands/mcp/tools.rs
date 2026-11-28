@@ -653,7 +653,7 @@ impl AriadneMcp {
     // ---- agent ----
 
     #[tool(
-        description = "Give the task up, because nobody can do it as written. Write why in `reason`: the user reads only that. Returns the task's `id`, `status` and `step`."
+        description = "Give the task up, because nobody can do it as written. Write why in `reason`: the user reads only that. Returns the task's `id`, `status` and `step`. End your turn after this call."
     )]
     async fn fail_task(
         &self,

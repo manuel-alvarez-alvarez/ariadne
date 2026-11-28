@@ -1,7 +1,7 @@
 ---
 id: babysitting-a-request-by-hand
 status: current
-updated: 2026-11-27
+updated: 2026-11-28
 areas: [store, api, daemon, cli, mcp, prompts, ui]
 commits: []
 tests:
@@ -81,8 +81,10 @@ reads behind them ([026](026-pull-requests.md)).
    session starts or its keeper reports again. The seat text
    says what it owes: keep one open request the
    user asked it to keep, work only in the worktree on its branch, commit a fix and
-   push it as the briefing says, and that Ariadne wakes it with the news
-   and ends it on the merge or the close, then to end its turn.
+   push it as the briefing says, that Ariadne ends it on the merge or the
+   close, and that an update is news. The briefing ends "Keep this request.
+   Then end your turn."
+   (`defaults.rs::the_agreed_texts_ship_word_for_word`).
 6. The session loads what its agent was staffed with: `pr-babysit` — the
    same skill the `pr` column of a task stages — through the fixed
    `babysit` column (030 rule 11), and the skills the user picked when

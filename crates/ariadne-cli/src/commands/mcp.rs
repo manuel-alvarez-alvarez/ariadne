@@ -1273,8 +1273,8 @@ pub(crate) mod tests {
     /// Each rule that every seat shares is written in its owner alone (006):
     /// asking the user in the session rules, the end of a turn in the descriptions of the calls that
     /// end one, the check block and the trailer rule in the session rules,
-    /// and never polling a request in the session rules of the `agent` and
-    /// `reviewer` seats alone. Every default text and shipped skill is read
+    /// and never polling a request in the session rules of the `agent`,
+    /// `reviewer` and `keeper` seats alone. Every default text and shipped skill is read
     /// beside them.
     #[test]
     fn each_shared_rule_is_written_in_its_owner_alone() {
@@ -1358,6 +1358,7 @@ pub(crate) mod tests {
                 &[
                     "complete_step description",
                     "fail_step description",
+                    "fail_task description",
                     "post_to_session description",
                 ][..],
             ),

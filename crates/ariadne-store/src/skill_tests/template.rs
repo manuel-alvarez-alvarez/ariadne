@@ -537,10 +537,21 @@ fn the_agent_seat_text_binds_each_plain_word_to_ariadne() {
         "To return the work is to fail the step.",
         "An update is news.",
         "Your instructions are your briefing.",
-        "The primary checkout of the repository is the `Repo:` path.",
+        "The primary checkout of the repository is the `Repo:` path, `<repo>`.",
     ] {
         assert!(line.contains(sentence), "the binding line and {sentence}");
     }
+    // The two plain words of the call that passes the work sit on that
+    // call's own line, and `get_task` has a line that says when to call it.
+    let pass = agent
+        .lines()
+        .find(|line| line.contains("To send the report or pass the work is this call."))
+        .expect("the agent seat text ties no plain word to the call that passes the work");
+    assert!(pass.starts_with("- Call `complete_step` when"), "{pass}");
+    assert!(
+        agent.contains("- Call `get_task` for a value that your briefing does not give."),
+        "{agent}"
+    );
     for (ariadne, plain) in WORD_LIST {
         if let Some(plain) = plain {
             let plain = plain.trim_start_matches("the ").trim_start_matches("an ");
@@ -563,5 +574,127 @@ fn no_shipped_skill_names_an_ariadne_word() {
     assert!(!BUILTIN_SKILLS.is_empty());
     for skill in &BUILTIN_SKILLS {
         assert_names_no_ariadne_word(skill.name, skill.document);
+    }
+}
+
+/// Each plain word a shipped skill says for something of Ariadne, as the
+/// skill says it: the plain words of [`WORD_LIST`], and the two of the call
+/// that passes the work (006 rule 21).
+const PLAIN_WORDS: [&str; 9] = [
+    "requester",
+    "stage",
+    "the report",
+    "return the work",
+    "update",
+    "your instructions",
+    "primary checkout",
+    "send the report",
+    "pass the work",
+];
+
+/// The shipped skills each seat can load: the orchestrator its playbook, the
+/// agent every task skill and `pr-babysit` of the `pr` column (030), the
+/// reviewer `pr-reviewer` and the two review skills the user can add (029),
+/// and the keeper `pr-babysit` (032).
+fn skills_of_seat(seat: ariadne_core::Seat) -> Vec<&'static str> {
+    use ariadne_core::Seat;
+    match seat {
+        Seat::Orchestrator => vec![ORCHESTRATION_SKILL],
+        Seat::Agent => BUILTIN_SKILLS
+            .iter()
+            .map(|s| s.name)
+            .filter(|name| SkillSeat::of(name) == SkillSeat::Task || *name == PR_BABYSIT_SKILL)
+            .collect(),
+        Seat::Reviewer => vec![PR_REVIEWER_SKILL, "code-review", "architecture-review"],
+        Seat::Keeper => vec![PR_BABYSIT_SKILL],
+    }
+}
+
+/// Whether `document` says the plain word `plain`: a word whole, or in the
+/// plural, and a phrase anywhere.
+fn says(document: &str, plain: &str) -> bool {
+    let lowered = unwrapped(document).to_lowercase();
+    if plain.contains(' ') {
+        return lowered.contains(plain);
+    }
+    lowered
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|word| word == plain || word.strip_suffix('s') == Some(plain))
+}
+
+/// Whether `text` ties the plain word `plain` to a meaning: a sentence that
+/// says the word, then "is" or "are", as in "An update is news."
+fn ties(text: &str, plain: &str) -> bool {
+    ste::sentences(&ste::unwrapped_lines(text))
+        .iter()
+        .any(|sentence| {
+            let sentence = sentence.to_lowercase();
+            sentence.find(plain).is_some_and(|at| {
+                let rest = &sentence[at + plain.len()..];
+                rest.contains(" is ") || rest.contains(" are ")
+            })
+        })
+}
+
+/// Each seat's own text ties every plain word that a skill of the seat says
+/// (006 rule 21). The seat text ties it, or the supplement of that skill in
+/// that seat. A word no text of the seat ties reaches the model with no
+/// Ariadne meaning.
+#[test]
+fn each_seat_ties_every_plain_word_its_skills_use() {
+    use ariadne_core::Seat;
+    for seat in Seat::ALL {
+        let seat_text = default_system_prompt(seat);
+        for skill in skills_of_seat(seat) {
+            let document = default_skill_document(skill).unwrap();
+            let text = format!(
+                "{seat_text}\n{}",
+                skill_supplement(skill, seat).unwrap_or_default()
+            );
+            for plain in PLAIN_WORDS
+                .into_iter()
+                .filter(|plain| says(document, plain))
+            {
+                assert!(
+                    ties(&text, plain),
+                    "the {skill} skill says \"{plain}\", and the {} seat ties it to nothing",
+                    seat.as_str()
+                );
+            }
+        }
+    }
+    // The helpers find what they are there to find.
+    assert!(says("Send the updates.", "update"));
+    assert!(!says("Read the requests.", "requester"));
+    assert!(ties("A rule.\nAn update is news.", "update"));
+    assert!(!ties("Read each update. News is late.", "update"));
+}
+
+/// Every placeholder of the agent seat's `pr-babysit` supplement has a
+/// meaning the agent reads (006 rule 21): the skill or the supplement says
+/// "`<name>` is", or the agent seat text names it.
+#[test]
+fn the_agent_babysit_supplement_names_only_placeholders_the_agent_text_defines() {
+    use ariadne_core::Seat;
+    let supplement = skill_supplement(PR_BABYSIT_SKILL, Seat::Agent).unwrap();
+    let skill = unwrapped(default_skill_document(PR_BABYSIT_SKILL).unwrap());
+    let seat = default_system_prompt(Seat::Agent);
+    let placeholders: std::collections::BTreeSet<&str> = supplement
+        .split('<')
+        .skip(1)
+        .filter_map(|rest| rest.split_once('>'))
+        .map(|(name, _)| name)
+        .filter(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase()))
+        .collect();
+    assert!(placeholders.contains("repo"), "{placeholders:?}");
+    for name in placeholders {
+        let defined = seat.contains(&format!("`<{name}>`"))
+            || [skill.as_str(), supplement]
+                .iter()
+                .any(|text| text.contains(&format!("`<{name}>` is ")));
+        assert!(
+            defined,
+            "the agent babysit supplement names <{name}>, which no text defines"
+        );
     }
 }

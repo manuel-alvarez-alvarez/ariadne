@@ -107,7 +107,7 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
      task, and its instructions name the task and the column.
      `complete_step` moves to the next column, or ends the task from the
      last; `fail_step` moves to the previous column, or fails the task
-     from the first; both end its turn (030). `complete_step`'s
+     from the first; both end its turn (030), and so does `fail_task`. `complete_step`'s
      description is the one owner of the column report a column ends on:
      the outcome in one line, the revision checked, each check with its
      command and result, each assumption made and each open concern,
@@ -203,8 +203,12 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
     is and where it comes from. So `complete_step` and `fail_step` say "in
     `reason`", `get_comment`, `reply_comment` and `resolve_thread` say "by
     its `comment_id`", `get_pull_request` says to call it on a task only
-    after `open_pull_request`, `submit_review` says one
-    round, once, and never with no new finding, every write of rule 14
+    after `open_pull_request`, `submit_review` says to call it once every
+    round and that a round with nothing new sends an empty `body` and no
+    `comments`, so nothing is posted
+    (`tools.rs::submit_review_names_the_quiet_submit`), `complete_step`,
+    `fail_step` and `fail_task` end on "End your turn after this call."
+    (`mcp.rs::each_shared_rule_is_written_in_its_owner_alone`), every write of rule 14
     names what it returns, and `get_task`, `list_tasks`, `get_pull_request`
     and `list_comments` name the fields of their result. The ticket format
     stays the `orchestration` skill's: `create_task` points to "the ticket
@@ -325,7 +329,8 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   - `open_pull_request` says it "returns" the URL, not "answers" it.
   - The `post_to_session` `body` doc is "The whole post. Write it so that the
     recipient needs no follow-up question."
-  - The `submit_review` `body` doc is "Leave it empty."
+  - The `submit_review` `body` doc starts "Start with `Reviewed <sha>.` on
+    its own line."
   - The `Priority` doc is "The rank: P0 is a critical risk to behavior,
     data or security. P1 is a proven defect, an unmet requirement or a rule
     violation. P2 is an optional improvement."
