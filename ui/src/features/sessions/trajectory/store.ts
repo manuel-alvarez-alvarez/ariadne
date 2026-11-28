@@ -99,6 +99,17 @@ export function contentText(blocks: readonly ContentBlockDto[]): string {
     .join("")
 }
 
+const UNTRUSTED_MARK = /<<<(?:end )?untrusted>>>/g
+
+/**
+ * The prompt a person reads: what was typed, or for a daemon prompt its
+ * `text` without the seat brief, and without the `untrusted` marks.
+ */
+export function promptText(prompt: NonNullable<TurnDto["prompt"]>): string {
+  if (prompt.source !== "daemon") return contentText(prompt.content)
+  return (prompt.text ?? contentText(prompt.content)).replace(UNTRUSTED_MARK, "")
+}
+
 /** Replace the state with what a snapshot holds. The prompts still queued stay. */
 export function applySnapshot(
   state: TrajectoryState,

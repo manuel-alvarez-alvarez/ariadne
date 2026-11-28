@@ -394,6 +394,27 @@ it("finds the text of the loaded turns and the loaded steps", async () => {
   await waitFor(() => expect(within(find).getByRole("status").textContent).toBe("1 of 1"))
 })
 
+it("finds the shown prompt of a daemon turn, not its seat brief", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn({
+    prompt: {
+      id: anId(),
+      content: text("Seat brief zebra\n\nFix the bug"),
+      text: "Fix the bug",
+      source: "daemon",
+    },
+  })
+  renderConsole(aSnapshot([turn]))
+
+  await user.click(screen.getByRole("button", { name: "Find in transcript" }))
+  const field = screen.getByRole("textbox", { name: "Find in transcript" })
+  const find = field.closest("search") as HTMLElement
+  await user.type(field, "zebra")
+  expect(within(find).getByRole("status").textContent).toBe("No matches in loaded messages")
+  fireEvent.change(field, { target: { value: "fix the" } })
+  expect(within(find).getByRole("status").textContent).toBe("1 of 1")
+})
+
 /**
  * A session view with the turn console, a draft, an open fold and a place
  * away from the bottom, and the check that a new pane keeps all three.

@@ -46,7 +46,7 @@ import { StepDetail } from "./step-detail"
 import { groupSteps, type ToolStep } from "./step-groups"
 import { StateIcon } from "./step-icons"
 import { GroupRow } from "./step-row"
-import { contentText, foldSteps, type StepPage } from "./store"
+import { contentText, foldSteps, promptText, type StepPage } from "./store"
 
 /** How many of its last steps a running turn shows under its activity line. */
 const LIVE_STEPS = 3
@@ -347,17 +347,6 @@ function liveBlocks(turn: TurnDto): ContentBlockDto[] {
 /** The fold id of a daemon prompt, beside the turns' and the plans' in the console's kept folds. */
 function promptFoldId(promptId: string): string {
   return `prompt:${promptId}`
-}
-
-const UNTRUSTED_MARK = /<<<(?:end )?untrusted>>>/g
-
-/**
- * The prompt a person reads: what was typed, or for a daemon prompt its
- * `text` without the seat brief, and without the `untrusted` marks.
- */
-function promptText(prompt: NonNullable<TurnDto["prompt"]>): string {
-  if (prompt.source !== "daemon") return contentText(prompt.content)
-  return (prompt.text ?? contentText(prompt.content)).replace(UNTRUSTED_MARK, "")
 }
 
 function plural(count: number, one: string, many: string): string {

@@ -1840,11 +1840,12 @@ plans and the `note` and `compaction` steps of the trajectory (040).
     console, under its stream line, and a `session_patch` changes it
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::shows the title that the agent gives as the subtitle of the console`).
 99f. Find (`trajectory/find-slot.tsx`, over `console/transcript-find.tsx`) searches the loaded turns and the
-    loaded steps: the prompt and the answer of each turn shown, and each
+    loaded steps: the prompt as shown (a daemon prompt without its seat brief) and the answer of each turn shown, and each
     step the console holds for it, including live steps, full pages, attention
     and the notices of the turn. Each step appears once by ID.
     Find reports when older turns are unloaded and loads them on request
     (`ui/src/features/sessions/trajectory/console-state.test.tsx::finds the text of the loaded turns and the loaded steps`,
+    `ui/src/features/sessions/trajectory/console-state.test.tsx::finds the shown prompt of a daemon turn, not its seat brief`,
     `ui/src/features/sessions/trajectory/console-state.test.tsx::shows the warnings and the compaction of a closed turn from its notices, and reads no steps for them`).
 99g. The console expands into a modal and collapses back. Expand, collapse and a change of tab each
     mount a new pane. The console keeps the draft, the scroll place and
