@@ -165,7 +165,7 @@ it("shows the daemon's reason when it refuses the host", async () => {
   const user = userEvent.setup()
   renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} onCreated={onCreated} />)
 
-  await user.type(await screen.findByLabelText("Title"), "Far task")
+  fireEvent.change(await screen.findByLabelText("Title"), { target: { value: "Far task" } })
   fireEvent.click(screen.getByRole("combobox", { name: "Repository" }))
   fireEvent.click(await screen.findByRole("option", { name: "/work/ariadne" }))
   await user.click(screen.getByRole("combobox", { name: "Host" }))
@@ -174,7 +174,6 @@ it("shows the daemon's reason when it refuses the host", async () => {
   fireEvent.click(
     within(await screen.findByRole("listbox", { name: "Models" })).getByText(MODEL.id),
   )
-  fireEvent.click(within(screen.getByRole("listbox", { name: "Efforts" })).getByText("high"))
   fireEvent.click(screen.getByRole("button", { name: "Create task" }))
 
   expect(await screen.findByText(/a goal-less task requires the local host/)).toBeTruthy()
