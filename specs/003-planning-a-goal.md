@@ -52,7 +52,8 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    description. It asks every question with that tool and never in its turn
    text (`mcp.rs::only_the_orchestrator_is_told_to_ask`; the skill's steps 2
    and 7 say the same, in
-   `skill_tests/operate.rs::the_orchestration_skill_asks_one_question_at_a_time_with_its_parts`).
+   `skill_tests/operate.rs::each_orchestration_step_that_asks_names_the_question_tool_and_not_turn_text`,
+   which checks each step alone).
    It asks one question
    at a time, and waits for the answer before it asks the next one. Each
    question names its position, such as "Question 2 of 3"; gives the context
@@ -121,7 +122,9 @@ Out: the columns and their gates (030), the model catalog the sizing reads
    - what each agent runs on. The orchestrator sizes every one of them from
      the catalog (011) and shows the user the tasks and the models. It asks
      about the plan the same way it asks about the goal (3), with the
-     question tool and never in turn text: one question at
+     question tool and never in turn text
+     (`skill_tests/operate.rs::each_orchestration_step_that_asks_names_the_question_tool_and_not_turn_text`):
+     one question at
      a time, with its five parts, and it revises the plan until the user
      writes an explicit yes. It asks about tracer size once, then about
      every `depends_on` edge as one list with each edge's reason — a
