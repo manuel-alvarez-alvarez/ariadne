@@ -3,9 +3,13 @@ import type { KeyboardEvent } from "react"
 
 import { Markdown } from "@/components/markdown"
 import { NamedIcon } from "@/components/named-icon"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/format"
 
 import type { PermissionOption } from "./transcript"
+
+/** A daemon prompt of more lines than this shows its first lines and a Show more. */
+const FOLDED_LINES = 4
 
 /**
  * What a person typed is a message: set apart and full size, with the time it
@@ -16,12 +20,18 @@ export function PromptBox({
   queued,
   time,
   role = "You",
+  fold,
 }: {
   text: string
   queued?: boolean
   time?: string
   role?: string
+  /** Folds a prompt of more than `FOLDED_LINES` lines; its state is the caller's. */
+  fold?: { open: boolean; onToggle: () => void }
 }) {
+  const lines = text.split("\n")
+  const folded = fold !== undefined && lines.length > FOLDED_LINES
+  const shut = folded && !fold.open
   return (
     <div
       className={cn(
@@ -43,7 +53,26 @@ export function PromptBox({
           </span>
         ) : null}
         <div className="flex items-start gap-3">
-          <Markdown className="min-w-0 flex-1">{text}</Markdown>
+          <div className="min-w-0 flex-1">
+            {shut ? (
+              <p className="whitespace-pre-wrap break-words text-sm">
+                {lines.slice(0, FOLDED_LINES).join("\n")}
+              </p>
+            ) : (
+              <Markdown>{text}</Markdown>
+            )}
+            {folded ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                aria-expanded={fold.open}
+                onClick={fold.onToggle}
+                className="mt-1 font-mono text-muted-foreground"
+              >
+                {fold.open ? "Show less" : "Show more"}
+              </Button>
+            ) : null}
+          </div>
           {time ? (
             <span
               data-block-time

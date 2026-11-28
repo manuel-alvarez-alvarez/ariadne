@@ -394,6 +394,27 @@ it("finds the text of the loaded turns and the loaded steps", async () => {
   await waitFor(() => expect(within(find).getByRole("status").textContent).toBe("1 of 1"))
 })
 
+it("finds the shown prompt of a daemon turn, not its seat brief", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn({
+    prompt: {
+      id: anId(),
+      content: text("Seat brief zebra\n\nFix the bug"),
+      text: "Fix the bug",
+      source: "daemon",
+    },
+  })
+  renderConsole(aSnapshot([turn]))
+
+  await user.click(screen.getByRole("button", { name: "Find in transcript" }))
+  const field = screen.getByRole("textbox", { name: "Find in transcript" })
+  const find = field.closest("search") as HTMLElement
+  await user.type(field, "zebra")
+  expect(within(find).getByRole("status").textContent).toBe("No matches in loaded messages")
+  fireEvent.change(field, { target: { value: "fix the" } })
+  expect(within(find).getByRole("status").textContent).toBe("1 of 1")
+})
+
 /**
  * A session view with the turn console, a draft, an open fold and a place
  * away from the bottom, and the check that a new pane keeps all three.
@@ -605,4 +626,44 @@ it("puts the find icon in the header row and opens the find pane below it", () =
   expect(header.contains(pane)).toBe(true)
   expect(pane.className).toContain("top-full")
   expect(header.className).toContain("relative")
+})
+
+it("marks only what a person or the AI allowed, or anything rejected, and says who in the detail", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn()
+  const answer = (option_id: string, label: string, decided_by: string) =>
+    aPermissionStep(turn.id, { state: "answered", answer: { option_id, label, decided_by } })
+  const permissions = [
+    answer("allow", "Allow once", "auto"),
+    answer("allow", "Allow once", "learned"),
+    answer("allow", "Allow once", "ai"),
+    answer("allow", "Allow once", "console"),
+    answer("reject", "Reject", "auto"),
+  ]
+  const calls = permissions.map((one, at) =>
+    aToolStep(turn.id, { title: `Call ${at}`, subject: null, tool_call_id: one.tool_call_id }),
+  )
+  reply(
+    `/trajectory/turns/${turn.id}/steps`,
+    Response.json({ steps: [...permissions, ...calls], earlier_steps: 0 }),
+  )
+  renderConsole(aSnapshot([turn]))
+
+  await user.click(activityLine(turn))
+
+  const rows = await within(article(turn)).findAllByRole("listitem")
+  expect(rows.map((row) => row.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+    "Call 0 12s",
+    "Call 1 12s",
+    "Call 2 ✓ Allow once · AI 12s",
+    "Call 3 ✓ Allow once · you 12s",
+    "Call 4 ✗ Reject · auto 12s",
+  ])
+  const marks = article(turn).querySelectorAll("[data-permission-mark]")
+  expect(marks[0]?.className).toContain("text-muted-foreground")
+  expect(marks[2]?.className).toContain("text-status-danger-fg")
+
+  await user.click(within(rows[0] as HTMLElement).getByRole("button"))
+  const detail = article(turn).querySelector("[data-step-detail]") as HTMLElement
+  expect(within(detail).getByText("Allow once · auto")).toBeTruthy()
 })

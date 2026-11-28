@@ -882,3 +882,155 @@ it("shows the author of each turn part as an icon, its word as the name", () => 
   expect(within(transcript()).getAllByRole("img", { name: "Assistant" })).toHaveLength(2)
   expect(within(transcript()).queryByText("Assistant")).toBeNull()
 })
+
+const BRIEF_LINES = ["# Resume", "line two", "line three", "line four", "line five", "line six"]
+
+function aDaemonTurn(body: string) {
+  return aTurn({
+    prompt: {
+      id: anId(),
+      content: text(`Seat brief\n\n${body}`),
+      text: body,
+      source: "daemon",
+    },
+  })
+}
+
+it("shows the duration, then the steps, then each count above zero", () => {
+  const busy = aTurn({
+    activity: {
+      steps: 7,
+      files_changed: 1,
+      failed: 0,
+      cancelled: 2,
+      subagents: 1,
+      thoughts: 0,
+      tool_calls: 7,
+    },
+  })
+  const quiet = aTurn({
+    activity: {
+      steps: 0,
+      files_changed: 0,
+      failed: 0,
+      cancelled: 0,
+      subagents: 0,
+      thoughts: 0,
+      tool_calls: 0,
+    },
+  })
+  const plain = aTurn({
+    activity: {
+      steps: 3,
+      files_changed: 0,
+      failed: 0,
+      cancelled: 0,
+      subagents: 0,
+      thoughts: 0,
+      tool_calls: 3,
+    },
+  })
+  renderConsole(aSnapshot([busy, quiet, plain]))
+
+  expect(activityLine(busy).textContent?.trim()).toBe(
+    "1m 04s·7 steps·1 file changed·2 cancelled·1 subagent",
+  )
+  expect(activityLine(quiet).textContent?.trim()).toBe("1m 04s")
+  expect(activityLine(plain).textContent?.trim()).toBe("1m 04s·3 steps")
+})
+
+it("shows a daemon prompt without its seat brief and its untrusted marks", () => {
+  const turn = aDaemonTurn("Fix <<<untrusted>>>the bug<<<end untrusted>>> now")
+  renderConsole(aSnapshot([turn]))
+
+  within(transcript()).getByText("Fix the bug now")
+  expect(transcript().textContent).not.toContain("Seat brief")
+  expect(transcript().textContent).not.toContain("untrusted")
+})
+
+it("folds a daemon prompt of more than 4 lines, and keeps its fold off the screen", async () => {
+  const user = userEvent.setup()
+  const turn = aDaemonTurn(BRIEF_LINES.join("\n"))
+  const first = renderConsole(aSnapshot([turn]))
+
+  expect(transcript().textContent).toContain("line four")
+  expect(transcript().textContent).not.toContain("line five")
+  await user.click(within(transcript()).getByRole("button", { name: "Show more" }))
+  expect(transcript().querySelector("h1")?.textContent).toBe("Resume")
+  expect(transcript().textContent).toContain("line six")
+
+  // A change of tab unmounts the pane, and coming back mounts a new one.
+  first.rerender(<div />)
+  first.rerender(<TrajectoryConsole host="local" sessionId={SESSION_ID} status="idle" />)
+  act(() => {
+    latestSource().succeed()
+    latestSource().emit("snapshot", aSnapshot([turn]))
+  })
+  expect(transcript().textContent).toContain("line six")
+  await user.click(within(transcript()).getByRole("button", { name: "Show less" }))
+  expect(transcript().textContent).not.toContain("line five")
+})
+
+it("shows a typed prompt whole, and a daemon prompt of 4 lines whole", () => {
+  const typed = aTurn({
+    prompt: { id: anId(), content: text("1\n2\n3\n4\n5\n6"), source: "console" },
+  })
+  const short = aDaemonTurn("a\nb\nc\nd")
+  renderConsole(aSnapshot([typed, short]))
+
+  expect(transcript().textContent).toContain("6")
+  expect(within(transcript()).queryByRole("button", { name: "Show more" })).toBeNull()
+})
+
+it("shows the first line of a title, and a subject only when the title lacks it", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn()
+  const multi = aToolStep(turn.id, { title: "Run the tests\nwith more words", subject: "npm test" })
+  const same = aToolStep(turn.id, { title: "Read src/main.rs", subject: "src/main.rs" })
+  const later = aToolStep(turn.id, {
+    title: "Run it\nnpm test -- login",
+    subject: "npm test -- login",
+  })
+  // An answered permission whose call shows no row is a row of its own.
+  const asked = aPermissionStep(turn.id, {
+    state: "answered",
+    answer: { option_id: "allow", label: "Allow once", decided_by: "console" },
+    tool: { title: "Bash\nmore", subject: "Bash", kind: "execute" },
+  })
+  reply(
+    "GET",
+    `/trajectory/turns/${turn.id}/steps`,
+    Response.json({ steps: [multi, same, later, asked], earlier_steps: 0 }),
+  )
+  renderConsole(aSnapshot([turn]))
+
+  await user.click(activityLine(turn))
+
+  const list = await within(transcript()).findByRole("list", { name: "Steps of the turn" })
+  const rows = within(list).getAllByRole("listitem")
+  expect(rows.map((row) => row.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+    "Run the tests npm test 12s",
+    "Read src/main.rs 12s",
+    "Run it 12s",
+    "Bash",
+  ])
+})
+
+it("does not show the message step that is the answer of an open turn", async () => {
+  const user = userEvent.setup()
+  const turn = aTurn()
+  const message = aMessageStep(turn.id, { streaming: false, content: text("Fixed it") })
+  const tool = aToolStep(turn.id)
+  reply(
+    "GET",
+    `/trajectory/turns/${turn.id}/steps`,
+    Response.json({ steps: [tool, message], earlier_steps: 0 }),
+  )
+  renderConsole(aSnapshot([{ ...turn, answer_step_id: message.id }]))
+
+  await user.click(activityLine(turn))
+
+  const list = await within(transcript()).findByRole("list", { name: "Steps of the turn" })
+  expect(list.querySelector(`[data-step-id="${message.id}"]`)).toBeNull()
+  expect(list.querySelector(`[data-step-id="${tool.id}"]`)).not.toBeNull()
+})

@@ -111,18 +111,34 @@ function decider(step: PermissionStep): string | undefined {
   return DECIDERS[by] ?? by
 }
 
-/** The mark of an answered permission on its call's row: `✓ Allow once · you`. */
+/**
+ * The answer of a permission and who decided it, as the detail of a call
+ * shows it, whoever decided: `Allow once · auto`.
+ */
+export function permissionAnswer(step: PermissionStep): string | undefined {
+  if (!step.answer) return undefined
+  const who = decider(step)
+  return `${step.answer.label}${who ? ` · ${who}` : ""}`
+}
+
+/**
+ * The mark of an answered permission on its call's row: `✓ Allow once · you`.
+ * An allow that `auto` or a learned rule gave has no mark; an allow by the AI
+ * or a person is muted, and a rejection is the danger colour.
+ */
 export function PermissionMark({ step }: { step: PermissionStep }) {
   const answer = step.answer
   if (!answer) return null
   const kind = step.options.find((option) => option.id === answer.option_id)?.kind ?? ""
   const rejected = kind.startsWith("reject")
+  // `auto` and a learned rule allow as a matter of course: only the rest is news.
+  if (!rejected && (answer.decided_by === "auto" || answer.decided_by === "learned")) return null
   const who = decider(step)
   return (
     <span
       data-permission-mark
       title={step.ai ?? undefined}
-      className={cn("shrink-0", rejected ? "text-status-danger-fg" : "text-status-done-fg")}
+      className={cn("shrink-0", rejected ? "text-status-danger-fg" : "text-muted-foreground")}
     >
       {rejected ? "✗" : "✓"} {answer.label}
       {who ? ` · ${who}` : ""}
