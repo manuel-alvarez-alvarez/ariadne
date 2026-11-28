@@ -1377,7 +1377,7 @@ pub(crate) mod tests {
         "Call `list_skills` once for the goal.",
         "Call `list_models` once for the goal, with no `host`.",
         "Staff one agent on every column with `create_task`.",
-        "Call `finalize_plan` to start the plan. Call it no earlier.",
+        "Call `finalize_plan` to start the plan. Call it only after the user writes an explicit yes.",
         "Answer an agent with `post_to_session`.",
         "Retry a failed task with `retry_task`, rewrite it with `update_task`, or cancel it with `cancel_task`.",
         "Move a struggling agent with `switch_session`, to a model one rank up.",

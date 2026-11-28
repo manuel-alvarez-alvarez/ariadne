@@ -347,7 +347,7 @@ fn each_rule_is_stated_in_exactly_one_briefing() {
         "Call `fail_step` when",
         "Never pass `--no-verify` or `-n` to git",
         "After three failed attempts at one fix, stop.",
-        "Call it no earlier.",
+        "Call it only after the user writes an explicit yes.",
         "Work only in the task's worktree",
         "Plan the goal with the user",
         "return the work with `fail_step`",

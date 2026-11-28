@@ -572,7 +572,9 @@ fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
     // And the yes gates the start, in as many words, in the skill and at
     // the call that starts the plan.
     assert!(prompt.contains("Start the plan after the yes, and no earlier."));
-    assert!(orchestration_supplement().contains("Call it no earlier."));
+    assert!(
+        orchestration_supplement().contains("Call it only after the user writes an explicit yes.")
+    );
 }
 
 /// `orchestration` reads the same in any harness: it names no Ariadne, no
