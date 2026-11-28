@@ -8,6 +8,7 @@
 //! it asks.
 
 pub(crate) mod agent_requests;
+pub(crate) mod planning;
 pub(crate) mod pull_requests;
 pub(crate) mod questions;
 pub(crate) mod recovery;
@@ -23,7 +24,7 @@ use crate::launcher::Launcher;
 ///
 /// Registering a producer is adding a call here and extending it, the one
 /// extension point this route gives a later task: [`recovery`],
-/// [`agent_requests`] (a live session's own flag), [`questions`] and
+/// [`agent_requests`] (a live session's own flag), [`questions`], [`planning`] and
 /// [`pull_requests`] are complete (031). A producer whose read fails costs the list its `complete`
 /// flag rather than its other producers' items, so a partial read never
 /// answers as if nothing were wrong.
@@ -41,6 +42,13 @@ pub(crate) async fn collect_raw(store: &Store, launcher: &Launcher) -> Attention
         Ok(found) => items.extend(found),
         Err(error) => {
             tracing::warn!(%error, "the session attention producer could not read its evidence");
+            complete = false;
+        }
+    }
+    match planning::items(store).await {
+        Ok(found) => items.extend(found),
+        Err(error) => {
+            tracing::warn!(%error, "the planning attention producer could not read its evidence");
             complete = false;
         }
     }

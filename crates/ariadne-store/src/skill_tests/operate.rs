@@ -139,7 +139,7 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
         "else `git -C <repo> fetch <remote> <base>:<base>`",
         "With no remote: run the checks the repository names for a landing.",
         "Read the full sha with `git -C <repo> rev-parse <base>`.",
-        "Call `complete_step` with the column report and that sha as `merge_commit`.",
+        "Pass the work, with the report and that sha as the merge commit.",
     ] {
         let found = text[at..]
             .find(step)
@@ -148,7 +148,7 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
     }
     // The names are rules, not steps: the primary checkout and `<upstream>`.
     for name in [
-        "The primary checkout is the `Repo:` path of your briefing.",
+        "`<repo>` is the primary checkout of the repository.",
         "`<upstream>` is `<remote>/<base>` where `git remote -v` names a remote, else `<base>`.",
     ] {
         assert!(
@@ -159,14 +159,14 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
     // A failure has one owner, and the rules are read in order: a hook
     // that fails is a failed check, never a moved base, so a check that
     // names a file of the task returns the task, a check that names none
-    // is the orchestrator's, and only then does the base-moved route go
+    // is the requester's, and only then does the base-moved route go
     // round again. The merge agent fixes no code, and commits only the
     // merge of step 2 and the squash.
     let mut at = 0;
     for route in [
         "A hook that fails is a failed check, not a moved base. Take the first rule that fits.",
-        "A failed check that names a file of the task. Call `fail_step` with the check's output.",
-        "A failed check that names no file of the task. Post it to the orchestrator with `post_to_session`. Land nothing.",
+        "A failed check that names a file of the task. Return the work, with the check's output as the return report.",
+        "A failed check that names no file of the task. Send it to the requester. Land nothing.",
         "Else the base moved: a non-fast-forward rejection, an extra file in `git diff --stat`, or a failed fast-forward. Start again from step 1.",
     ] {
         let found = text[at..]
@@ -203,6 +203,40 @@ fn the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself() {
             "the {name} names gh pr merge"
         );
     }
+}
+
+/// The calls the `merge` skill dropped are its agent supplement's, and
+/// stated there alone: the `merge_commit` value of the step that passes
+/// the work, and the `fail_step` call for a failed check (006 rule 21).
+#[test]
+fn the_merge_supplement_holds_the_step_calls_the_skill_dropped() {
+    let agent = unwrapped(skill_supplement("merge", ariadne_core::Seat::Agent).unwrap());
+    for rule in [
+        "Pass the work with `complete_step`, with the report and that sha as `merge_commit`.",
+        "On a failed check of a task file, call `fail_step` with the check's output as the return report.",
+    ] {
+        assert!(agent.contains(rule), "the merge supplement and {rule}");
+    }
+    assert_eq!(
+        skill_supplement("merge", ariadne_core::Seat::Reviewer),
+        None
+    );
+    assert_eq!(skill_supplement("merge", ariadne_core::Seat::Keeper), None);
+}
+
+/// `conflict-resolution` ends nothing where another skill invoked it, and
+/// ends the stage where none did. The call that ends the stage is its
+/// agent supplement's.
+#[test]
+fn the_conflict_resolution_supplement_holds_the_call_that_ends_the_stage() {
+    let agent =
+        unwrapped(skill_supplement("conflict-resolution", ariadne_core::Seat::Agent).unwrap());
+    assert!(
+        agent.contains(
+            "Where no skill invoked it, pass the work with `complete_step`, with the report."
+        ),
+        "{agent}"
+    );
 }
 
 /// A force push can replace any branch on any remote. The merge skill
@@ -264,7 +298,7 @@ fn the_conflict_resolution_skill_resolves_by_intent_and_finishes_the_operation()
         "Run the checks of what you resolved.",
         "Finish the operation. Stage the files, then continue the rebase or commit the merge.",
         "Where another skill invoked this one, give it each dropped intent and return to that skill's next step. Call nothing.",
-        "Where no skill did, this step ends the column. Call `complete_step` with the column report. Put each dropped intent in it.",
+        "Where no skill did, this step ends the stage: pass the work, with the report. Put each dropped intent in it.",
     ] {
         let found = text[at..].find(step).unwrap_or_else(|| {
             panic!("the conflict-resolution skill has no {step} after its last step")
@@ -536,6 +570,7 @@ fn the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts() {
 fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
     let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
     for phrase in [
+        "Ask each question with the question tool, not in turn text.",
         "Ask one question in a turn, then stop and wait for the answer.",
         "Ask the next question only after the answer.",
         "Put no second question in the context or in the options.",
@@ -561,6 +596,39 @@ fn the_orchestration_skill_asks_one_question_at_a_time_with_its_parts() {
         !prompt.contains("numbered list"),
         "the orchestration skill still groups open points into a numbered list: {prompt}"
     );
+}
+
+/// Step 2 (the goal) and step 7 (the plan) each tell the orchestrator to ask
+/// with the question tool and not in turn text, so the rule is proved for
+/// each step alone (003 rules 3 and 7).
+#[test]
+fn each_orchestration_step_that_asks_names_the_question_tool_and_not_turn_text() {
+    let prompt = unwrapped(default_skill_document(ORCHESTRATION_SKILL).unwrap());
+    let step = |from: &str, to: &str| {
+        let start = prompt
+            .find(from)
+            .unwrap_or_else(|| panic!("{from}: {prompt}"));
+        let end = start
+            + prompt[start..]
+                .find(to)
+                .unwrap_or_else(|| panic!("{to}: {prompt}"));
+        prompt[start..end].to_string()
+    };
+    for (name, text) in [
+        (
+            "step 2",
+            step("2. Ask the user every open point", "3. Split the goal"),
+        ),
+        (
+            "step 7",
+            step("7. Show the user the tasks", "8. Call `finalize_plan`"),
+        ),
+    ] {
+        assert!(
+            text.contains("Ask each question with the question tool, not in turn text."),
+            "the orchestration skill {name}: {text}"
+        );
+    }
 }
 
 /// The workflow is settled before planning starts, not asked about task

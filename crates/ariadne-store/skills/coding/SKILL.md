@@ -24,7 +24,7 @@ Use `documentation` for a prose-only task.
 
    Done when each file you change has its rules named.
 3. Name an assumption for each gap. Report a contradiction
-   with `post_to_session` to `orchestrator`. Send both readings and your pick.
+   to the requester. Send both readings and your pick.
    Continue with your pick.
 
    Done when every gap has an assumption.
@@ -53,7 +53,7 @@ Use `documentation` for a prose-only task.
    the committed revision. Run each test file you touched whole.
 
    Done when the required checks are green.
-9. Call `complete_step` with the column report. End it with one line per
+9. Send the report. End it with one line per
    Criteria number and the proof for that criterion.
 
    Done when the report has been submitted.
@@ -88,7 +88,7 @@ history.
 
 Keep the body to three short sentences. Say what changed and why it matters.
 On a return from review, add a new commit on top. Never amend. The merge
-column squashes.
+stage squashes.
 
 ### Tests
 

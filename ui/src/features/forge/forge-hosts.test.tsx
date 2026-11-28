@@ -625,7 +625,9 @@ it.each([
     )
     await userEvent.click(screen.getByRole("button", { name: "Create goal" }))
     const dialog = await screen.findByRole("dialog")
-    expect(within(dialog).getByRole("combobox", { name: "Host" }).textContent).toContain(host)
+    expect(
+      within(dialog).getByRole("button", { name: "Orchestrator runs on" }).textContent,
+    ).toContain(host)
     expect(await within(dialog).findByRole("button", { name: `Remove ${path}` })).toBeTruthy()
   },
 )

@@ -358,13 +358,10 @@ const RESUME: &str = "Not a new request: continue \"task\" at Develop. Check if 
 
 // -- the timeline -----------------------------------------------------------
 
-/// An orchestrator between turns, in planning, is waiting on the user's
-/// answer to whatever it last asked — that is not silence, so it is never
-/// nudged and never flagged for it, however long it sits idle. A turn that
-/// never ends is the one silence a planning orchestrator can have, and that
-/// is still watched.
+/// Planning turns never receive automatic nudges or stalled flags.
+/// The separate planning producer can request console input (031).
 #[tokio::test]
-async fn an_idle_planning_orchestrator_is_never_nudged_or_flagged() {
+async fn an_idle_planning_orchestrator_is_never_nudged_or_flagged_stalled() {
     let h = harness().await;
     let goal = h.planning_goal().await;
     let session = h.orchestrator_session(&goal).await;

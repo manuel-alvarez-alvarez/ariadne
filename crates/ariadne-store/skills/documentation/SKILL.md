@@ -40,7 +40,7 @@ the system will do. Use `research` when the task asks a question.
    Commit once, under the repository's commit rules.
 
    Done when the checks pass and the branch holds the page in one commit.
-7. Call `complete_step` with the column report.
+7. Send the report.
 
    Done when the report has been submitted.
 
