@@ -11,7 +11,6 @@
  */
 
 import { ServerIcon } from "lucide-react"
-
 import { type HostView, LOCAL_HOST, useHosts } from "@/api"
 import { HostDot } from "@/components/host-dot"
 import { HostLabel } from "@/components/host-label"
@@ -26,6 +25,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useHasNamedHosts } from "@/hooks/use-host-filter"
 import { cn } from "@/lib/format"
 import { useSettingsStore } from "@/stores/settings"
@@ -69,7 +69,7 @@ function needsAttention(host: HostView): boolean {
 }
 
 export function HostPicker() {
-  const { hosts } = useHosts()
+  const { hosts, isPending } = useHosts()
   const pick = useSettingsStore((state) => state.hostFilter)
   const setPick = useSettingsStore((state) => state.setHostFilter)
   // A pick the hosts no longer list reads as All, which is what it filters to.
@@ -78,6 +78,7 @@ export function HostPicker() {
   const named = useHasNamedHosts()
   const warn = shown === ALL && hosts.some(needsAttention)
   // With `local` alone there is nothing to pick.
+  if (isPending) return <Skeleton aria-label="Loading hosts" className="h-8 w-32" />
   if (!named) return null
 
   return (

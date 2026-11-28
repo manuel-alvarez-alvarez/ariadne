@@ -485,8 +485,7 @@ it("opens the panel on local when no host holds Ariadne work", async () => {
     box: { "/v1/repositories": [BOX_REPO], "/v1/pull-requests": page([onBox]) },
   })
   const again = renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
-  await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(2))
-  await userEvent.click(screen.getByRole("row", { name: "Open #42 New title" }))
+  await userEvent.click(await screen.findByRole("row", { name: "Open #42 New title" }))
   expect(again.location.url).toContain("pr=repo-local%3A42")
   expect(again.location.url).not.toContain("host=")
 })

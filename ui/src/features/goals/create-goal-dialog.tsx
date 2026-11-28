@@ -130,7 +130,7 @@ export function CreateGoalDialog({
   }
 }) {
   const picked = usePickedHost()
-  const { hosts } = useHosts()
+  const { hosts, isPending: hostsPending } = useHosts()
   const pickedHosts = useHostFilter()
   const setHostFilter = useSettingsStore((state) => state.setHostFilter)
   // The header's pick, unless the app cannot reach that host: then `local`.
@@ -347,29 +347,33 @@ export function CreateGoalDialog({
             <Controller
               control={form.control}
               name="model"
-              render={({ field }) => (
-                <PinPicker
-                  host={host}
-                  hosts={hostChoices}
-                  id="goal-pin"
-                  label="Orchestrator runs on"
-                  model={field.value}
-                  effort={chosenEffort}
-                  onChange={(pin) => {
-                    if (pin.host !== host) {
-                      // Repository ids and workflows are the old host's own.
-                      form.setValue("host", pin.host, { shouldDirty: true })
-                      form.setValue("repository_ids", [], { shouldDirty: true })
-                      form.setValue("workflow", "", { shouldDirty: true })
-                      workflowPicked.current = false
-                    }
-                    field.onChange(pin.model)
-                    form.setValue("effort", pin.effort, { shouldDirty: true })
-                  }}
-                  models={models.data}
-                  invalid={errors.model ? true : undefined}
-                />
-              )}
+              render={({ field }) =>
+                hostsPending ? (
+                  <Skeleton aria-label="Loading hosts" className="h-9 w-full" />
+                ) : (
+                  <PinPicker
+                    host={host}
+                    hosts={hostChoices}
+                    id="goal-pin"
+                    label="Orchestrator runs on"
+                    model={field.value}
+                    effort={chosenEffort}
+                    onChange={(pin) => {
+                      if (pin.host !== host) {
+                        // Repository ids and workflows are the old host's own.
+                        form.setValue("host", pin.host, { shouldDirty: true })
+                        form.setValue("repository_ids", [], { shouldDirty: true })
+                        form.setValue("workflow", "", { shouldDirty: true })
+                        workflowPicked.current = false
+                      }
+                      field.onChange(pin.model)
+                      form.setValue("effort", pin.effort, { shouldDirty: true })
+                    }}
+                    models={models.data}
+                    invalid={errors.model ? true : undefined}
+                  />
+                )
+              }
             />
             {!form.watch("model").trim() ? (
               <FieldDescription>Choose a model for the orchestrator.</FieldDescription>

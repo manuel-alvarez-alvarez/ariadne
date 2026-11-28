@@ -82,7 +82,7 @@ it("reloads the lists of the new host when the goal dialog's host changes", asyn
 /** Pick `name` in the host column of the open goal dialog's pin picker. */
 async function pickHost(user: ReturnType<typeof userEvent.setup>, name: string) {
   const dialog = await screen.findByRole("dialog", { name: "New goal" })
-  await user.click(within(dialog).getByRole("button", { name: "Orchestrator runs on" }))
+  await user.click(await within(dialog).findByRole("button", { name: "Orchestrator runs on" }))
   const hostsColumn = await screen.findByRole("listbox", { name: "Hosts" })
   await user.click(within(hostsColumn).getByText(name))
   await user.keyboard("{Escape}")
@@ -91,7 +91,7 @@ async function pickHost(user: ReturnType<typeof userEvent.setup>, name: string) 
 /** Pick `model` in the open goal dialog's pin picker. */
 async function pickModel(user: ReturnType<typeof userEvent.setup>, id: string) {
   const dialog = await screen.findByRole("dialog", { name: "New goal" })
-  await user.click(within(dialog).getByRole("button", { name: "Orchestrator runs on" }))
+  await user.click(await within(dialog).findByRole("button", { name: "Orchestrator runs on" }))
   const models = await screen.findByRole("listbox", { name: "Models" })
   await user.click(within(models).getByText(id))
   await user.keyboard("{Escape}")
@@ -113,7 +113,7 @@ it("clears the model and the effort when the goal dialog's host changes", async 
   stubHosts({ local: answers, box: answers })
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
   const dialog = await screen.findByRole("dialog", { name: "New goal" })
-  const pin = within(dialog).getByRole("button", { name: "Orchestrator runs on" })
+  const pin = await within(dialog).findByRole("button", { name: "Orchestrator runs on" })
 
   // A model and an effort of it, on local.
   await user.click(pin)
@@ -150,7 +150,7 @@ it("sends no effort for a model picked again after the goal dialog's host change
   renderScreen(<CreateGoalDialog open onOpenChange={vi.fn()} />)
   const dialog = await screen.findByRole("dialog", { name: "New goal" })
   await pickHost(user, "box")
-  const pin = within(dialog).getByRole("button", { name: "Orchestrator runs on" })
+  const pin = await within(dialog).findByRole("button", { name: "Orchestrator runs on" })
   await user.click(pin)
   await user.click(
     within(await screen.findByRole("listbox", { name: "Models" })).getByText(EFFORT_MODEL.id),

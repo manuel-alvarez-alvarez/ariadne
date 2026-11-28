@@ -89,10 +89,10 @@ it("draws a HostLabel pill and a dot in the host colour, local in grey", async (
 
 it("repaints every place a host name is drawn when host_updated changes its colour", async () => {
   const user = userEvent.setup()
-  stubHosts({ local: { "/v1/forge/tunnel": { enabled: false, state: "off" } } }, [
-    LOCAL,
-    { ...BOX, color: "red" },
-  ])
+  stubHosts(
+    { local: { "/v1/host-setups": [], "/v1/forge/tunnel": { enabled: false, state: "off" } } },
+    [LOCAL, { ...BOX, color: "red" }],
+  )
   const { queryClient } = renderScreen(
     <>
       <HostPicker />

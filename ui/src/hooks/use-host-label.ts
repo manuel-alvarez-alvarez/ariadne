@@ -12,7 +12,8 @@ import { useSettingsStore } from "@/stores/settings"
 
 /** True when the settings daemon lists a host other than `local`. */
 function useNamedHostListed(): boolean {
-  const { hosts } = useHosts()
+  const { hosts, isPending } = useHosts()
+  if (isPending) return false
   return hosts.some((host) => host.name !== LOCAL_HOST)
 }
 
@@ -23,10 +24,10 @@ function useNamedHostListed(): boolean {
  */
 export function useRowsShowHost(): boolean {
   const pick = useSettingsStore((state) => state.hostFilter)
-  const { hosts } = useHosts()
+  const { hosts, isPending } = useHosts()
   const named = useNamedHostListed()
   const pickedOne = pick !== "" && hosts.some((host) => host.name === pick)
-  return named && !pickedOne
+  return isPending ? false : named && !pickedOne
 }
 
 /** Whether a goal, task or session panel names its host: with a named host listed. */
