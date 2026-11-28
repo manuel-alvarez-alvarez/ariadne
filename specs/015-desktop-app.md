@@ -255,7 +255,7 @@ Out: the daemon endpoints themselves (012).
     host with an empty model and effort. The search finds models only within
     the selected host. The trigger shows the host dot and name before the
     agent icon. With no host list, the picker has no host column and the
-    trigger shows no host. Tests in `ui/src/features/models/pin-picker.test.tsx`:
+    trigger shows no host. Tests in `ui/src/features/models/pin-picker-hosts.test.tsx`:
     “shows a host column left of the agents, and the host on the trigger,
     while hosts are listed”, “disables a host the app cannot reach and shows
     its reason”, “fills the agent and model columns with the models of the
@@ -2308,10 +2308,10 @@ view.
   `::clears the search on a pick and shows the columns on that agent and model`).
 - The picker offers no free-text model, and a saved pin that is not in the
   catalog still shows on the trigger as it is
-  (`ui/src/features/models/pin-picker.test.tsx::offers no free-text row, and keeps a saved pin the catalog does not carry on the trigger`).
+  (`ui/src/features/models/pin-picker-effort.test.tsx::offers no free-text row, and keeps a saved pin the catalog does not carry on the trigger`).
 - The picker works with the keyboard alone, and Escape closes the popover
   and not the form dialog around it
-  (`ui/src/features/models/pin-picker.test.tsx::picks with the keyboard alone: search, arrows, enter`,
+  (`ui/src/features/models/pin-picker-effort.test.tsx::picks with the keyboard alone: search, arrows, enter`,
   `::moves across the columns with the arrow keys`,
   `::closes on Escape, and leaves the form dialog open`).
 - Every form that pins a model picks it through this picker: the task form,
@@ -2340,11 +2340,11 @@ view.
   (`ui/src/features/sessions/sessions-list.test.tsx::keeps the effort beside a middle-cut model and gives the row a whole-pin hint`).
 - A listed model offers its own efforts, and an unlisted one takes free text
   (`ui/src/features/models/pin-picker.test.tsx::fills the effort column from the picked model, and an effort pick completes the choice`,
-  `::takes free text for a model of a known agent the catalog does not list`,
+  `ui/src/features/models/pin-picker-effort.test.tsx::takes free text for a model of a known agent the catalog does not list`,
   `::takes free text for a model nothing has discovered`).
 - An effort the new model does not take is cleared, one it takes travels,
   and a model with no efforts says so
-  (`ui/src/features/models/pin-picker.test.tsx::drops an effort the model moved to does not take`,
+  (`ui/src/features/models/pin-picker-effort.test.tsx::drops an effort the model moved to does not take`,
   `::keeps an effort the model moved to takes as well`,
   `::drops the effort of a model that takes none, and says so`,
   `::requires a model before it offers effort choices`).
