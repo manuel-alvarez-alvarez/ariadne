@@ -172,7 +172,7 @@ pub(crate) struct SkillSupplement {
 
 /// Every supplement Ariadne ships. A pair of skill and seat that is not here
 /// adds no text.
-pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 3] = [
+pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 5] = [
     SkillSupplement {
         skill: ORCHESTRATION_SKILL,
         seat: Seat::Orchestrator,
@@ -187,6 +187,16 @@ pub(crate) const SKILL_SUPPLEMENTS: [SkillSupplement; 3] = [
         skill: "code-review",
         seat: Seat::Reviewer,
         text: include_str!("../supplements/code-review/reviewer.md"),
+    },
+    SkillSupplement {
+        skill: "merge",
+        seat: Seat::Agent,
+        text: include_str!("../supplements/merge/agent.md"),
+    },
+    SkillSupplement {
+        skill: "conflict-resolution",
+        seat: Seat::Agent,
+        text: include_str!("../supplements/conflict-resolution/agent.md"),
     },
 ];
 
@@ -949,22 +959,28 @@ pub(crate) mod tests {
     /// up here. The agent seat's `code-review` supplement is 300: the diff
     /// call and the two step calls the skill dropped. The reviewer seat's is
     /// 200: one line that hands the round to `pr-reviewer`, and one that
-    /// skips the step call. The orchestrator seat's `orchestration`
+    /// skips the step call. The agent seat's `merge` supplement is 260: the
+    /// step call that passes the work with its `merge_commit`, and the
+    /// `fail_step` call for a failed check. Its `conflict-resolution`
+    /// supplement is 140: the one step call, for where no skill invoked it.
+    /// The orchestrator seat's `orchestration`
     /// supplement is 1,800: the tool of each playbook step, from
     /// `list_hosts` to `complete_goal`, and the model rules, which name the
     /// column ranks, `local` and the ACP agents. The skill dropped all of it
     /// to name no Ariadne word, and the orchestrator seat text is 200, so the
     /// seat still pays less than the 1,750 its text once carried with the
-    /// playbook in it. The total rose from 500 to 2,300 with it. A new pair
+    /// playbook in it. The total rose by 1,800 with it. A new pair
     /// needs a cap of its own here, argued the same way, and the total holds
     /// them all.
     #[test]
     fn supplement_size_caps_hold() {
-        const TOTAL: usize = 2_300;
+        const TOTAL: usize = 2_650;
         let cap = |skill: &str, seat: Seat| match (skill, seat) {
             (ORCHESTRATION_SKILL, Seat::Orchestrator) => 1_800,
             ("code-review", Seat::Agent) => 300,
             ("code-review", Seat::Reviewer) => 200,
+            ("merge", Seat::Agent) => 260,
+            ("conflict-resolution", Seat::Agent) => 140,
             _ => panic!(
                 "the {skill} supplement of the {} seat has no cap",
                 seat.as_str()
