@@ -1311,6 +1311,19 @@ pub(crate) mod tests {
             .collect()
     }
 
+    /// Whether `sentence` forbids or avoids what it says, so that naming a
+    /// call in it is no instruction to make the call.
+    fn forbids(sentence: &str) -> bool {
+        const NEGATIONS: [&str; 10] = [
+            "not", "never", "avoid", "skip", "without", "omit", "ignore", "don't", "except",
+            "instead",
+        ];
+        sentence
+            .to_lowercase()
+            .split(|c: char| !(c.is_alphanumeric() || c == '\''))
+            .any(|word| NEGATIONS.contains(&word))
+    }
+
     /// The sentences of `text` that tie the plain word `plain` to a meaning:
     /// a sentence that says the word, then "is" or "are", as in "An update
     /// is news.", or a sentence that says the word and names the call it
@@ -1375,7 +1388,7 @@ pub(crate) mod tests {
                 lowered.find(plain).is_some_and(|at| {
                     let rest = &lowered[at + plain.len()..];
                     if call {
-                        lowered.contains(meaning)
+                        lowered.contains(meaning) && !forbids(sentence)
                     } else {
                         [" is ", " are "].iter().any(|verb| {
                             rest.find(verb)
@@ -1402,6 +1415,9 @@ pub(crate) mod tests {
     fn ends_with_an_action(text: &str, plain: &str, listed: &[String]) -> bool {
         let lists = |call: &str| listed.iter().any(|tool| tool == call);
         let sentences = tying_sentences(text, plain);
+        if sentences.iter().any(|sentence| forbids(sentence)) {
+            return false;
+        }
         let delivers = DELIVERING_CALLS.into_iter().any(lists);
         sentences
             .iter()
@@ -1521,6 +1537,16 @@ pub(crate) mod tests {
             "pass the work",
             &reviewer
         ));
+        // A sentence that names the call to forbid it is no tie.
+        let forbidding =
+            "To send the report, pass the work or return the work is to avoid `submit_review`.";
+        for plain in END_OF_WORK {
+            assert!(
+                !ends_with_an_action(forbidding, plain, &reviewer),
+                "{plain}"
+            );
+            assert!(!ties(forbidding, plain, "`submit_review`"), "{plain}");
+        }
         assert!(ends_with_an_action(
             "To pass the work is to write the result in your turn text.",
             "pass the work",
