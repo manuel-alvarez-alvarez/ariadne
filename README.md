@@ -91,7 +91,9 @@ before it accepts the sha.
 <td width="50%" valign="top">
 <h4>📚 Skills, not personas</h4>
 An agent is its skills, its model and its brief — one document per kind of work, from the catalog
-Ariadne ships and the ones you write.
+Ariadne ships and the ones you write. A shipped skill holds craft only and works in a session outside
+Ariadne; the daemon adds the Ariadne rules to the system prompt, where you cannot edit them, and
+a skill of your own needs no Ariadne word.
 </td>
 </tr>
 <tr>

@@ -424,7 +424,10 @@ written into the system prompt (006), and the lifecycle the seats sit in
     `code-review`, `architecture-review`, `pr-reviewer`, `orchestration`,
     `pr-babysit`, `coding`, `documentation`, `research`, `spec-writing`,
     `merge` and `conflict-resolution` hold to this today, proven by the one
-    helper `assert_names_no_ariadne_word` in `skill_tests/template.rs`. The
+    helper `assert_names_no_ariadne_word` in `skill_tests/template.rs`, run
+    on every shipped skill by
+    `skill_tests/template.rs::no_shipped_skill_names_an_ariadne_word` with
+    no exception. The
     four produce skills keep the ticket and report contract in plain words,
     and none has a supplement: the agent seat text owns the report call and
     the binding of the requester, the stage and the report (006 rule 21).

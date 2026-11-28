@@ -433,6 +433,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`skill_tests/template.rs::the_review_skills_name_no_ariadne_word`),
   and so does `orchestration`
   (`skill_tests/operate.rs::the_orchestration_skill_names_no_ariadne_word`).
+  Every shipped skill names no Ariadne word, with no exception and no
+  change to the test for a new skill
+  (`skill_tests/template.rs::no_shipped_skill_names_an_ariadne_word`).
   `coding`, `documentation`, `research` and `spec-writing` name no Ariadne
   word and have no supplement
   (`skill_tests/produce.rs::the_four_produce_skills_name_no_ariadne_word_and_have_no_supplement`).

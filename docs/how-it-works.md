@@ -45,6 +45,27 @@ Every task the orchestrator writes is one ticket, in four sections.
 outcomes. `## Interfaces` names any contract with another task.
 `## Out of scope` draws the task's boundaries.
 
+## Skills
+
+A skill is one document that says how to do one kind of work, such as
+`coding`, `code-review` or `merge`. An agent is its skills, its model and its
+brief. A shipped skill holds craft only. It names no Ariadne tool and no
+Ariadne word, so you can load it in a session outside Ariadne and it reads the
+same.
+
+The Ariadne rules of a shipped skill are not in the skill. They are in a
+supplement: a short text, kept in the daemon's code, for one skill in one
+seat. When a session has a staffed skill that has a supplement for its seat,
+the daemon adds that supplement to the system prompt. It goes after the seat
+text and before the skill index. The supplement names the tools and calls
+that the plain words of the skill stand for in Ariadne. You cannot edit a
+supplement: `ariadne skill set` and `ariadne skill reset` change the skill
+only, and an edited shipped skill still gets the supplement of its name. Spec
+006, rule 21, has the rule and its limits.
+
+A skill you make needs no Ariadne word. It gets the rules of the seat and no
+supplement, whatever its name. Write it in plain words, as for any harness.
+
 ## Sessions and attention
 
 A session is the conversation an ACP agent holds for the orchestrator, for

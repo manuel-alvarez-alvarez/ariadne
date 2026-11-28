@@ -554,3 +554,14 @@ fn the_agent_seat_text_binds_each_plain_word_to_ariadne() {
         }
     }
 }
+
+/// Every shipped skill reads the same in any harness (017 rule 16). The
+/// test walks the catalog, so a new shipped skill is in its scope with no
+/// change here, and no skill has an exception.
+#[test]
+fn no_shipped_skill_names_an_ariadne_word() {
+    assert!(!BUILTIN_SKILLS.is_empty());
+    for skill in &BUILTIN_SKILLS {
+        assert_names_no_ariadne_word(skill.name, skill.document);
+    }
+}
