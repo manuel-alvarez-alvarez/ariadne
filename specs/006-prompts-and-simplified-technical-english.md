@@ -118,7 +118,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    How each CLI is pointed at those files is 007.
 5. A rule every seat shares has one owner, and no other text repeats it:
    - asking the user: the session rules, picked by seat, with no tool
-     description repeats it;
+     description repeats it. The one exception is steps 2 and 7 of the
+     `orchestration` skill: each says to ask with the question tool, not in
+     turn text, where it asks, and neither says "of your own client";
    - working in the task's worktree and on the current column: the `agent`
      seat text alone; no column's skill repeats it;
    - planning the goal with the user, writing no code, and deciding no
@@ -138,8 +140,8 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      poll;
    - the column report a column ends on, and the return report a column is
      sent back with: the `complete_step` and `fail_step` descriptions
-     alone (013 rule 4). No skill restates a field of either; `coding`,
-     `merge` and `pr-babysit` each name their own report only as "the
+     alone (013 rule 4). No skill restates a field of either; `coding` names its own report
+     only as "the report", and `merge` and `pr-babysit` as "the
      column report";
    - stopping a fix loop: the agent seat text alone, which stops an agent
      after three failed attempts at one fix;
@@ -162,8 +164,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 6. `coding` uses test-first development for a code behavior change: it runs
    the new seam test failing before implementation. Prose changes and
    behavior-preserving refactors use verification that fits their risk.
-   `coding` calls `complete_step` with the column report that tool's
-   description defines (013), covering every criterion. `code-review` names
+   `coding` sends the report that the `complete_step` description
+   defines (013), covering every criterion; the agent seat text owns the
+   call (rule 5). `code-review` names
    the report and the return report by name, and restates no field
    of either. It reads the report as unverified claims before it
    pins the scope to the diff, then runs the tests, the lint and the
@@ -177,9 +180,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    name, and the cap on the rest, is 017 rule 11's to state, for all three
    review skills alike. Each other produce skill that ends its own column —
    `conflict-resolution`, `documentation`, `research`, `spec-writing` —
-   calls `complete_step` with
-   the column report the same way, naming it and restating none of its
-   fields.
+   ends on the report the same way, naming it and restating none of its
+   fields; `coding`, `documentation`, `research` and `spec-writing` say
+   "the report" and name no tool.
 7. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
    amends nothing, since the merge column squashes. The refactoring path of `coding` commits
@@ -355,7 +358,10 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       supplement repeats the binding.
     - Each supplement has a cap of its own and obeys the STE rules of rule
       11, the same as a default text (rule 13).
-    - Four ship. `code-review` in the `agent` seat holds the `get_diff` call
+    - Four ship, and `coding`, `documentation`, `research` and `spec-writing`
+      have none, since each holds no Ariadne rule of its own: the seat text
+      owns their report call and the binding of the requester. `code-review`
+      in the `agent` seat holds the `get_diff` call
       for the whole change, and the `fail_step` and `complete_step` calls
       that return and pass the work. `code-review` in the `reviewer` seat
       hands the round to `pr-reviewer` and names no step call.
@@ -390,6 +396,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   `code-review` and `architecture-review` name no Ariadne, no MCP tool and
   no Ariadne word, by the one helper `assert_names_no_ariadne_word`
   (`skill_tests/template.rs::the_two_review_skills_name_no_ariadne_word`).
+  `coding`, `documentation`, `research` and `spec-writing` name no Ariadne
+  word and have no supplement
+  (`skill_tests/produce.rs::the_four_produce_skills_name_no_ariadne_word_and_have_no_supplement`).
   The agent seat's `code-review` supplement holds its `get_diff`,
   `fail_step` and `complete_step` rules, and the reviewer seat's names no
   step call

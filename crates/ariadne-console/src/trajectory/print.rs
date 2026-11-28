@@ -273,19 +273,20 @@ pub(crate) fn activity(turn: &TurnDto) -> String {
     parts.join(" · ")
 }
 
-/// The counts of a turn, with no word for its state.
-pub(crate) fn counts_line(turn: &TurnDto) -> String {
-    counts(&turn.activity).join(" · ")
+/// The counts of a turn, with no word for its state, after its duration
+/// where it has one.
+pub(crate) fn counts_line(turn: &TurnDto, took: Option<String>) -> String {
+    let mut parts: Vec<String> = took.into_iter().collect();
+    parts.extend(counts(&turn.activity));
+    parts.join(" · ")
 }
 
 fn counts(activity: &ActivityDto) -> Vec<String> {
     [
         (activity.steps, "step", "steps"),
-        (activity.tool_calls, "tool call", "tool calls"),
         (activity.files_changed, "file changed", "files changed"),
         (activity.failed, "failed", "failed"),
         (activity.cancelled, "cancelled", "cancelled"),
-        (activity.thoughts, "thought", "thoughts"),
         (activity.subagents, "subagent", "subagents"),
     ]
     .into_iter()
@@ -538,10 +539,27 @@ mod tests {
         assert_eq!(
             printer().turn(&turn, None),
             "10:00:00  USER  Run the tests\n\
-             \x20 completed · 4 steps · 3 tool calls · 1 file changed · 1 failed · 2 thoughts · 1 subagent\n\
+             \x20 completed · 4 steps · 1 file changed · 1 failed · 1 subagent\n\
              10:02:00  AGENT  All tests pass.\n\
              \n"
         );
+    }
+
+    #[test]
+    fn a_closed_turn_prints_its_counts_without_tool_calls_or_thoughts() {
+        let busy = typed_turn(turn(
+            "t1",
+            "completed",
+            json!({"activity": {"steps": 4, "tool_calls": 3, "files_changed": 0, "failed": 0,
+                                "cancelled": 2, "thoughts": 2, "subagents": 0}}),
+        ));
+        let idle = typed_turn(turn("t2", "completed", json!({})));
+
+        assert_eq!(
+            counts_line(&busy, Some("12s".into())),
+            "12s · 4 steps · 2 cancelled"
+        );
+        assert_eq!(counts_line(&idle, Some("1s".into())), "1s");
     }
 
     #[test]
@@ -747,11 +765,11 @@ mod tests {
         assert_eq!(printer().step_line(&message), "message · Two lines\n");
         assert_eq!(
             printer().closed_line(&turn, true),
-            "turn · completed · 1 step · 1 tool call\nanswer · Done. All green.\n"
+            "turn · completed · 1 step\nanswer · Done. All green.\n"
         );
         assert_eq!(
             printer().closed_line(&turn, false),
-            "turn · completed · 1 step · 1 tool call\n"
+            "turn · completed · 1 step\n"
         );
     }
 
