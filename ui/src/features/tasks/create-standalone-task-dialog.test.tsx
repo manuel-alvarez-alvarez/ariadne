@@ -157,6 +157,7 @@ it("shows the daemon's reason when it refuses the host", async () => {
             ? errorResponse(400, "bad_request", "a goal-less task requires the local host")
             : undefined,
       },
+      box: { "/v1/models": [MODEL], "/v1/acp-agents": [] },
     },
     [LOCAL, BOX],
   )
@@ -178,4 +179,78 @@ it("shows the daemon's reason when it refuses the host", async () => {
 
   expect(await screen.findByText(/a goal-less task requires the local host/)).toBeTruthy()
   expect(onCreated).not.toHaveBeenCalled()
+})
+
+it("shows the host picker directly above the staffing rows", async () => {
+  stubDaemon()
+  renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} />)
+
+  const host = await screen.findByRole("combobox", { name: "Host" })
+  const agent = screen.getByRole("button", { name: "Agent runs on" })
+  expect(host.compareDocumentPosition(agent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
+it("offers the models of the picked host in each staffing row", async () => {
+  const BOX_MODEL = aModel({
+    id: "claude-acp:opus",
+    agent_id: "claude-acp",
+    efforts: [anEffort({ id: "medium", default: true })],
+  })
+  stubHosts(
+    {
+      local: {
+        "/v1/repositories": [REPO],
+        "/v1/workflows": [WORKFLOW],
+        "/v1/models": [MODEL],
+        "/v1/skills": [],
+        "/v1/acp-agents": [],
+      },
+      box: { "/v1/models": [BOX_MODEL], "/v1/acp-agents": [] },
+    },
+    [LOCAL, BOX],
+  )
+  const user = userEvent.setup()
+  renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} />)
+
+  await user.click(await screen.findByRole("combobox", { name: "Host" }))
+  await user.click(await screen.findByRole("option", { name: "box" }))
+  await user.click(screen.getByRole("button", { name: "Agent runs on" }))
+
+  const models = within(await screen.findByRole("listbox", { name: "Models" }))
+  expect(models.getByText(BOX_MODEL.id)).toBeTruthy()
+  expect(models.queryByText(MODEL.id)).toBeNull()
+})
+
+it("clears the picked model and effort of each row when the host changes", async () => {
+  stubHosts(
+    {
+      local: {
+        "/v1/repositories": [REPO],
+        "/v1/workflows": [WORKFLOW],
+        "/v1/models": [MODEL],
+        "/v1/skills": [],
+        "/v1/acp-agents": [],
+      },
+      box: { "/v1/models": [MODEL], "/v1/acp-agents": [] },
+    },
+    [LOCAL, BOX],
+  )
+  const user = userEvent.setup()
+  renderScreen(<CreateStandaloneTaskDialog open onOpenChange={vi.fn()} />)
+
+  await user.click(await screen.findByRole("button", { name: "Agent runs on" }))
+  await user.click(
+    within(await screen.findByRole("listbox", { name: "Models" })).getByText(MODEL.id),
+  )
+  await user.click(within(screen.getByRole("listbox", { name: "Efforts" })).getByText("high"))
+  await user.click(screen.getByRole("button", { name: "Agent runs on" }))
+  expect(screen.getByRole("button", { name: "Agent runs on" }).textContent).toContain("high")
+
+  await user.click(screen.getByRole("combobox", { name: "Host" }))
+  await user.click(await screen.findByRole("option", { name: "box" }))
+
+  const row = screen.getByRole("button", { name: "Agent runs on" })
+  expect(row.textContent).not.toContain(MODEL.id)
+  expect(row.textContent).not.toContain("high")
+  expect(screen.getByRole("button", { name: "Create task" }).hasAttribute("disabled")).toBe(true)
 })

@@ -5,8 +5,9 @@
  * workflow the dialog staffs one row per column; without one it staffs the one
  * agent that does the whole task. There is no dependency field: a goal-less
  * task depends on nothing. The host picker offers the ready hosts and starts on
- * this machine. The repositories, workflows and models are `local`'s, which is
- * the daemon the task is created on.
+ * this machine. The repositories and workflows are `local`'s, which is the
+ * daemon the task is created on. The models are the picked host's, so a host
+ * change clears each staffing row's model and effort.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -65,7 +66,6 @@ export function CreateStandaloneTaskDialog({
   const { hosts } = useHosts()
   const repositories = useQuery({ ...repositoriesQueryOptions(LOCAL_HOST), enabled: open })
   const workflows = useQuery({ ...workflowsQueryOptions(LOCAL_HOST), enabled: open })
-  const models = useQuery({ ...modelsQueryOptions(LOCAL_HOST), enabled: open })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const create = useCreateStandaloneTask()
   const form = useForm<StandaloneTaskValues>({
@@ -75,6 +75,8 @@ export function CreateStandaloneTaskDialog({
   useResetOnOpen(open, form, DEFAULTS, create)
   useClearErrorOnEdit(form, create)
   const errors = form.formState.errors
+  const host = form.watch("host")
+  const models = useQuery({ ...modelsQueryOptions(host), enabled: open })
   const agentValues = form.watch("agents")
   const workflow = form.watch("workflow")
   const catalog = workflows.data ?? []
@@ -173,6 +175,33 @@ export function CreateStandaloneTaskDialog({
             </FieldDescription>
           </Field>
           <Field>
+            <FieldLabel htmlFor="standalone-host">Host</FieldLabel>
+            <FormSelect
+              control={form.control}
+              name="host"
+              id="standalone-host"
+              empty={LOCAL_HOST}
+              renderOption={(option) => (
+                <span className="flex items-center gap-2">
+                  <HostDot host={option.value} />
+                  {option.label}
+                </span>
+              )}
+              onValueChange={() => {
+                // A model is one host's: the rows start again on the new host's catalog.
+                form.setValue(
+                  "agents",
+                  form.getValues("agents").map((agent) => ({ ...agent, model: "", effort: "" })),
+                  { shouldDirty: true },
+                )
+              }}
+              options={hosts
+                .filter((one) => one.status === "ready")
+                .map((one) => ({ value: one.name, label: one.name }))}
+            />
+            <FieldDescription>Where the task runs. Starts on this machine.</FieldDescription>
+          </Field>
+          <Field>
             <FieldLabel>Agents</FieldLabel>
             <div className="flex flex-col gap-3">
               {agentValues.map((agent, index) => {
@@ -194,7 +223,7 @@ export function CreateStandaloneTaskDialog({
                       name={`agents.${index}.model`}
                       render={({ field }) => (
                         <PinPicker
-                          host={LOCAL_HOST}
+                          host={host}
                           label={`${title} runs on`}
                           model={field.value}
                           effort={agent.effort}
@@ -212,25 +241,6 @@ export function CreateStandaloneTaskDialog({
                 )
               })}
             </div>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="standalone-host">Host</FieldLabel>
-            <FormSelect
-              control={form.control}
-              name="host"
-              id="standalone-host"
-              empty={LOCAL_HOST}
-              renderOption={(option) => (
-                <span className="flex items-center gap-2">
-                  <HostDot host={option.value} />
-                  {option.label}
-                </span>
-              )}
-              options={hosts
-                .filter((one) => one.status === "ready")
-                .map((one) => ({ value: one.name, label: one.name }))}
-            />
-            <FieldDescription>Where the task runs. Starts on this machine.</FieldDescription>
           </Field>
         </FormDialogBody>
       </FormDialogContent>
