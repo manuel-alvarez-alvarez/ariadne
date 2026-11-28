@@ -53,10 +53,13 @@ export function DataTable<T>({
   empty,
   rowKey,
   renderRow,
+  keepRowsWhilePending = false,
   pinnedEnd = false,
   host = LOCAL_HOST,
 }: {
   query: ListQuery<T>
+  /** Keep partial multi-host answers above the loading rows. */
+  keepRowsWhilePending?: boolean
   /** "Could not load profiles" — the alert's heading when the read fails. */
   errorTitle: string
   columns: DataColumn[]
@@ -108,6 +111,9 @@ export function DataTable<T>({
         </TableRow>
       </TableHeader>
       <TableBody>
+        {keepRowsWhilePending && query.isPending
+          ? query.data?.map((row) => <Fragment key={rowKey(row)}>{renderRow(row)}</Fragment>)
+          : null}
         {query.isPending ? (
           PLACEHOLDER_ROWS.map((row) => (
             <TableRow

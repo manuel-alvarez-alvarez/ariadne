@@ -12,7 +12,7 @@ import { afterEach, expect, it } from "vitest"
 import type { AttentionItemDto } from "@/api"
 import { aSessionPage } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
-import { forgetHosts, stubHosts } from "@/test/hosts"
+import { forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 
 import { AttentionPopover } from "./attention-strip"
 
@@ -41,24 +41,27 @@ const TWO_FIELDS = {
 }
 
 function open(schema: unknown, message = "Which database should I use?") {
-  const seen = stubHosts({
-    local: {
-      "/v1/tasks": [],
-      "/v1/goals": [],
-      "/v1/sessions": aSessionPage([]),
-      "/v1/attention": { items: [ITEM], complete: true },
-      "/v1/sessions/S1/questions": [
-        {
-          id: "Q1",
-          session_id: "S1",
-          message,
-          schema,
-          created_at: "2026-11-25T10:00:00Z",
-        },
-      ],
-      "/v1/sessions/S1/questions/Q1/answer": () => new Response(null, { status: 204 }),
+  const seen = stubHosts(
+    {
+      local: {
+        "/v1/tasks": [],
+        "/v1/goals": [],
+        "/v1/sessions": aSessionPage([]),
+        "/v1/attention": { items: [ITEM], complete: true },
+        "/v1/sessions/S1/questions": [
+          {
+            id: "Q1",
+            session_id: "S1",
+            message,
+            schema,
+            created_at: "2026-11-25T10:00:00Z",
+          },
+        ],
+        "/v1/sessions/S1/questions/Q1/answer": () => new Response(null, { status: 204 }),
+      },
     },
-  })
+    [LOCAL],
+  )
   renderScreen(<AttentionPopover />, { route: "/goals" })
   return seen
 }

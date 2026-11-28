@@ -44,7 +44,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ModelTable } from "@/features/models/model-table"
 import { modelsQueryOptions } from "@/features/models/queries"
-import { useHostFilter } from "@/hooks/use-host-filter"
+import { useHostSelection } from "@/hooks/use-host-filter"
 import { useRowsShowHost } from "@/hooks/use-host-label"
 import { cn, describeError, plural } from "@/lib/format"
 import { HOST_PARAM } from "@/routes/paths"
@@ -83,8 +83,13 @@ export function AgentsPage() {
   }, [hostParam])
 
   // The hosts the header picker selects: one host, or every reachable one.
-  const hosts = useHostFilter()
-  const configs = useHostLists(hosts, agentConfigsQueryOptions)
+  const selection = useHostSelection()
+  const hosts = selection.read
+  const configReads = useHostLists(hosts, agentConfigsQueryOptions)
+  const configs = {
+    ...configReads,
+    isPending: selection.isPending || configReads.pending.length > 0,
+  }
   const models = useHostLists(hosts, modelsQueryOptions)
   // The registry's icon URLs; the page reads fine without them, so a failed
   // request leaves the bundled icons and the letters, with no error of its own.
@@ -155,6 +160,7 @@ export function AgentsPage() {
 
 /** What this page reads off the agent-config queries of the selected hosts. */
 interface ConfigsQuery {
+  pending: Host[]
   rows: HostRow<AgentConfigDto>[]
   errors: { host: Host; error: Error }[]
   isPending: boolean
@@ -195,7 +201,12 @@ function AgentTabs({
   // The count of models turned off is the shown host's, never a sum of hosts.
   const offOn = (host: Host | undefined) => ({
     host: hosts.length > 1 ? host : undefined,
-    count: models.rows.filter((model) => model.host === host && !model.enabled).length,
+    count:
+      host === undefined ||
+      models.loading.includes(host) ||
+      models.errors.some((entry) => entry.host === host)
+        ? undefined
+        : models.rows.filter((model) => model.host === host && !model.enabled).length,
   })
   const fallbackOff = offOn(chip && hosts.includes(chip) ? chip : hosts[0])
 
@@ -212,12 +223,19 @@ function AgentTabs({
     )
   }
 
-  if (configs.isPending) {
+  if (configs.isPending && configs.rows.length === 0) {
     return (
       <>
         <div className="flex justify-end">
           <RefreshAgents refresh={refresh} hosts={hosts} off={fallbackOff} />
         </div>
+        {hosts.length ? (
+          hosts.map((host) => (
+            <Skeleton key={host} aria-label={`Loading agents on ${host}`} className="h-10 w-28" />
+          ))
+        ) : (
+          <Skeleton aria-label="Loading agents" className="h-10 w-28" />
+        )}
         <Skeleton className="h-96 rounded-xl" />
       </>
     )
@@ -260,6 +278,9 @@ function AgentTabs({
     <Tabs value={current} onValueChange={(value) => onPick(value as string)}>
       <div className="flex items-center justify-between gap-2">
         <TabsList>
+          {configs.pending.map((host) => (
+            <Skeleton key={host} aria-label={`Loading agents on ${host}`} className="h-8 w-24" />
+          ))}
           {agents.map((agent) => (
             <TabsTrigger
               key={agent}
@@ -313,7 +334,7 @@ function RefreshAgents({
   refresh: ReturnType<typeof useRefreshAcpAgents>
   hosts: Host[]
   /** The models turned off on the host shown, named only where several are selected. */
-  off: { host: Host | undefined; count: number }
+  off: { host: Host | undefined; count: number | undefined }
 }) {
   return (
     <Tooltip>
@@ -337,7 +358,12 @@ function RefreshAgents({
         Refresh
       </TooltipTrigger>
       <TooltipContent>
-        {REFRESH_HINT} {plural(off.count, "model")} turned off
+        {REFRESH_HINT}{" "}
+        {off.count === undefined ? (
+          <Skeleton aria-label="Loading model count" className="inline-block h-4 w-24" />
+        ) : (
+          `${plural(off.count, "model")} turned off`
+        )}
         {off.host ? (
           <>
             {" "}

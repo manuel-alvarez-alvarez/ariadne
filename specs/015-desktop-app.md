@@ -2148,6 +2148,13 @@ view.
      Preserve Markdown formatting and literal markers in code. An open marker
      highlights through the current end of streamed text. Folded prompt previews
      retain the highlight. Stored text, input, copy, export and raw data stay unchanged.
+117. Multi-host lists follow rule 113 until the hosts list and every read host answer or fail.
+     They retain arrived rows and append skeleton rows while other hosts load.
+     Empty states and counts wait for all answers. The board keeps its task count unresolved.
+     It withholds far task copies until daemon identities resolve.
+     Attention counts wait for all hosts. Session titles show skeletons while goals and tasks load.
+     Agents retain skeleton tabs for pending hosts and hide unresolved model counts in Refresh.
+     Issues wait for every host's repositories. The host coverage line from rule 80 stays.
 
 115. Source-host resolution distinguishes pending identities from an unknown source, following rule 113.
      Task panels, rows and cards show a Skeleton while hosts or identities load.
@@ -2194,6 +2201,11 @@ view.
 - Pull request controls wait for remote data (rule 116)
   (`ui/src/features/pull-requests/pull-requests-page.test.tsx::shows skeletons for refresh and repository labels until remote data answers`,
   `ui/src/features/pull-requests/hosts.test.tsx::starts no %s while box has not answered, and none once box holds the work`).
+
+- Multi-host loading follows rules 113 and 117
+  (`ui/src/hooks/multi-host-loading.test.tsx`,
+  `ui/src/features/goals/hosts.test.tsx::keeps skeleton rows below answered goals until every host answers`,
+  `ui/src/features/goals/goal-board.test.tsx::withholds far copies and the task count until daemon identities arrive`).
 
 - Remote loading follows rule 113
   (`ui/src/hooks/hosts-loading.test.tsx::keeps All unresolved until the hosts answer`,

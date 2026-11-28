@@ -157,6 +157,8 @@ export function SessionsPage() {
   const sessions = useHostLists(hosts, (host) => sessionsQueryOptions(host, filters))
   const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
   const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
+  const pending = selection.isPending || sessions.pending.length > 0
+  const titlesPending = goals.pending.length > 0 || tasks.pending.length > 0
   const showHost = useRowsShowHost()
   const goalsById = byHostId(goals.rows)
   const tasksById = byHostId(tasks.rows)
@@ -213,9 +215,13 @@ export function SessionsPage() {
           </div>
 
           <div className="ml-auto flex items-center gap-3">
-            <p className="text-sm text-muted-foreground tabular-nums">
-              {rows.length} of {sessions.rows.length} sessions
-            </p>
+            <div className="text-sm text-muted-foreground tabular-nums">
+              {pending ? (
+                <Skeleton className="h-4 w-28" />
+              ) : (
+                `${rows.length} of ${sessions.rows.length} sessions`
+              )}
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -288,7 +294,8 @@ export function SessionsPage() {
       />
       <SessionsTable
         rows={rows}
-        pending={sessions.isPending}
+        pending={pending}
+        titlesPending={titlesPending}
         showHost={showHost}
         goalsById={goalsById}
         tasksById={tasksById}
@@ -302,6 +309,7 @@ export function SessionsPage() {
 function SessionsTable({
   rows,
   pending,
+  titlesPending,
   showHost,
   goalsById,
   tasksById,
@@ -310,6 +318,7 @@ function SessionsTable({
 }: {
   rows: HostRow<SessionDto>[]
   pending: boolean
+  titlesPending: boolean
   showHost: boolean
   goalsById: Map<string, GoalDto>
   tasksById: Map<string, TaskDto>
@@ -328,15 +337,13 @@ function SessionsTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {pending ? (
-          <SessionLoadingRows />
-        ) : rows.length ? (
+        {rows.length ? (
           rows.map((session) => (
             <SessionRow
               key={`${session.host}:${session.id}`}
               session={session}
               showHost={showHost}
-              title={ariadneTitle(session, goalsById, tasksById)}
+              title={titlesPending ? "" : ariadneTitle(session, goalsById, tasksById)}
               goalTitle={
                 session.goal_id
                   ? (goalsById.get(hostKey(session.host, session.goal_id))?.title ??
@@ -358,7 +365,7 @@ function SessionsTable({
               onScope={onScope}
             />
           ))
-        ) : (
+        ) : !pending ? (
           <TableRow className="hover:bg-transparent">
             <TableCell colSpan={SESSION_COLUMNS.length} className="p-0">
               <p className="px-4 py-8 text-center text-sm text-muted-foreground">
@@ -366,7 +373,8 @@ function SessionsTable({
               </p>
             </TableCell>
           </TableRow>
-        )}
+        ) : null}
+        {pending ? <SessionLoadingRows /> : null}
       </TableBody>
     </ScrollableTable>
   )
@@ -411,7 +419,7 @@ function SessionRow({
     <TableRow
       tabIndex={0}
       className="cursor-pointer bg-background focus-visible:outline-none focus-visible:-outline-offset-2 focus-visible:ring-2 focus-visible:ring-ring/50"
-      aria-label={title}
+      aria-label={title || "Loading title"}
       onClick={(event) => {
         const target = event.target as Element
         if (event.currentTarget.contains(target) && !target.closest("button, a")) onSelect()
@@ -427,7 +435,7 @@ function SessionRow({
       <TableCell className="max-w-72">
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate" title={title}>
-            {title}
+            {title || <Skeleton aria-label="Loading title" className="h-4 w-40" />}
           </span>
           {showHost ? <HostLabel host={session.host} /> : null}
         </span>

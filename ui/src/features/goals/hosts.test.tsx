@@ -418,3 +418,13 @@ it("names the host in the toast of a goal action on a named host", async () => {
   await waitFor(() => expect(toasted).toHaveBeenCalled())
   expect(contentOf(toasted.mock.calls[0]?.[0])).toBe("Goal cancelled on box")
 })
+
+it("keeps skeleton rows below answered goals until every host answers", async () => {
+  stubHosts({
+    local: { ...EMPTY, "/v1/goals": [MINE] },
+    box: { "/v1/tasks": [], "/v1/sessions": aSessionPage([]) },
+  })
+  renderScreen(<GoalsListPage />, { route: "/goals" })
+  await screen.findByRole("link", { name: MINE.title })
+  expect(screen.getByLabelText("Loading goals")).toBeTruthy()
+})

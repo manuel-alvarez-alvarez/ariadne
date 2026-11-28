@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, screen, within } from "@testing-library/react"
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, expect, it } from "vitest"
 
@@ -7,7 +7,7 @@ import type { AttentionListDto, GoalDto, SessionDto, TaskDto, WorkflowStepDto } 
 import { dispatchDomainEvent } from "@/events/dispatch"
 import { aGoal, aSession, aSessionPage, aTask, aWorkflow } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
-import { forgetHosts, stubHosts } from "@/test/hosts"
+import { BOX as BOX_HOST, forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 import { GoalBoard } from "./goal-board"
 
 const GOAL_TITLE = "Ship the board"
@@ -762,4 +762,56 @@ it("names a waiting task's icon by its state word and keeps the dependencies in 
   expect(
     (await screen.findAllByText("Pending — Waits for 1 task to merge")).length,
   ).toBeGreaterThan(0)
+})
+
+it("withholds far copies and the task count until daemon identities arrive", async () => {
+  const far = aTask({
+    id: "far",
+    goal_id: null,
+    title: "Pending far work",
+    execution_context: {
+      source_goal: null,
+      source_daemon_id: "source",
+      execution_owner: "worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  const seen = stubHosts({ local: { "/v1/tasks": [far] }, box: { "/v1/tasks": [far] } })
+  renderScreen(<GoalBoard hosts={["local", "box"]} goals={[]} />)
+  await waitFor(() =>
+    expect(seen.filter((request) => request.url.pathname === "/v1/tasks")).toHaveLength(2),
+  )
+  expect(screen.queryByText("Pending far work")).toBeNull()
+  expect(screen.getByLabelText("Loading task count")).toBeTruthy()
+})
+
+it("keeps a far task when another host has no identity", async () => {
+  const far = aTask({
+    id: "far",
+    goal_id: null,
+    title: "Kept far work",
+    execution_context: {
+      source_goal: null,
+      source_daemon_id: "source",
+      execution_owner: "worker",
+      workflow: { name: "saved", steps: [] },
+      revision: 1,
+      authorized: true,
+      authorized_revision: 1,
+    },
+  })
+  stubHosts(
+    {
+      local: {
+        "/v1/tasks": [far],
+        "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "source" },
+      },
+    },
+    [LOCAL, { ...BOX_HOST, name: "offline", status: "down", error: "down" }],
+  )
+  renderScreen(<GoalBoard hosts={["local", "offline"]} goals={[]} />)
+  expect(await screen.findByText("Kept far work")).toBeTruthy()
 })
