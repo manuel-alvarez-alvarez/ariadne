@@ -9,8 +9,9 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Clear, Paragraph};
 
 use ariadne_api::trajectory::{
-    CompactionStatus, ContentBlockDto, MAIN_LANE, NoteSeverity, PermissionState, PermissionStepDto,
-    QuestionState, StepDto, SubagentStepDto, ToolCallStatus, ToolDetailDto, TurnDto, TurnState,
+    CompactionStatus, ContentBlockDto, MAIN_LANE, NoteSeverity, PermissionOptionDto,
+    PermissionState, PermissionStepDto, QuestionState, StepDto, SubagentStepDto, ToolCallStatus,
+    ToolDetailDto, TurnDto, TurnState,
 };
 
 use crate::markdown;
@@ -1171,19 +1172,18 @@ fn allowed(permission: &PermissionStepDto) -> bool {
     let Some(answer) = permission.answer.as_ref() else {
         return false;
     };
-    // The label is the name of the option chosen, so it finds the option
-    // first. Learn mode answers with an id of the agent, which can equal the
-    // id of another option shown, so the id is the second way to find it.
+    // An option that has both the id and the label of the answer is the one
+    // chosen. Learn mode answers with an id of the agent, which can equal the
+    // id of another option shown, so then the label, the name of the option
+    // chosen, finds it, and last the id.
+    let by_id = |option: &&PermissionOptionDto| Some(&option.id) == answer.option_id.as_ref();
+    let by_name = |option: &&PermissionOptionDto| option.name == answer.label;
     let chosen = permission
         .options
         .iter()
-        .find(|option| option.name == answer.label)
-        .or_else(|| {
-            permission
-                .options
-                .iter()
-                .find(|option| Some(&option.id) == answer.option_id.as_ref())
-        });
+        .find(|option| by_id(option) && by_name(option))
+        .or_else(|| permission.options.iter().find(by_name))
+        .or_else(|| permission.options.iter().find(by_id));
     chosen
         .and_then(|option| option.kind.as_deref())
         .is_none_or(|kind| kind.starts_with("allow"))

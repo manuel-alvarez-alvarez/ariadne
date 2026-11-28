@@ -2274,6 +2274,30 @@ async fn a_learn_mode_rejection_with_an_id_of_the_agent_is_still_a_red_mark() {
     );
 }
 
+#[tokio::test]
+async fn an_ask_mode_rejection_whose_option_shares_a_name_is_still_a_red_mark() {
+    let mut bash = call("c1", "t1", "Bash", "completed");
+    bash["permission"] = json!("p1");
+    let answered = step(
+        "permission",
+        "p1",
+        "t1",
+        json!({"tool_call_id": "c1", "state": "answered",
+               "options": [{"id": "yes", "name": "Continue", "kind": "allow_once"},
+                           {"id": "no", "name": "Continue", "kind": "reject_once"}],
+               "answer": {"option_id": "no", "label": "Continue", "decided_by": "console"}}),
+    );
+    let (mut app, _) = opened(&mut Stub::default(), vec![bash, answered], vec![]).await;
+    app.event(key(KeyCode::Esc));
+    let screen = draw(&app, 80, HEIGHT);
+    assert!(
+        screen
+            .iter()
+            .any(|row| *row == flush_at("    ✓ $ Bash · Bash subject", "✗ 2s", 80)),
+        "{screen:#?}"
+    );
+}
+
 #[test]
 fn a_row_whose_subject_has_no_room_keeps_its_whole_tail() {
     let stat = json!({"diff_stat": {"files": 1, "added": 12, "removed": 3}});
