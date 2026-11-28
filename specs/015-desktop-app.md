@@ -2101,7 +2101,15 @@ view.
        (`::shows the author of each turn part as an icon, its word as the name`,
        `ui/src/features/sessions/console/blocks.test.tsx::renders developer prompts as full Markdown without a fold`).
 
+113. A block that depends on remote data shows a Skeleton until the data resolves.
+     It never presents a local default as the remote answer.
+     This includes host controls, sync blocks, table cells, forms, labels and colours.
+
 ## Acceptance criteria
+
+- Remote loading follows rule 113
+  (`ui/src/hooks/hosts-loading.test.tsx::keeps All unresolved until the hosts answer`,
+  `::shows skeletons for the host picker and catalog sync until hosts answer`).
 
 - Goal task cards show a remote host in its host colour and explain when it
   cannot be reached, in the label and in the card description (`ui/src/features/tasks/task-card.test.tsx::shows the colored remote host and its unreachable state`).

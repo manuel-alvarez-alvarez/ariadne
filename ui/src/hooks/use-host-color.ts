@@ -9,7 +9,8 @@ import { useHosts } from "@/api"
 import { hostColor } from "@/lib/host-color"
 import type { HostHue } from "@/lib/host-colors"
 
-export function useHostColor(name: string): HostHue {
-  const { hosts } = useHosts()
+export function useHostColor(name: string): HostHue | null {
+  const { hosts, isPending } = useHosts()
+  if (isPending) return null
   return hostColor(name, hosts.find((host) => host.name === name)?.color)
 }

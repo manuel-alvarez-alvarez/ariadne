@@ -38,6 +38,7 @@ vi.mock("@/hooks/use-connection", () => ({
 
 beforeEach(() => {
   stubEventSource()
+  stubHosts({}, [LOCAL])
 })
 
 afterEach(() => {

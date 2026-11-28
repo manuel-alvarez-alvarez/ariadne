@@ -131,7 +131,7 @@ export function CreateGoalDialog({
   }
 }) {
   const picked = usePickedHost()
-  const { hosts } = useHosts()
+  const { hosts, isPending: hostsPending } = useHosts()
   const pickedHosts = useHostFilter()
   const setHostFilter = useSettingsStore((state) => state.setHostFilter)
   // The header's pick, unless the app cannot reach that host: then `local`.
@@ -283,7 +283,9 @@ export function CreateGoalDialog({
           />
 
           {/* One host is no choice: the select shows once there are two. */}
-          {hosts.length > 1 || host !== LOCAL_HOST ? (
+          {hostsPending ? (
+            <Skeleton aria-label="Loading hosts" className="h-9 w-full" />
+          ) : hosts.length > 1 || host !== LOCAL_HOST ? (
             <Field>
               <FieldLabel htmlFor="goal-host">Host</FieldLabel>
               <FormSelect

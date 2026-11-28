@@ -880,3 +880,5 @@ Run the frontend build from `ui/`; it also builds the dashboard.
 Include audits, lint, unused checks, Rust builds, and Tauri formatting and compilation.
 Other branch pushes retain scoped checks. Only those pushes omit the slow test suites.
 Require GitHub CI on the current PR head before GitHub squash merges.
+
+Loading convention: follow spec 015, rule 113; show a Skeleton until remote data resolves, never a local default.

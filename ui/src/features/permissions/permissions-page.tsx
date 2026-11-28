@@ -72,7 +72,9 @@ export function PermissionsPage() {
 }
 
 function AiTab() {
-  const { hosts } = useHosts()
+  const { hosts, isPending } = useHosts()
+  if (isPending)
+    return <Skeleton aria-label="Loading host permissions" className="h-80 rounded-xl" />
   return (
     <div className="flex flex-col gap-4">
       <AiHost host={LOCAL_HOST} />
