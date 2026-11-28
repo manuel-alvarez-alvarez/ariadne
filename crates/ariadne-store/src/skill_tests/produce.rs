@@ -105,19 +105,17 @@ fn a_task_is_one_commit_and_nothing_amends_a_pushed_one() {
     }
 }
 
-/// `conflict-resolution` names the column report at its own end. The four
-/// skills that name no Ariadne word say "Send the report." in its place:
-/// the agent seat text owns the `complete_step` call and binds the report
-/// to the column report (006 rule 21). None of them restates a field of
+/// `conflict-resolution` says "pass the work, with the report" at its own
+/// end, and the four other produce skills say "Send the report.": the agent
+/// seat text owns the `complete_step` call and binds the report to the
+/// column report (006 rule 21), and the `agent` supplement of
+/// `conflict-resolution` holds its call. None of them restates a field of
 /// the report, which the `complete_step` description alone defines.
 #[test]
 fn a_produce_skill_names_the_report_where_it_ends_a_stage() {
     for (name, ending) in [
         ("coding", "Send the report. End it with one line per"),
-        (
-            "conflict-resolution",
-            "Call `complete_step` with the column report",
-        ),
+        ("conflict-resolution", "pass the work, with the report"),
         ("documentation", "Send the report."),
         ("research", "Send the report."),
         ("spec-writing", "Send the report."),
