@@ -1619,6 +1619,8 @@ async fn a_review_request_recovery_has_given_up_on_carries_no_second_item() {
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();
@@ -2161,6 +2163,8 @@ async fn a_ready_claim_on_a_disabled_integration_raises_no_readiness_item() {
             remote: "origin".into(),
             enabled: false,
             login: Some("ariadne-bot".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();

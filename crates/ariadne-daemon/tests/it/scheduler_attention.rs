@@ -2369,6 +2369,8 @@ async fn on_the_pr_column_with_a_kept_request(w: &World) -> (AgentSession, Strin
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();
@@ -2981,6 +2983,8 @@ async fn pull_request_session(h: &Harness, number: i64) -> AgentSession {
                     remote: "origin".into(),
                     enabled: true,
                     login: Some("me".into()),
+                    webhook_enabled: true,
+                    poll_interval_minutes: None,
                 })
                 .await
                 .unwrap();
@@ -3046,6 +3050,8 @@ async fn keeper_session(h: &Harness, number: i64) -> AgentSession {
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();
@@ -3262,6 +3268,8 @@ async fn a_reviewer_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_r
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();
@@ -3339,6 +3347,8 @@ async fn a_keeper_session_refuses_to_start_on_a_head_branch_git_refuses_as_a_ref
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();
@@ -3418,6 +3428,8 @@ async fn a_keeper_recovers_once_its_head_branch_turns_valid_again() {
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();
@@ -3590,6 +3602,8 @@ async fn a_keeper_recovery_keeps_a_reviewers_give_up_mark() {
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();
@@ -3714,6 +3728,8 @@ async fn a_reviewer_session_refuses_to_restart_on_a_head_branch_that_turned_inva
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();

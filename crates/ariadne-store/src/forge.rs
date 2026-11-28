@@ -25,6 +25,8 @@ pub struct SetForgeIntegration {
     pub remote: String,
     pub enabled: bool,
     pub login: Option<String>,
+    pub webhook_enabled: bool,
+    pub poll_interval_minutes: Option<i64>,
 }
 
 /// What a write does to a repository's forge row.
@@ -61,8 +63,8 @@ pub(crate) async fn write_forge(
     sqlx::query(
         "INSERT INTO forge_integrations
              (repository_id, kind, host, owner, name, remote, enabled, login,
-              detected_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              webhook_enabled, poll_interval_minutes, detected_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repository_id) DO UPDATE SET
              webhook_id = CASE
                  WHEN kind = excluded.kind AND host = excluded.host AND owner = excluded.owner AND name = excluded.name
@@ -88,7 +90,9 @@ pub(crate) async fn write_forge(
                  THEN detected_at ELSE excluded.detected_at END,
              kind = excluded.kind, host = excluded.host, owner = excluded.owner,
              name = excluded.name, remote = excluded.remote, enabled = excluded.enabled,
-             login = excluded.login, updated_at = excluded.updated_at",
+             login = excluded.login, webhook_enabled = excluded.webhook_enabled,
+             poll_interval_minutes = excluded.poll_interval_minutes,
+             updated_at = excluded.updated_at",
     )
     .bind(&set.repository_id)
     .bind(set.kind.as_str())
@@ -98,6 +102,8 @@ pub(crate) async fn write_forge(
     .bind(&set.remote)
     .bind(set.enabled)
     .bind(&set.login)
+    .bind(set.webhook_enabled)
+    .bind(set.poll_interval_minutes)
     .bind(&ts)
     .bind(&ts)
     .execute(&mut **tx)

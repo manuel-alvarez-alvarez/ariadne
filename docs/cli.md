@@ -609,7 +609,11 @@ ariadne repo update <repo-id> --forge off
 
 `repo add` and `repo update` take `--forge on` or `--forge off` to work with
 the forge a repository's remote is on, once `gh` is signed in to
-its host. No `--forge` flag sends no change to it. There is no repository
+its host. No `--forge` flag sends no change to it. `--webhook on|off` turns
+the repository's webhook off or on again; `--poll-interval MINUTES` (1 to 60)
+sets the wait between timer fetches, and `--reset-poll-interval` goes back to
+5. `repo inspect` prints `webhook` and `poll interval`. See [The forge
+integration](forge.md). There is no repository
 setting that pins a review: every review's model and effort are picked on
 the request itself, by `pr review` below. A request a task opens needs no
 pin either way: the agent of the task's `pr` column keeps it. See [The

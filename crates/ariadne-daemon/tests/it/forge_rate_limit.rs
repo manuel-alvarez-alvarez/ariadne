@@ -119,6 +119,8 @@ async fn wake_only_poll(
                 remote: "origin".into(),
                 enabled: true,
                 login: Some("me".into()),
+                webhook_enabled: true,
+                poll_interval_minutes: None,
             }),
         )
         .await

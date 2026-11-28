@@ -4284,9 +4284,19 @@ export interface components {
             login?: string | null;
             name: string;
             owner: string;
+            /**
+             * Format: int32
+             * @description Whole minutes between timer fetches, 1 to 60. Null means 5.
+             */
+            poll_interval_minutes?: number | null;
             /** @description The remote it was read off, `origin` where there is one. */
             remote: string;
             webhook: components["schemas"]["WebhookDto"];
+            /**
+             * @description Whether Ariadne registers a webhook for this repository. Off, the
+             *     repository polls on its timer.
+             */
+            webhook_enabled: boolean;
         };
         /**
          * @description The forge a repository's remote is on (025): which CLI speaks to it. An
@@ -4319,6 +4329,14 @@ export interface components {
         /** @description A change to the forge integration; absent fields stay unchanged. */
         ForgeUpdate: {
             enabled?: boolean | null;
+            /**
+             * Format: int32
+             * @description Whole minutes between timer fetches, 1 to 60; null resets to the
+             *     default. Absent = unchanged.
+             */
+            poll_interval_minutes?: number | null;
+            /** @description Turn the webhook of this repository on or off. */
+            webhook?: boolean | null;
         };
         GenericDetailDto: {
             /** @description The call's content blocks. A block with bytes carries a `blob` URL. */

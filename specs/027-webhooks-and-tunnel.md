@@ -1,7 +1,7 @@
 ---
 id: webhooks-and-tunnel
 status: current
-updated: 2026-11-25
+updated: 2026-11-28
 areas: [store, api, daemon, cli, ui]
 commits: []
 tests:
@@ -15,6 +15,7 @@ tests:
   - crates/ariadne-cli/src/commands/repo.rs
   - crates/ariadne-cli/src/commands/forge.rs
   - ui/src/features/repositories/repositories-page.test.tsx
+  - ui/src/features/repositories/repository-form-dialog.test.tsx
   - ui/src/components/settings-dialog.test.tsx
   - ui/src/events/dispatch.test.ts
 ---
@@ -110,7 +111,10 @@ The session task's tests prove that rule for a prompt.
     red otherwise, with the tunnel, hook and fetch errors in its tooltip, or the hook URL while green.
     With the tunnel switched off it reads `polling`: green while the last fetch worked, with how to turn the tunnel on
     in Settings in its tooltip, and red with the fetch error otherwise.
-    A disabled integration shows `-`. The repository form shows none of the webhook.
+    A disabled integration shows `-`.
+    A repository whose webhook is off (rule 22) reads `polling` whatever the tunnel does: green while the last fetch worked,
+    with a tooltip that says the webhook is off for this repository and gives its interval.
+    The repository form shows the switch and the interval for an enabled integration only.
 
 | State | Enabled repository fetch mode |
 | --- | --- |
@@ -119,6 +123,27 @@ The session task's tests prove that rule for a prompt.
 | `failed` | `Timer`: immediate fetch and fallback timer |
 
 A disabled integration has no worker, regardless of its retained hook status.
+
+### The webhook switch and the poll interval
+
+22. `forge_integrations` also holds `webhook_enabled` (0 or 1, default 1, so an existing row keeps its hook)
+    and `poll_interval_minutes` (whole minutes from 1 to 60, NULL for the default of 5).
+    `ForgeDto` carries `webhook_enabled` and `poll_interval_minutes`.
+    `ForgeUpdate` carries `webhook` and `poll_interval_minutes`; an absent field is unchanged, and a null interval clears it.
+    An interval outside 1 to 60 is refused with 400 `invalid_request`, and nothing is written.
+    A forge change of identity keeps neither value.
+23. With the switch off, an enabled integration wants no hook, whatever the public URL.
+    Reconciliation deletes a hook it registered (a missing hook counts as deleted), clears the hook ID and URL,
+    and enters `polling` with no `webhook_error`. The worker uses `Timer`.
+    A failed deletion enters `failed` with the error, as in rule 8.
+    With the switch on again, reconciliation registers the hook as for a new enable (rules 6 and 7).
+24. The `Timer` wait of a repository is its `poll_interval_minutes`, else `Timeouts::forge_poll` (5 minutes).
+    It applies while the integration is `polling` or `failed`; a `live` hook has no timer.
+    The failure backoff doubles from that wait, and a rate-limit pause is never shorter than it.
+    A write of the switch or the interval reaches the running worker with the repository update event,
+    so it needs no restart. A new interval restarts the wait in progress.
+25. `ariadne repo add` and `repo update` take `--webhook on|off`, `--poll-interval MINUTES` (1 to 60)
+    and `--reset-poll-interval`. `repo inspect` prints `webhook` (`on` or `off`) and `poll interval`.
 
 ### The tunnel
 
@@ -218,6 +243,24 @@ A disabled integration has no worker, regardless of its retained hook status.
   `webhooks.rs::a_changed_remote_deletes_the_old_hook_without_reusing_its_secret_or_id`.
 - Replacing and enabling a remote in one edit creates its own hook:
   `webhooks.rs::replacing_and_enabling_a_remote_in_one_edit_creates_its_own_hook`.
+- An existing row keeps the webhook on with no interval, and the column refuses an interval outside 1 to 60:
+  `store.rs::a_forge_row_defaults_to_webhook_on_with_no_interval_and_bounds_the_interval`.
+- The switch off deletes the hook, polls with no error and keeps the integration enabled, and on registers a hook again:
+  `webhooks.rs::a_webhook_switched_off_deletes_the_hook_polls_without_error_and_registers_again_when_on`.
+  A repository created with the switch off creates no hook:
+  `webhooks.rs::a_switched_off_webhook_registers_no_hook_for_a_new_repository`.
+- The API refuses an interval outside 1 to 60, and a stored interval moves the running timer and its reset restores the default:
+  `webhooks.rs::the_poll_interval_is_bounded_stored_and_moves_the_timer_without_a_restart`.
+- The CLI sets the switch and the interval and resets the interval, and refuses one outside 1 to 60:
+  `repo.rs::tests::repo_update_sets_the_webhook_switch_and_the_poll_interval_or_resets_it`.
+  `repo inspect` prints both:
+  `repo.rs::tests::repo_inspect_prints_the_webhook_switch_and_the_poll_interval`.
+- The table shows green `polling` with the webhook off, and its tooltip says so with the interval:
+  `repositories-page.test.tsx::shows green polling with the webhook off, and says so with the interval`.
+- The form shows the switch and the interval of an enabled integration only, sends what changed, and refuses an interval outside 1 to 60:
+  `repository-form-dialog.test.tsx::shows the webhook switch and interval of an enabled integration, and sends what changed`,
+  `repository-form-dialog.test.tsx::refuses an interval outside 1 to 60`,
+  `repository-form-dialog.test.tsx::shows no webhook fields for a disabled integration`.
 - CLI inspection includes the webhook block:
   `repo.rs::tests::repo_inspect_prints_the_forge_block_with_the_login`.
 - The table shows `smee` green with the URL, and red with the error:

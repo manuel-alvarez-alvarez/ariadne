@@ -47,6 +47,16 @@ pub(crate) struct ForgeArgs {
     /// signed in to its host
     #[arg(long, value_enum)]
     forge: Option<Switch>,
+    /// Register a webhook for the repository (default: on); off makes it
+    /// poll on its timer
+    #[arg(long, value_enum)]
+    webhook: Option<Switch>,
+    /// Minutes between timer fetches, from 1 to 60 (default: 5)
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=60), conflicts_with = "reset_poll_interval")]
+    poll_interval: Option<u32>,
+    /// Go back to the default poll interval of 5 minutes
+    #[arg(long)]
+    reset_poll_interval: bool,
 }
 
 impl ForgeArgs {
@@ -54,8 +64,17 @@ impl ForgeArgs {
     fn update(self) -> Option<ForgeUpdate> {
         let update = ForgeUpdate {
             enabled: self.forge.map(|switch| switch == Switch::On),
+            webhook: self.webhook.map(|switch| switch == Switch::On),
+            poll_interval_minutes: match (self.poll_interval, self.reset_poll_interval) {
+                (Some(minutes), _) => Some(Some(minutes)),
+                (None, true) => Some(None),
+                (None, false) => None,
+            },
         };
-        update.enabled.is_some().then_some(update)
+        (update.enabled.is_some()
+            || update.webhook.is_some()
+            || update.poll_interval_minutes.is_some())
+        .then_some(update)
     }
 }
 
@@ -329,6 +348,14 @@ fn inspect_rows(r: &RepositoryDto, tunnel: Option<&ForgeTunnelDto>) -> Vec<(&'st
         Some(forge) => {
             rows.push(("forge", forge_label(forge).into()));
             rows.extend([
+                ("webhook", switch_label(forge.webhook_enabled).into()),
+                (
+                    "poll interval",
+                    forge
+                        .poll_interval_minutes
+                        .map_or_else(|| "5 minutes (default)".into(), |m| format!("{m} minutes"))
+                        .into(),
+                ),
                 ("webhook state", forge.webhook.state.clone().into()),
                 (
                     "webhook URL",
@@ -439,7 +466,85 @@ mod tests {
             remote: "origin".into(),
             enabled,
             login: login.map(Into::into),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         }
+    }
+
+    /// `--webhook`, `--poll-interval` and `--reset-poll-interval` reach the
+    /// request: the reset sends a null interval, and an interval outside 1 to
+    /// 60 never leaves the command line (027).
+    #[test]
+    fn repo_update_sets_the_webhook_switch_and_the_poll_interval_or_resets_it() {
+        #[derive(clap::Parser)]
+        struct Repo {
+            #[command(subcommand)]
+            command: RepoCommand,
+        }
+        let parse = |argv: &[&str]| <Repo as clap::Parser>::try_parse_from(argv);
+        let update = |argv: &[&str]| match parse(argv).expect("parses").command {
+            RepoCommand::Update { forge, .. } => forge.update(),
+            _ => unreachable!("update"),
+        };
+        let off = update(&["repo", "update", "01R", "--webhook", "off"]).expect("given");
+        assert_eq!(off.webhook, Some(false));
+        assert_eq!(off.enabled, None);
+        assert_eq!(off.poll_interval_minutes, None);
+        let set = update(&["repo", "update", "01R", "--poll-interval", "15"]).expect("given");
+        assert_eq!(set.poll_interval_minutes, Some(Some(15)));
+        let reset = update(&["repo", "update", "01R", "--reset-poll-interval"]).expect("given");
+        assert_eq!(reset.poll_interval_minutes, Some(None));
+        let body = serde_json::to_value(&reset).unwrap();
+        assert!(body["poll_interval_minutes"].is_null(), "{body}");
+        assert!(
+            serde_json::to_value(&off)
+                .unwrap()
+                .get("poll_interval_minutes")
+                .is_none(),
+            "an untouched interval is absent, not null"
+        );
+        for argv in [
+            ["repo", "update", "01R", "--poll-interval", "0"],
+            ["repo", "update", "01R", "--poll-interval", "61"],
+        ] {
+            assert!(parse(&argv).is_err(), "{argv:?} is outside 1 to 60");
+        }
+        assert!(
+            parse(&[
+                "repo",
+                "update",
+                "01R",
+                "--poll-interval",
+                "5",
+                "--reset-poll-interval"
+            ])
+            .is_err()
+        );
+    }
+
+    /// `repo inspect` prints the switch and the interval.
+    #[test]
+    fn repo_inspect_prints_the_webhook_switch_and_the_poll_interval() {
+        let mut f = forge(true, Some("octocat"));
+        f.webhook_enabled = false;
+        f.poll_interval_minutes = Some(15);
+        let r = RepositoryDto {
+            forge: Some(f),
+            ..fixtures::repository("01A", "/repos/widgets", "main")
+        };
+        let block = crate::output::kv_block(&inspect_rows(&r, None), &crate::output::View::plain());
+        assert!(
+            block
+                .lines()
+                .any(|l| l.starts_with("webhook ") && l.trim_end().ends_with("off")),
+            "{block}"
+        );
+        assert!(
+            block
+                .lines()
+                .any(|l| l.starts_with("poll interval") && l.trim_end().ends_with("15 minutes")),
+            "{block}"
+        );
     }
 
     /// `--forge` reaches the request; `--review-model` and `--review-effort`
