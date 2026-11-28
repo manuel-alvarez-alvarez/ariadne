@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/ui/skeleton"
 /**
  * One agent session laid out in full: what it is, what it is saying, and
  * what it reported. No page chrome, so it renders the same inside the goal
@@ -226,7 +227,9 @@ export function SessionDetailView({
       (!session.task_id || !!task.data || task.isError) &&
       !task.data?.execution_context,
   })
-  const sourceHost = useSourceHost(task.data?.execution_context?.source_goal?.daemon_id)
+  const { host: sourceHost, isPending: sourcePending } = useSourceHost(
+    task.data?.execution_context?.source_goal?.daemon_id,
+  )
   const taskTo = useTaskPanelTo(session.task_id ?? "", host)
   const switchedFromTo = usePanelSessionTo(session.switched_from ?? "")
   const [search, setSearch] = useSearchParams()
@@ -271,7 +274,11 @@ export function SessionDetailView({
           <FactList dense>
             {context === "goal" || !session.goal_id ? null : (
               <Fact label="Goal">
-                {task.data?.execution_context?.source_goal && !sourceHost ? (
+                {(session.task_id && task.isPending) ||
+                sourcePending ||
+                (!task.data?.execution_context && goal.isPending) ? (
+                  <Skeleton aria-label="Loading source" className="h-3 w-24" />
+                ) : task.data?.execution_context?.source_goal && !sourceHost ? (
                   <span>
                     {task.data.execution_context.source_goal?.title} (source{" "}
                     {task.data.execution_context.source_goal?.daemon_id} unavailable)

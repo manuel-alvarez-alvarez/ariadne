@@ -2149,7 +2149,20 @@ view.
      highlights through the current end of streamed text. Folded prompt previews
      retain the highlight. Stored text, input, copy, export and raw data stay unchanged.
 
+115. Source-host resolution distinguishes pending identities from an unknown source, following rule 113.
+     Task panels, rows and cards show a Skeleton while hosts or identities load.
+     Session details show a Skeleton while the source loads.
+     Unknown-source messages appear only after resolution.
+     Task breadcrumbs show a Skeleton while the goal loads.
+
 ## Acceptance criteria
+
+- Source loading follows rule 115
+  (`ui/src/features/tasks/source-loading.test.tsx::shows a skeleton while the task goal loads`,
+  `::shows a skeleton while the worker identity loads: %s`,
+  `::shows a skeleton while the source loads in the %s`,
+  `ui/src/features/tasks/source-host.test.tsx::keeps source resolution pending while the hosts load`,
+  `::resolves an unknown source only after all identities answer`).
 
 - Remote loading follows rule 113
   (`ui/src/hooks/hosts-loading.test.tsx::keeps All unresolved until the hosts answer`,

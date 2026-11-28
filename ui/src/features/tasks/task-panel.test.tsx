@@ -232,6 +232,11 @@ it("links a live session that waits for permission", async () => {
 })
 
 it("shows the saved source and workflow when the worker has no goal", async () => {
+  const { stubHosts, LOCAL } = await import("@/test/hosts")
+  stubHosts(
+    { local: { "/v1/remote-tasks/protocol": { protocol: "remote-tasks-v1", daemon_id: "other" } } },
+    [LOCAL],
+  )
   const task = aTask({
     goal_id: "source-goal",
     step: "build",
