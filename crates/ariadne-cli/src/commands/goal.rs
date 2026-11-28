@@ -826,6 +826,8 @@ mod tests {
                 remote: "origin".into(),
                 enabled: true,
                 login: Some("octocat".into()),
+                webhook_enabled: true,
+                poll_interval_minutes: None,
             });
             Json(vec![repository])
         });

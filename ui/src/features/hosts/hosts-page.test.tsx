@@ -18,8 +18,15 @@ import { useHostFilter } from "@/hooks/use-host-filter"
 import { useSettingsStore } from "@/stores/settings"
 import { useHostStreamStore, useStreamStore } from "@/stores/stream"
 import { errorResponse, jsonResponse, renderScreen, startAt } from "@/test/harness"
-import { BOX, forgetHosts, LOCAL, LOCAL_ORIGIN, stubHosts } from "@/test/hosts"
+import { BOX, forgetHosts, LOCAL, LOCAL_ORIGIN, stubHosts as stubHostAnswers } from "@/test/hosts"
 import { HostsPage } from "./hosts-page"
+
+function stubHosts(
+  answers: Parameters<typeof stubHostAnswers>[0],
+  hosts?: Parameters<typeof stubHostAnswers>[1],
+) {
+  return stubHostAnswers({ ...answers, local: { "/v1/host-setups": [], ...answers.local } }, hosts)
+}
 
 const FAR = {
   ...BOX,
@@ -56,6 +63,7 @@ it("lists every host with its name, kind, status, endpoint and error, live throu
   stubHosts({ local: { "/v1/forge/tunnel": { enabled: false, state: "off" } } }, hosts)
   const { queryClient } = renderScreen(<HostsPage />)
 
+  await waitFor(() => expect(hostRow("local")[0]).toBe("local"))
   await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4))
   expect(hostRow("local")).toEqual([
     "local",
@@ -199,6 +207,7 @@ it("shows the daemon version and uptime of each reachable host, from its stream'
   stubHosts({}, [LOCAL, BOX, FAR])
   try {
     renderScreen(<HostsPage />)
+    await waitFor(() => expect(hostRow("local")[0]).toBe("local"))
     await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4))
     act(() => {
       useStreamStore
@@ -346,6 +355,7 @@ it("reconnects a host from its Hosts row, disabled while it runs, and shows the 
     hosts,
   )
   const { queryClient } = renderScreen(<HostsPage />)
+  await waitFor(() => expect(hostRow("local")[0]).toBe("local"))
   await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4))
 
   expect(screen.queryByRole("button", { name: "Reconnect local" })).toBeNull()

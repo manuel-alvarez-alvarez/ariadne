@@ -48,7 +48,7 @@ import {
   useHostRepositories,
 } from "@/features/forge/forge-hosts"
 import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
-import { useHostFilter, usePickedHost } from "@/hooks/use-host-filter"
+import { useHostSelection, usePickedHost } from "@/hooks/use-host-filter"
 import { useRowsShowHost } from "@/hooks/use-host-label"
 
 type Row = { host: Host; repository: RepositoryDto; issue: IssueDto }
@@ -86,7 +86,8 @@ const COLUMNS = [
 
 export function IssuesPage() {
   // The hosts the header picker selects, and the repositories each has.
-  const hosts = useHostFilter()
+  const selection = useHostSelection()
+  const hosts = selection.read
   const showHost = useRowsShowHost()
   const repositories = useHostRepositories(hosts)
   const enabled = distinctEnabled(repositories.rows)
@@ -150,7 +151,10 @@ export function IssuesPage() {
   )
   const query = {
     data: rows,
-    isPending: repositories.isPending || issueQueries.some((result) => result.isPending),
+    isPending:
+      selection.isPending ||
+      repositories.pending.length > 0 ||
+      issueQueries.some((result) => result.isPending),
     isError: repositories.errors.length > 0 || issueQueries.some((result) => result.isError),
     error: repositories.errors[0]?.error ?? issueQueries.find((result) => result.error)?.error,
     refetch: () => {
@@ -196,6 +200,7 @@ export function IssuesPage() {
         }}
       />
       <DataTable
+        keepRowsWhilePending
         query={query}
         errorTitle="Could not load issues"
         columns={COLUMNS}

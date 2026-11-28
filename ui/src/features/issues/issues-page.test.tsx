@@ -23,6 +23,8 @@ it("lists forge issues and fills the goal dialog from a chosen issue", async () 
       remote: "origin",
       enabled: true,
       login: "octocat",
+      webhook_enabled: true,
+      poll_interval_minutes: null,
     },
   })
   const url = "https://github.com/acme/widgets/issues/12"
@@ -102,7 +104,7 @@ it("submits a goal dialog opened from an issue with the issue's data and the mod
   )
 
   const dialog = await screen.findByRole("dialog", { name: "New goal" })
-  await user.click(within(dialog).getByRole("button", { name: "Orchestrator runs on" }))
+  await user.click(await within(dialog).findByRole("button", { name: "Orchestrator runs on" }))
   const models = await screen.findByRole("listbox", { name: "Models" })
   await user.click(within(models).getByText(aModel().id))
   await user.keyboard("{Escape}")

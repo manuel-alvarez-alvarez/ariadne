@@ -22,6 +22,7 @@ import {
   type TaskDto,
   unwrap,
   useHostLists,
+  useHosts,
 } from "@/api"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import {
@@ -164,6 +165,7 @@ const INCOMPLETE_RECOVERY_READ = new Error(
 
 /** The attention list over every reachable host, whatever the header's pick. */
 export function useAttention(): Attention {
+  const { isPending: hostsPending } = useHosts()
   const hosts = useReachableHosts()
   const goals = useHostLists(hosts, (host) => goalsQueryOptions(host))
   const tasks = useHostLists(hosts, (host) => taskListQueryOptions(host))
@@ -199,11 +201,11 @@ export function useAttention(): Attention {
   return {
     items,
     isPending:
-      goals.isPending ||
-      tasks.isPending ||
-      sessions.isPending ||
-      recovery.length === 0 ||
-      recovery.every((result) => result.isPending),
+      hostsPending ||
+      goals.pending.length > 0 ||
+      tasks.pending.length > 0 ||
+      sessions.pending.length > 0 ||
+      recovery.some((result) => result.isPending),
     error: errors[0]?.error ?? null,
     errors,
     readyHosts,

@@ -288,3 +288,66 @@ it("drops the stale forge choice from a changed path submitted before its next p
   expect(sentBody).not.toHaveProperty("forge")
   resolveSecondDetect?.()
 })
+
+/** An enabled integration shows the webhook switch and the interval, and a save sends what moved. */
+it("shows the webhook switch and interval of an enabled integration, and sends what changed", async () => {
+  const user = userEvent.setup()
+  const repository = aRepository({
+    id: "repo-1",
+    default_workflow: "build-test",
+    forge: aForge({ enabled: true }),
+  })
+  let sentBody: unknown
+  stubDaemon(null, async (pathname, request) => {
+    if (pathname === "/v1/repositories/repo-1" && request.method === "PUT") {
+      sentBody = await request.clone().json()
+      return jsonResponse(repository)
+    }
+    return undefined
+  })
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={repository} />)
+
+  const webhook = await screen.findByRole("switch", { name: "Webhook" })
+  expect(webhook.getAttribute("aria-checked")).toBe("true")
+  await user.click(webhook)
+  await user.type(screen.getByLabelText("Poll interval (minutes)"), "15")
+  await user.click(screen.getByRole("button", { name: /save/i }))
+
+  await waitFor(() =>
+    expect(sentBody).toMatchObject({
+      forge: { webhook: false, poll_interval_minutes: 15 },
+    }),
+  )
+  expect((sentBody as { forge: object }).forge).not.toHaveProperty("enabled")
+})
+
+it("refuses an interval outside 1 to 60", async () => {
+  const user = userEvent.setup()
+  const enabled = aRepository({
+    id: "repo-1",
+    forge: aForge({ enabled: true }),
+  })
+  stubDaemon(null)
+  renderScreen(<RepositoryFormDialog open onOpenChange={vi.fn()} repository={enabled} />)
+  await user.type(await screen.findByLabelText("Poll interval (minutes)"), "61")
+  await user.click(screen.getByRole("button", { name: /save/i }))
+  expect(
+    await screen.findByText("Enter whole minutes from 1 to 60, or leave it empty."),
+  ).toBeDefined()
+})
+
+it("shows no webhook fields for a disabled integration", async () => {
+  stubDaemon(null)
+  renderScreen(
+    <RepositoryFormDialog
+      open
+      onOpenChange={vi.fn()}
+      repository={aRepository({
+        id: "repo-2",
+        forge: aForge({ enabled: false }),
+      })}
+    />,
+  )
+  await screen.findByRole("switch", { name: "GitHub integration" })
+  expect(screen.queryByRole("switch", { name: "Webhook" })).toBeNull()
+})

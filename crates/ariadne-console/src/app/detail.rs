@@ -27,11 +27,13 @@ const INDENT: &str = "    ";
 
 /// The lines of a call's detail at `width`, each behind a four-column
 /// indent. `raw` draws the raw input and output, and `whole` every line.
+/// A command shows only where its row `cut` it.
 pub(super) fn lines(
     detail: &ToolCallDetailDto,
     raw: bool,
     whole: bool,
     width: usize,
+    cut: bool,
 ) -> Vec<Line<'static>> {
     let top = if whole { usize::MAX } else { TOP_FOLD };
     let room = width.saturating_sub(INDENT.len()).max(1);
@@ -47,10 +49,13 @@ pub(super) fn lines(
     }
     match &detail.detail {
         ToolDetailDto::Command(command) => {
-            let mut lines: Vec<Line<'static>> = wrap(&format!("$ {}", command.command), room)
-                .into_iter()
-                .map(|part| said(&part, TOOL))
-                .collect();
+            let mut lines: Vec<Line<'static>> = match cut {
+                true => wrap(&format!("$ {}", command.command), room)
+                    .into_iter()
+                    .map(|part| said(&part, TOOL))
+                    .collect(),
+                false => Vec::new(),
+            };
             if let Some(cwd) = &command.cwd {
                 lines.push(said(&wrap::clip(&format!("in {cwd}"), room), DIM));
             }

@@ -466,6 +466,8 @@ pub(crate) async fn enable_integration(h: &super::Harness, repository_id: &str, 
             remote: "origin".into(),
             enabled: true,
             login: Some(login.into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();

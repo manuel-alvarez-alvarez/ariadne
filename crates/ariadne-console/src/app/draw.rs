@@ -9,8 +9,9 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Clear, Paragraph};
 
 use ariadne_api::trajectory::{
-    CompactionStatus, ContentBlockDto, MAIN_LANE, NoteSeverity, PermissionState, PermissionStepDto,
-    QuestionState, StepDto, SubagentStepDto, ToolCallStatus, TurnDto, TurnState,
+    CompactionStatus, ContentBlockDto, MAIN_LANE, NoteSeverity, PermissionOptionDto,
+    PermissionState, PermissionStepDto, QuestionState, StepDto, SubagentStepDto, ToolCallStatus,
+    ToolDetailDto, TurnDto, TurnState,
 };
 
 use crate::markdown;
@@ -179,7 +180,7 @@ impl App {
             .skip(top)
             .take(height)
             .map(|row| match row.head && row.item.as_ref() == marked {
-                true => row.line.clone().patch_style(Modifier::REVERSED),
+                true => cursor_line(&row.line, usize::from(area.width)),
                 false => row.line.clone(),
             })
             .collect();
@@ -328,14 +329,28 @@ impl App {
                 }
             }
             Some(prompt) => {
-                // A daemon's prompt is its brief: one line of it.
+                // A daemon's prompt is its brief: one line of it, and the
+                // whole of it as markdown once opened.
                 let said = prompt.text.clone().unwrap_or_else(|| text(&prompt.content));
                 let source = prompt.source.as_deref().unwrap_or("daemon");
                 let lead = format!("» {source} ");
                 let room = width.saturating_sub(wrap::width(&lead));
-                let mut line = markdown::brief(&said, room, DIM);
-                line.spans.insert(0, Span::styled(lead, DAEMON));
-                rows.push(Row::of(line, Some(&item)));
+                let at = Item::Prompt(turn.id.clone());
+                rows.push(Row::head(
+                    {
+                        let mut line = markdown::brief(&prompt_line(&said), room, DIM);
+                        line.spans.insert(0, Span::styled(lead, DAEMON));
+                        line
+                    },
+                    &at,
+                ));
+                if self.open.contains(&at) {
+                    for line in markdown::render(said.trim_end(), body) {
+                        let mut spans = vec![Span::raw("  ")];
+                        spans.extend(line.spans);
+                        rows.push(Row::of(Line::from(spans).style(line.style), Some(&at)));
+                    }
+                }
             }
             None => rows.push(Row::of(
                 Line::styled("» session · before the first prompt", DAEMON),
@@ -349,14 +364,9 @@ impl App {
             Span::styled(if open { UNFOLDED } else { FOLDED }, DIM),
             Span::styled(format!("{mark} "), style),
         ];
-        let mut said = match turn.state {
-            // The mark says a completed turn is completed.
-            TurnState::Completed => crate::trajectory::counts_line(turn),
-            _ => crate::trajectory::activity(turn),
-        };
-        if let Some(took) = took(&turn.started_at, turn.ended_at.as_deref()) {
-            said.push_str(&format!("{}{took}", theme::SEPARATOR));
-        }
+        let took = took(&turn.started_at, turn.ended_at.as_deref());
+        // The mark says the state of the turn, so its line has no state word.
+        let said = crate::trajectory::counts_line(turn, took);
         parts.push(Span::styled(
             wrap::clip(&said, width.saturating_sub(6)),
             DIM,
@@ -520,6 +530,25 @@ impl App {
         };
         let body = |text: &str| indent(Line::styled(format!("{BODY_INDENT}{text}"), DIM));
         let room_of_body = room.saturating_sub(BODY_INDENT.len());
+        // The answer of the permission of a call, and who decided, under its
+        // detail or the reason the detail failed.
+        let permission_body = |turn: &str| -> Vec<Line<'static>> {
+            let StepDto::ToolCall(call) = step else {
+                return Vec::new();
+            };
+            let Some(permission) = call
+                .permission
+                .as_deref()
+                .and_then(|id| self.permission_of(turn, id))
+            else {
+                return Vec::new();
+            };
+            permission_detail(permission)
+                .iter()
+                .flat_map(|said| wrap::wrap(said, room_of_body))
+                .map(|part| body(&part))
+                .collect()
+        };
         match step {
             StepDto::ToolCall(call) => match self.details.get(&call.id) {
                 Some(Detail::Read(read)) => {
@@ -528,19 +557,31 @@ impl App {
                     // The detail lines carry four of the six columns of a
                     // body.
                     let gap = BODY_INDENT.len() - 4;
-                    detail::lines(read, raw, whole, room.saturating_sub(gap))
-                        .into_iter()
-                        .map(|line| {
-                            let mut spans = vec![Span::raw(" ".repeat(gap))];
-                            spans.extend(line.spans);
-                            indent(Line::from(spans).style(line.style))
-                        })
-                        .collect()
+                    // The command shows in its detail only where its row
+                    // cut it.
+                    let cut = match &read.detail {
+                        ToolDetailDto::Command(command) => !self
+                            .row_text(item.turn(), step, depth, width)
+                            .contains(command.command.as_str()),
+                        _ => false,
+                    };
+                    let mut lines: Vec<Line<'static>> =
+                        detail::lines(read, raw, whole, room.saturating_sub(gap), cut)
+                            .into_iter()
+                            .map(|line| {
+                                let mut spans = vec![Span::raw(" ".repeat(gap))];
+                                spans.extend(line.spans);
+                                indent(Line::from(spans).style(line.style))
+                            })
+                            .collect();
+                    lines.extend(permission_body(item.turn()));
+                    lines
                 }
                 Some(Detail::Failed(reason)) => {
                     let mut lines: Vec<Line<'static>> =
                         step_body(step, room).into_iter().map(indent).collect();
                     lines.push(body(&wrap::clip(reason, room_of_body)));
+                    lines.extend(permission_body(item.turn()));
                     lines
                 }
                 None => vec![body("reading the detail…")],
@@ -642,10 +683,10 @@ impl App {
         }
     }
 
-    /// One step: its status, its kind, its subject and how long it took.
-    /// A call carries the mark of the permission that was answered for it.
-    /// A subagent is its summary row: its name, its step count and its
-    /// time.
+    /// One step: its status, its kind and its subject, then the tail in one
+    /// column at the right edge: the permission mark, the diff counts and
+    /// how long it took. A subagent is its summary row: its name, its step
+    /// count and its time.
     fn step_row(
         &self,
         turn: &str,
@@ -654,6 +695,24 @@ impl App {
         width: usize,
         is_answer: bool,
     ) -> Line<'static> {
+        self.step_parts(turn, step, depth, width, is_answer).0
+    }
+
+    /// The text of the subject that the row of a step shows, cut to the
+    /// width.
+    fn row_text(&self, turn: &str, step: &StepDto, depth: usize, width: usize) -> String {
+        self.step_parts(turn, step, depth, width, false).1
+    }
+
+    /// The row of a step, and the text of its subject as the row shows it.
+    fn step_parts(
+        &self,
+        turn: &str,
+        step: &StepDto,
+        depth: usize,
+        width: usize,
+        is_answer: bool,
+    ) -> (Line<'static>, String) {
         let (mark, style) = step_mark(step);
         // A tool call shows the icon of its kind; every other step names its
         // kind.
@@ -665,8 +724,14 @@ impl App {
         let indent = format!("{STEP_INDENT}{}", DEPTH_INDENT.repeat(depth));
         let lead = format!("{indent}{mark} ");
         let kind = format!("{label} ");
-        let mut tail = Vec::new();
-        let took = match step {
+        let mut tail: Vec<Span<'static>> = Vec::new();
+        let put = |tail: &mut Vec<Span<'static>>, span: Span<'static>| {
+            if !tail.is_empty() {
+                tail.push(Span::raw(" "));
+            }
+            tail.push(span);
+        };
+        match step {
             StepDto::ToolCall(call) => {
                 if let Some(answered) = call
                     .permission
@@ -674,39 +739,32 @@ impl App {
                     .and_then(|id| self.permission_of(turn, id))
                     .and_then(permission_mark)
                 {
-                    tail.push(Span::styled(format!("  {answered}"), ASK));
+                    put(&mut tail, answered);
                 }
-                took(&call.started_at, call.ended_at.as_deref())
+                if call.kind.as_deref() == Some("edit")
+                    && let Some(stat) = &call.diff_stat
+                {
+                    put(&mut tail, Span::styled(format!("+{}", stat.added), ADDED));
+                    tail.push(Span::raw(" "));
+                    tail.push(Span::styled(format!("-{}", stat.removed), REMOVED));
+                }
+                if let Some(took) = took(&call.started_at, call.ended_at.as_deref()) {
+                    put(&mut tail, Span::styled(took, DIM));
+                }
             }
-            StepDto::Subagent(subagent) => took(&subagent.started_at, subagent.ended_at.as_deref()),
-            _ => None,
-        };
-        if let StepDto::Subagent(subagent) = step {
-            let mut said = vec![match subagent.activity.steps {
-                1 => "1 step".to_string(),
-                steps => format!("{steps} steps"),
-            }];
-            said.extend(took);
-            tail.push(Span::styled(
-                format!("  {}", said.join(theme::SEPARATOR)),
-                DIM,
-            ));
-        } else {
-            if let StepDto::ToolCall(call) = step
-                && call.kind.as_deref() == Some("edit")
-                && let Some(stat) = &call.diff_stat
-            {
-                tail.push(Span::raw("  "));
-                tail.push(Span::styled(format!("+{}", stat.added), ADDED));
-                tail.push(Span::raw(" "));
-                tail.push(Span::styled(format!("-{}", stat.removed), REMOVED));
+            StepDto::Subagent(subagent) => {
+                let mut said = vec![match subagent.activity.steps {
+                    1 => "1 step".to_string(),
+                    steps => format!("{steps} steps"),
+                }];
+                said.extend(took(&subagent.started_at, subagent.ended_at.as_deref()));
+                put(&mut tail, Span::styled(said.join(theme::SEPARATOR), DIM));
             }
-            if let Some(took) = took {
-                tail.push(Span::styled(format!("  {took}"), DIM));
-            }
+            _ => {}
         }
         let tail_width: usize = tail.iter().map(|span| wrap::width(&span.content)).sum();
-        let room = width.saturating_sub(wrap::width(&lead) + wrap::width(&kind) + tail_width);
+        let gap = usize::from(tail_width > 0);
+        let room = width.saturating_sub(wrap::width(&lead) + wrap::width(&kind) + tail_width + gap);
         let subject = if is_answer {
             "Turn answer".into()
         } else {
@@ -717,14 +775,23 @@ impl App {
             }
         };
         let first = subject.lines().next().unwrap_or_default();
+        let shown = if room == 0 {
+            String::new()
+        } else {
+            wrap::clip(first, room)
+        };
         let mut spans = vec![
             Span::raw(indent),
             Span::styled(format!("{mark} "), style),
             Span::styled(kind, kind_style),
         ];
+        let pad = room.saturating_sub(wrap::width(&shown));
         spans.extend(markdown::brief(first, room, Style::new()).spans);
-        spans.extend(tail);
-        Line::from(spans)
+        if tail_width > 0 {
+            spans.push(Span::raw(" ".repeat(pad + gap)));
+            spans.extend(tail);
+        }
+        (Line::from(spans), shown)
     }
 
     /// The pending permission or the open question, above the input.
@@ -1065,10 +1132,15 @@ fn bare_subject(step: &StepDto) -> String {
     let said = match step {
         StepDto::Message(message) => text(&message.content),
         StepDto::Thought(thought) => text(&thought.content),
-        StepDto::ToolCall(call) => match call.subject.as_deref() {
-            Some(subject) if subject != call.title => format!("{} · {subject}", call.title),
-            _ => call.title.clone(),
-        },
+        StepDto::ToolCall(call) => {
+            let title = call.title.lines().next().unwrap_or_default().trim();
+            match call.subject.as_deref().map(str::trim) {
+                Some(subject) if !subject.is_empty() && !title.contains(subject) => {
+                    format!("{title} · {subject}")
+                }
+                _ => title.to_string(),
+            }
+        }
         StepDto::Permission(permission) => permission.question.clone(),
         StepDto::Question(question) => question.question.clone(),
         StepDto::Note(note) => note.text.clone(),
@@ -1083,31 +1155,117 @@ fn bare_subject(step: &StepDto) -> String {
     said.trim().to_string()
 }
 
-/// The mark an answered permission puts on the row of its call: the option
-/// chosen, and who chose it where that was not a person at the console.
-fn permission_mark(permission: &PermissionStepDto) -> Option<String> {
+/// The mark an answered permission puts on the row of its call. A call
+/// that `auto` or a learned permission allowed has none: it is the rule. An
+/// allow by the AI or by the user is a dim mark, and a rejection a red one.
+fn permission_mark(permission: &PermissionStepDto) -> Option<Span<'static>> {
     match permission.state {
         PermissionState::Pending => None,
-        PermissionState::Cancelled => Some(format!("{CANCELLED} permission cancelled")),
+        PermissionState::Cancelled => Some(Span::styled(CANCELLED, DIM)),
         PermissionState::Answered => {
             let answer = permission.answer.as_ref()?;
-            let allowed = permission
-                .options
-                .iter()
-                .find(|option| Some(&option.id) == answer.option_id.as_ref())
-                .and_then(|option| option.kind.as_deref())
-                .is_none_or(|kind| kind.starts_with("allow"));
-            let mark = if allowed {
-                theme::CALL_DONE
+            if allowed(permission) {
+                match answer.decided_by.as_deref() {
+                    Some("auto" | "learned") => None,
+                    _ => Some(Span::styled(theme::CALL_DONE, DIM)),
+                }
             } else {
-                theme::CALL_FAILED
-            };
-            Some(match answer.decided_by.as_deref() {
-                Some(by) if by != "console" => format!("{mark} {} · by {by}", answer.label),
-                _ => format!("{mark} {}", answer.label),
-            })
+                Some(Span::styled(theme::CALL_FAILED, FAIL))
+            }
         }
     }
+}
+
+/// Whether the option an answered permission chose allows the call.
+fn allowed(permission: &PermissionStepDto) -> bool {
+    let Some(answer) = permission.answer.as_ref() else {
+        return false;
+    };
+    // An option that has both the id and the label of the answer is the one
+    // chosen. Learn mode answers with an id of the agent, which can equal the
+    // id of another option shown, so then the label, the name of the option
+    // chosen, finds it, and last the id.
+    let by_id = |option: &&PermissionOptionDto| Some(&option.id) == answer.option_id.as_ref();
+    let by_name = |option: &&PermissionOptionDto| option.name == answer.label;
+    let chosen = permission
+        .options
+        .iter()
+        .find(|option| by_id(option) && by_name(option))
+        .or_else(|| permission.options.iter().find(by_name))
+        .or_else(|| permission.options.iter().find(by_id));
+    chosen
+        .and_then(|option| option.kind.as_deref())
+        .is_none_or(|kind| kind.starts_with("allow"))
+}
+
+/// The answer of a permission and who decided, one line for each decider:
+/// the answer, then the AI that weighed it and the learned rule that held.
+pub(super) fn permission_detail(permission: &PermissionStepDto) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(answer) = &permission.answer {
+        let by = answer.decided_by.as_deref().unwrap_or("console");
+        lines.push(format!("permission: {} · by {by}", answer.label));
+    }
+    if let Some(ai) = &permission.ai {
+        lines.push(format!("ai: {ai}"));
+    }
+    if let Some(rule) = &permission.learned {
+        lines.push(format!("learned: {rule}"));
+    }
+    lines
+}
+
+/// The first line of a prompt that has text, without its Markdown block
+/// mark: a heading, a quote, a list bullet or a number.
+fn prompt_line(said: &str) -> String {
+    for line in said.lines() {
+        let mut line = line.trim();
+        loop {
+            let before = line;
+            line = line.trim_start_matches('>').trim_start();
+            let hashes = line.chars().take_while(|c| *c == '#').count();
+            if (1..=6).contains(&hashes)
+                && line[hashes..]
+                    .chars()
+                    .next()
+                    .is_none_or(char::is_whitespace)
+            {
+                line = line[hashes..].trim_start();
+            }
+            for bullet in ["- ", "* ", "+ "] {
+                line = line.strip_prefix(bullet).unwrap_or(line).trim_start();
+            }
+            let digits = line.chars().take_while(char::is_ascii_digit).count();
+            if digits > 0
+                && let Some(rest) = line[digits..]
+                    .strip_prefix(". ")
+                    .or_else(|| line[digits..].strip_prefix(") "))
+            {
+                line = rest.trim_start();
+            }
+            if line == before {
+                break;
+            }
+        }
+        if !line.is_empty() && !line.starts_with("```") && !line.chars().all(|c| "-*_=".contains(c))
+        {
+            return line.to_string();
+        }
+    }
+    String::new()
+}
+
+/// The line at the cursor: its text in one reversed style across the whole
+/// width, with no colour of its own.
+fn cursor_line(line: &Line<'static>, width: usize) -> Line<'static> {
+    let mut said: String = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect();
+    let pad = width.saturating_sub(wrap::width(&said));
+    said.push_str(&" ".repeat(pad));
+    Line::styled(said, Style::new().add_modifier(Modifier::REVERSED))
 }
 
 /// Whether a step is a permission that was answered and whose call is in

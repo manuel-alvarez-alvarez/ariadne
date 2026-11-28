@@ -429,8 +429,9 @@ async fn a_shipped_skill_cannot_be_deleted() {
 
 /// The orchestrator's playbook is the `orchestration` skill, and it reaches
 /// an orchestrator session the way a task agent's skills reach it: the system
-/// prompt is the seat text and then an index naming the skill, and the path
-/// the index names holds the document in the run directory.
+/// prompt is the seat text, then the skill's orchestrator supplement with the
+/// calls of its steps (006 rule 21), then an index naming the skill, and the
+/// path the index names holds the document in the run directory.
 #[tokio::test]
 async fn an_orchestrator_session_indexes_the_orchestration_skill() {
     let h = harness().await;
@@ -447,10 +448,17 @@ async fn an_orchestrator_session_indexes_the_orchestration_skill() {
             "\n\nYour skills. Read the document of a skill before you do the work it covers:",
         )
         .expect("a skill index");
+    let supplement =
+        ariadne_store::defaults::skill_supplement(ORCHESTRATION_SKILL, Seat::Orchestrator)
+            .expect("the orchestrator seat has an orchestration supplement")
+            .trim();
     assert_eq!(
         owed,
-        default_system_prompt(Seat::Orchestrator).trim(),
-        "the seat's own text, word for word out of the code"
+        format!(
+            "{}\n\n{supplement}",
+            default_system_prompt(Seat::Orchestrator).trim()
+        ),
+        "the seat's own text, then the supplement, word for word out of the code"
     );
     let document = run_dir
         .join("skills")

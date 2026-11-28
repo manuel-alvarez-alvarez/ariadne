@@ -1,7 +1,7 @@
 ---
 id: needs-attention
 status: current
-updated: 2026-11-25
+updated: 2026-11-28
 areas: [api, daemon, cli, store, ui]
 commits: []
 tests:
@@ -12,6 +12,7 @@ tests:
   - crates/ariadne-daemon/tests/it/kept_requests.rs
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/pull_requests.rs
+  - crates/ariadne-daemon/src/attention/planning.rs
   - crates/ariadne-daemon/src/attention/recovery.rs
   - crates/ariadne-daemon/src/attention/pull_requests.rs
   - crates/ariadne-daemon/src/attention/mod.rs
@@ -655,6 +656,23 @@ Proof: `crates/ariadne-cli/src/main.rs::tests::dismisses_a_quota_item_whose_mode
 `attention-alerts.test.tsx` (occurrence identity and removed toasts during partial reads), and `dispatch.test.ts`
 (cross-client attention invalidation).
 
+
+## The planning input producer
+
+19. A planning orchestrator's normal completed turn raises one console-input item
+when that turn opened no question and did not call `finalize_plan`.
+Cancelled and failed turns raise no item. Other seats and orchestrators
+outside planning raise no item. The next turn's start clears the item.
+Leaving planning also clears it. The summary says the orchestrator may have
+asked in text. The action tells the user to answer in its console.
+The producer reads recorded prompt, question and stop events.
+It never inspects turn text and never sends an automatic prompt.
+
+`attention.rs::a_planning_turn_without_a_question_needs_console_input`
+proves normal turns, question suppression, cancellation, and clearing at turn start.
+`attention.rs::planning_input_clears_when_planning_ends_and_excludes_failed_turns_and_other_seats`
+proves goal transitions, failed turns, and seat exclusions. Spec 009 rule 31 owns the
+scheduler's separate prohibition on nudging idle planning orchestrators.
 
 ## Acceptance criteria
 

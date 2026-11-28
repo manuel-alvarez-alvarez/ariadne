@@ -92,10 +92,12 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 3. The system prompt is the code's, one text per seat. Nothing an agent runs
    under carries a lifecycle text of its own: what makes one agent differ
    from another in the same seat is the skills it holds. No seat text carries
-   a playbook step — the orchestrator's phases are the `orchestration` skill
-   (017), and its seat text keeps only what no skill edit may take away: no
-   code is written, the plan is made with the user, and no open point is
-   decided alone. The `agent` seat text is the one text every column's agent
+   a playbook step. The orchestrator's phases are the `orchestration` skill
+   (017), in plain words, and the call of each phase is the orchestrator
+   seat's `orchestration` supplement (rule 21), in the order of the phases.
+   Its seat text keeps only what no skill edit may take away: no code is
+   written, the plan is made with the user, and no open point is decided
+   alone. The `agent` seat text is the one text every column's agent
    runs under: work in the task's worktree and on the current column, read
    its skills, and what `complete_step`, `fail_step` and `fail_task` are for,
    with the ban on `--no-verify` and `-n`. What a column does — build,
@@ -118,12 +120,21 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    How each CLI is pointed at those files is 007.
 5. A rule every seat shares has one owner, and no other text repeats it:
    - asking the user: the session rules, picked by seat, with no tool
-     description repeats it;
+     description repeats it. The one exception is steps 2 and 7 of the
+     `orchestration` skill: each says to ask with the question tool, not in
+     turn text, where it asks, and neither says "of your own client";
    - working in the task's worktree and on the current column: the `agent`
      seat text alone; no column's skill repeats it;
    - planning the goal with the user, writing no code, and deciding no
      open point alone: the `orchestrator` seat text alone; the
      `orchestration` skill states its phases, never these three;
+   - the call of each `orchestration` phase — `list_hosts`, `list_skills`,
+     `list_models`, `create_task` with `depends_on` and `brief`,
+     `finalize_plan` and that it is called no earlier, `post_to_session`,
+     `retry_task`, `update_task`, `cancel_task`, `switch_session` and
+     `complete_goal` — and the model rules — the column ranks, `local`, and
+     different ACP agents for the coding and review columns: the
+     orchestrator seat's `orchestration` supplement alone (003 rule 19);
    - ending the turn after a call: the `complete_step`, `fail_step` and
      `post_to_session` descriptions;
    - how a check runs — in the foreground, split by crate, logged outside
@@ -138,9 +149,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      poll;
    - the column report a column ends on, and the return report a column is
      sent back with: the `complete_step` and `fail_step` descriptions
-     alone (013 rule 4). No skill restates a field of either; `coding`,
-     `merge` and `pr-babysit` each name their own report only as "the
-     column report";
+     alone (013 rule 4). No skill restates a field of either; `coding` and
+     `merge` name their own report only as "the report", and `pr-babysit`
+     names no report;
    - stopping a fix loop: the agent seat text alone, which stops an agent
      after three failed attempts at one fix;
    - what a plain word of a shipped skill stands for in Ariadne — the
@@ -155,15 +166,29 @@ they describe (003, 030) — what a skill is (017), and the switch itself
      `code-review` supplement alone. The skill once said its two step calls
      were the task seat's; a supplement is picked by seat, so that rule
      left with them;
+   - how a review session reads a request, reads the diff since a revision,
+     answers and resolves a thread, escalates one and submits a round, for
+     `pr-reviewer`: `get_pull_request`, `get_diff` with `since`,
+     `list_comments`, `reply_comment`, `resolve_thread`, `escalate_comment`
+     and `submit_review` with the event `comment` and the `title` field, and
+     that a step call another skill names is the task seat's: that seat's
+     `pr-reviewer` supplement alone;
    - that a review session posts each `code-review` finding as
      `pr-reviewer` says, and that `pr-reviewer` ends the round: the
      `reviewer` seat's `code-review` supplement alone, which names no step
-     call.
+     call;
+   - the `merge_commit` value of the call that passes the work, and the
+     `fail_step` call for a failed check, for `merge`: the `agent` seat's
+     `merge` supplement alone;
+   - the call that ends the stage where no skill invoked
+     `conflict-resolution`: the `agent` seat's `conflict-resolution`
+     supplement alone.
 6. `coding` uses test-first development for a code behavior change: it runs
    the new seam test failing before implementation. Prose changes and
    behavior-preserving refactors use verification that fits their risk.
-   `coding` calls `complete_step` with the column report that tool's
-   description defines (013), covering every criterion. `code-review` names
+   `coding` sends the report that the `complete_step` description
+   defines (013), covering every criterion; the agent seat text owns the
+   call (rule 5). `code-review` names
    the report and the return report by name, and restates no field
    of either. It reads the report as unverified claims before it
    pins the scope to the diff, then runs the tests, the lint and the
@@ -177,9 +202,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
    name, and the cap on the rest, is 017 rule 11's to state, for all three
    review skills alike. Each other produce skill that ends its own column —
    `conflict-resolution`, `documentation`, `research`, `spec-writing` —
-   calls `complete_step` with
-   the column report the same way, naming it and restating none of its
-   fields.
+   ends on the report the same way, naming it and restating none of its
+   fields; `coding`, `documentation`, `research` and `spec-writing` say
+   "the report" and name no tool.
 7. A skill carries only the commit of the step it owns: `coding` commits the
    task it built, and a return from review adds a new commit on top and
    amends nothing, since the merge column squashes. The refactoring path of `coding` commits
@@ -244,7 +269,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
     without a change of the test first; the total still keeps one skill from
     taking the whole room. A supplement rides in the system prompt beside
     the seat text, so it is capped like one: each pair of skill and seat has
-    a cap of its own, and one total holds them all (rule 21). A pair with no
+    a cap of its own, and one total holds them all (rule 21). The
+    orchestrator seat's `orchestration` supplement is capped at 1,800, and
+    the total at 2,300: it holds every call and model rule the skill
+    dropped, and the seat still pays less than the 1,750 its seat text once
+    carried with the playbook in it. A pair with no
     cap fails the test, so a new supplement argues its cap first.
 14. The handoff is a text built from a session's stored events for a
     session switched to another coding agent (021): no ACP agent can resume
@@ -355,11 +384,39 @@ they describe (003, 030) — what a skill is (017), and the switch itself
       supplement repeats the binding.
     - Each supplement has a cap of its own and obeys the STE rules of rule
       11, the same as a default text (rule 13).
-    - Two ship. `code-review` in the `agent` seat holds the `get_diff` call
-      for the whole change, and the `fail_step` and `complete_step` calls
-      that return and pass the work. `code-review` in the `reviewer` seat
-      hands the round to `pr-reviewer` and names no step call.
-      `architecture-review` has none: the seat text binds its plain words.
+    - Eight ship, and `coding`, `documentation`, `research` and `spec-writing`
+      have none, since each skill holds no Ariadne rule of its own: the seat
+      text owns their report call and the binding of the requester. No skill
+      holds a call below. Each call is in the supplement named, and the skill
+      says its plain word.
+      - The `pr-reviewer` supplement of the `reviewer` seat holds the calls
+        listed for `pr-reviewer` in rule 5.
+      - The `code-review` supplement of the `agent` seat holds the `get_diff`
+        call for the whole change, and the `fail_step` and `complete_step`
+        calls that return and pass the work. The `code-review` supplement of
+        the `reviewer` seat hands the round to `pr-reviewer` and names no
+        step call.
+      - The `orchestration` supplement of the `orchestrator` seat holds the
+        call of each playbook step in order, and the model rules (003 rule
+        19). It names the column where the skill says stage, so no binding
+        line is repeated.
+      - The `merge` supplement of the `agent` seat holds the `complete_step`
+        call with its `merge_commit` and the `fail_step` call for a failed
+        check.
+      - The `conflict-resolution` supplement of the `agent` seat holds the
+        `complete_step` call for where no skill invoked it.
+      - `architecture-review` has none: the seat text binds its plain words.
+      - The `pr-babysit` supplement of the `agent` seat holds the open of the
+        request (the push, `open_pull_request`, the title and the body), the
+        read, reply and `escalate_comment` calls, the update of the base in
+        the primary checkout on a merge, and the ends, `complete_step` on a
+        merge and `fail_task` on a close.
+      - The `pr-babysit` supplement of the `keeper` seat holds the same read,
+        reply and `escalate_comment` calls, the user as the requester, the
+        push command of the briefing and the end of turn, and names no task
+        tool.
+
+      The cap of each is argued in `defaults.rs::supplement_size_caps_hold`.
 
 ## Acceptance criteria
 
@@ -379,13 +436,39 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   index (`mcp.rs::each_seat_is_told_its_seat_text_and_its_skill_index_after_the_rules`).
   The agent seat text binds each plain word of the word list
   (`skill_tests/template.rs::the_agent_seat_text_binds_each_plain_word_to_ariadne`).
-  `code-review` and `architecture-review` name no Ariadne, no MCP tool and
-  no Ariadne word, by the one helper `assert_names_no_ariadne_word`
-  (`skill_tests/template.rs::the_two_review_skills_name_no_ariadne_word`).
+  `code-review`, `architecture-review` and `pr-reviewer` name no Ariadne,
+  no MCP tool and no Ariadne word, by the one helper `assert_names_no_ariadne_word`
+  (`skill_tests/template.rs::the_review_skills_name_no_ariadne_word`),
+  and so does `orchestration`
+  (`skill_tests/operate.rs::the_orchestration_skill_names_no_ariadne_word`).
+  Every shipped skill names no Ariadne word, with no exception and no
+  change to the test for a new skill
+  (`skill_tests/template.rs::no_shipped_skill_names_an_ariadne_word`).
+  `coding`, `documentation`, `research` and `spec-writing` name no Ariadne
+  word and have no supplement
+  (`skill_tests/produce.rs::the_four_produce_skills_name_no_ariadne_word_and_have_no_supplement`).
+  The reviewer seat's `pr-reviewer` supplement holds the request, diff,
+  thread and submit calls
+  (`skill_tests/review.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`,
+  `defaults.rs::a_supplement_is_picked_by_its_skill_and_its_seat`).
+  The orchestrator seat's `orchestration` supplement holds the call of each
+  step in order
+  (`defaults.rs::the_orchestration_supplement_holds_each_steps_call_in_order`),
+  the host, rank and ACP agent rules
+  (`skill_tests/operate.rs::the_orchestration_skill_picks_a_host_for_each_task_and_staffs_its_models`,
+  `::the_orchestrator_staffs_each_column_on_its_rank`,
+  `::the_orchestration_skill_requires_independent_providers_for_coding_and_review`),
+  and reaches an orchestrator session between its seat text and its index
+  (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`).
   The agent seat's `code-review` supplement holds its `get_diff`,
   `fail_step` and `complete_step` rules, and the reviewer seat's names no
   step call
   (`skill_tests/review.rs::the_review_skill_reviews_in_place_and_ends_on_a_step_call`).
+  `merge` and `conflict-resolution` name no Ariadne word either
+  (`skill_tests/template.rs::merge_and_conflict_resolution_name_no_ariadne_word`),
+  and their supplements hold the calls the skills dropped
+  (`skill_tests/operate.rs::the_merge_supplement_holds_the_step_calls_the_skill_dropped`,
+  `skill_tests/operate.rs::the_conflict_resolution_supplement_holds_the_call_that_ends_the_stage`).
   Each supplement is within its cap and the total
   (`defaults.rs::supplement_size_caps_hold`), is STE
   (`defaults.rs::every_default_text_is_simplified_technical_english`), and
@@ -476,9 +559,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
 - Every shipped skill holds to the STE limit with each wrapped sentence read
   whole, and a closing quote ends with its sentence
   (`defaults.rs::the_ste_rules_are_read_off_a_text_line_by_line`).
-- `coding` calls `complete_step` with the column report that tool's
-  description defines, covering every criterion, and names no field of it
-  itself. `code-review` names the report and the return report by
+- `coding` sends the report that the `complete_step` description defines,
+  with one line per criterion, and names no field of it itself. The agent
+  seat text owns the call. `code-review` names the report and the return report by
   name, reads the former as unverified claims, then runs the tests, the
   lint and the format check of the changed files itself and reuses a
   reported result only for a check outside them.
@@ -488,9 +571,9 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   `skill_tests/review.rs::the_review_skill_reviews_in_place_and_ends_on_a_step_call`,
   `tools.rs::complete_step_and_fail_step_define_their_reports`).
   No shipped skill names a whole suite.
-  Every other produce skill that ends its own column names the column
-  report the same way, restating none of its fields
-  (`skill_tests/produce.rs::a_produce_skill_names_the_column_report_where_it_ends_a_column`).
+  Every other produce skill that ends its own stage names the report the
+  same way, restating none of its fields
+  (`skill_tests/produce.rs::a_produce_skill_names_the_report_where_it_ends_a_stage`).
   The merge skill pushes before it fast-forwards, with a squash onto the
   merge base and a guard before the push
   (`skill_tests/operate.rs::the_merge_skill_lands_in_order_and_no_skill_merges_a_request_itself`,
@@ -523,9 +606,11 @@ they describe (003, 030) — what a skill is (017), and the switch itself
   (`prompts.rs::every_default_briefing_is_its_template_with_the_values_put_in`).
 - A seat's prompt carries what the seat owes and nothing of a skill
   (`skill_documents.rs::a_seat_prompt_carries_only_what_the_seat_owes`).
-- The orchestrator system prompt holds no playbook step; the phases and their
-  order are the `orchestration` skill's
+- The orchestrator system prompt holds no playbook step and no call of one;
+  the phases and their order are the `orchestration` skill's, and their
+  calls the supplement's
   (`defaults.rs::the_orchestrator_seat_text_holds_no_playbook_step`,
+  `::the_orchestration_supplement_holds_each_steps_call_in_order`,
   `skill_tests/operate.rs::the_orchestrator_playbook_asks_before_it_plans_and_plans_before_it_starts`),
   and an orchestrator session indexes that skill
   (`skill_documents.rs::an_orchestrator_session_indexes_the_orchestration_skill`).

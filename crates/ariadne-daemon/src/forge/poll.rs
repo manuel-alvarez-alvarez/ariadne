@@ -109,6 +109,8 @@ struct Handoff {
 struct Worker {
     identity: (String, String, String, String),
     public_url: Public,
+    webhook_enabled: bool,
+    interval: watch::Sender<Duration>,
     wake: Arc<Notify>,
     mode: watch::Sender<Mode>,
     task: tokio::task::JoinHandle<()>,
@@ -130,6 +132,14 @@ fn next_backoff(
         current.saturating_mul(2).min(cap)
     } else {
         current
+    }
+}
+/// The wait between timer fetches of one repository: its own interval in
+/// whole minutes, else the default `timeouts.forge_poll`.
+fn poll_interval(row: &ariadne_store::ForgeIntegration, timeouts: &Timeouts) -> Duration {
+    match row.poll_interval_minutes {
+        Some(minutes) if minutes > 0 => Duration::from_secs(minutes as u64 * 60),
+        _ => timeouts.forge_poll,
     }
 }
 impl Drop for Worker {
@@ -183,7 +193,8 @@ impl ForgePoll {
     }
 }
 
-/// Start the fetches: `timeouts.forge_poll` is the fallback timer, and
+/// Start the fetches: `timeouts.forge_poll` is the default timer of a
+/// repository with no interval of its own, and
 /// `timeouts.forge_details` bounds one detail fetch of a request.
 pub fn start(
     store: Store,
@@ -354,7 +365,11 @@ async fn sync(
         row.webhook_url.clone(),
         row.webhook_id,
     );
-    let reconcile_hook = workers.get(id).is_none_or(|w| &w.public_url != public_url);
+    let reconcile_hook = workers
+        .get(id)
+        .is_none_or(|w| &w.public_url != public_url || w.webhook_enabled != row.webhook_enabled);
+    let interval = poll_interval(&row, &timeouts);
+    let webhook_enabled = row.webhook_enabled;
     if reconcile_hook {
         match super::hooks::reconcile(store, cfg, row, public_url).await {
             Ok(current) => row = current,
@@ -370,8 +385,16 @@ async fn sync(
         Mode::Timer
     };
     if let Some(worker) = workers.get_mut(id) {
+        // Only a changed interval wakes the worker: every sync of an
+        // unchanged one would otherwise reset its failure backoff.
+        worker.interval.send_if_modified(|current| {
+            let changed = *current != interval;
+            *current = interval;
+            changed
+        });
         if reconcile_hook {
             worker.public_url = public_url.clone();
+            worker.webhook_enabled = webhook_enabled;
             worker.mode.send_replace(initial_mode);
             if before != (row.webhook_state, row.webhook_url, row.webhook_id) {
                 worker.wake.notify_one();
@@ -380,14 +403,18 @@ async fn sync(
     } else {
         let wake = Arc::new(Notify::new());
         let (mode, changes) = watch::channel(initial_mode);
+        let (interval, intervals) = watch::channel(interval);
         let task = tokio::spawn(worker(
             store.clone(),
             cfg.clone(),
             handoff.clone(),
             id.into(),
             timeouts,
-            wake.clone(),
-            changes,
+            Signals {
+                wake: wake.clone(),
+                mode: changes,
+                interval: intervals,
+            },
         ));
         workers.insert(
             id.into(),
@@ -397,6 +424,8 @@ async fn sync(
                 mode,
                 task,
                 public_url: public_url.clone(),
+                webhook_enabled,
+                interval,
             },
         );
     }
@@ -417,17 +446,30 @@ async fn stop_worker_then_clear_list(
     live.clear_list(repository_id)
 }
 
+/// What reaches a running worker: a wake, a change of fetch mode and a
+/// change of its timer interval.
+struct Signals {
+    wake: Arc<Notify>,
+    mode: watch::Receiver<Mode>,
+    interval: watch::Receiver<Duration>,
+}
+
 async fn worker(
     store: Store,
     cfg: Arc<Config>,
     handoff: Handoff,
     id: String,
     timeouts: Timeouts,
-    wake: Arc<Notify>,
-    mut mode: watch::Receiver<Mode>,
+    signals: Signals,
 ) {
-    let mut backoff = timeouts.forge_poll;
+    let Signals {
+        wake,
+        mut mode,
+        mut interval,
+    } = signals;
+    let mut backoff = *interval.borrow_and_update();
     loop {
+        let base = *interval.borrow();
         // `fetch` itself acquires its host's permit, on the integration it
         // rereads there and then — never on a host captured here, which a
         // repository's own remote can move past between one call and the
@@ -460,10 +502,7 @@ async fn worker(
             // The timer and the mode are both beside the point while the
             // forge itself says to wait: every wake until `until` folds
             // into the one fetch that runs once it passes.
-            let pause = (until - Utc::now())
-                .to_std()
-                .unwrap_or_default()
-                .max(timeouts.forge_poll);
+            let pause = (until - Utc::now()).to_std().unwrap_or_default().max(base);
             let deadline = Instant::now() + pause;
             loop {
                 tokio::select! {
@@ -479,8 +518,8 @@ async fn worker(
         }
         backoff = next_backoff(
             backoff,
-            timeouts.forge_poll,
-            timeouts.forge_poll_backoff_cap,
+            base,
+            timeouts.forge_poll_backoff_cap.max(base),
             fetched.is_ok(),
             timer_mode,
         );
@@ -500,6 +539,10 @@ async fn worker(
                 },
                 _ = tokio::time::sleep(backoff), if timer => break,
                 changed = mode.changed() => if changed.is_err() { return; },
+                changed = interval.changed() => {
+                    if changed.is_err() { return; }
+                    backoff = *interval.borrow_and_update();
+                },
             }
         }
     }
@@ -1035,6 +1078,8 @@ mod tests {
             webhook_error: None,
             webhook_last_delivery_at: None,
             fetch_error: None,
+            webhook_enabled: true,
+            poll_interval_minutes: None,
             detected_at: String::new(),
             updated_at: String::new(),
         }
@@ -1117,6 +1162,8 @@ mod tests {
                 integration.owner.clone(),
                 integration.name.clone(),
             ),
+            webhook_enabled: true,
+            interval: watch::channel(Duration::from_secs(300)).0,
             public_url: Public::default(),
             wake: Arc::new(Notify::new()),
             mode,

@@ -12,7 +12,7 @@ import { afterEach, expect, it } from "vitest"
 import type { AttentionItemDto } from "@/api"
 import { aSessionPage } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
-import { forgetHosts, stubHosts } from "@/test/hosts"
+import { forgetHosts, LOCAL, stubHosts } from "@/test/hosts"
 
 import { AttentionPopover } from "./attention-strip"
 
@@ -40,25 +40,28 @@ const TWO_FIELDS = {
   properties: { ...SINGLE.properties, note: { type: "string", title: "Note" } },
 }
 
-function open(schema: unknown) {
-  const seen = stubHosts({
-    local: {
-      "/v1/tasks": [],
-      "/v1/goals": [],
-      "/v1/sessions": aSessionPage([]),
-      "/v1/attention": { items: [ITEM], complete: true },
-      "/v1/sessions/S1/questions": [
-        {
-          id: "Q1",
-          session_id: "S1",
-          message: "Which database should I use?",
-          schema,
-          created_at: "2026-11-25T10:00:00Z",
-        },
-      ],
-      "/v1/sessions/S1/questions/Q1/answer": () => new Response(null, { status: 204 }),
+function open(schema: unknown, message = "Which database should I use?") {
+  const seen = stubHosts(
+    {
+      local: {
+        "/v1/tasks": [],
+        "/v1/goals": [],
+        "/v1/sessions": aSessionPage([]),
+        "/v1/attention": { items: [ITEM], complete: true },
+        "/v1/sessions/S1/questions": [
+          {
+            id: "Q1",
+            session_id: "S1",
+            message,
+            schema,
+            created_at: "2026-11-25T10:00:00Z",
+          },
+        ],
+        "/v1/sessions/S1/questions/Q1/answer": () => new Response(null, { status: 204 }),
+      },
     },
-  })
+    [LOCAL],
+  )
   renderScreen(<AttentionPopover />, { route: "/goals" })
   return seen
 }
@@ -108,4 +111,12 @@ it("answers one Claude question with its companion and Recommended badge in plac
       JSON.stringify({ action: "accept", content: { question_0: "Postgres (Recommended)" } }),
     ),
   )
+})
+
+it("highlights untrusted prose in an agent question", async () => {
+  open(SINGLE, "Choose <<<untrusted>>>**unsafe**<<<end untrusted>>> data")
+  fireEvent.click(await screen.findByRole("button", { name: /Needs attention, 1 items/ }))
+  const form = await screen.findByRole("region", { name: "Agent question" })
+  expect(within(form).getByText("unsafe").closest("mark")?.textContent).toBe("unsafe")
+  expect(form.textContent).not.toContain("<<<untrusted>>>")
 })

@@ -1619,6 +1619,8 @@ async fn a_review_request_recovery_has_given_up_on_carries_no_second_item() {
             remote: "origin".into(),
             enabled: true,
             login: Some("me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();
@@ -2161,6 +2163,8 @@ async fn a_ready_claim_on_a_disabled_integration_raises_no_readiness_item() {
             remote: "origin".into(),
             enabled: false,
             login: Some("ariadne-bot".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();
@@ -3271,4 +3275,106 @@ async fn two_escalated_comments_of_one_thread_at_one_time_raise_one_item() {
         found[0].id,
         format!("pull_request:escalated:{}:rc-1", pull.id)
     );
+}
+
+#[tokio::test]
+async fn a_planning_turn_without_a_question_needs_console_input() {
+    let h = harness().await;
+    let goal = h.planning_goal().await;
+    let session = h.orchestrator_session(&goal).await;
+    h.ingest(&session, "user_prompt_submit", serde_json::json!({}))
+        .await;
+    h.ingest(
+        &session,
+        "stop",
+        serde_json::json!({"stop_reason": "end_turn"}),
+    )
+    .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
+    assert!(list.items[0].summary.contains("asked in text"));
+    assert!(list.items[0].required_action.contains("console"));
+    h.ingest(&session, "user_prompt_submit", serde_json::json!({}))
+        .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.items.is_empty());
+    h.ingest(&session, "question", serde_json::json!({})).await;
+    h.ingest(&session, "question.resolved", serde_json::json!({}))
+        .await;
+    h.ingest(
+        &session,
+        "stop",
+        serde_json::json!({"stop_reason": "end_turn"}),
+    )
+    .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.items.is_empty());
+    h.ingest(&session, "user_prompt_submit", serde_json::json!({}))
+        .await;
+    h.ingest(
+        &session,
+        "stop",
+        serde_json::json!({"stop_reason": "cancelled"}),
+    )
+    .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.items.is_empty());
+}
+
+#[tokio::test]
+async fn planning_input_clears_when_planning_ends_and_excludes_failed_turns_and_other_seats() {
+    let h = harness().await;
+    let goal = h.planning_goal().await;
+    let session = h.orchestrator_session(&goal).await;
+    h.ingest(&session, "user_prompt_submit", serde_json::json!({}))
+        .await;
+    h.ingest(
+        &session,
+        "stop",
+        serde_json::json!({"stop_reason": "end_turn"}),
+    )
+    .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert_eq!(list.items.len(), 1);
+    // finalize_plan moves the goal out of planning before the turn stops.
+    h.store
+        .set_goal_status(&goal.id, ariadne_core::GoalStatus::Active)
+        .await
+        .unwrap();
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.items.is_empty());
+    h.ingest(&session, "user_prompt_submit", serde_json::json!({}))
+        .await;
+    h.ingest(
+        &session,
+        "stop",
+        serde_json::json!({"stop_reason": "end_turn"}),
+    )
+    .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.items.is_empty());
+
+    let h = harness().await;
+    let planning = h.planning_goal().await;
+    let failed = h.orchestrator_session(&planning).await;
+    h.ingest(&failed, "user_prompt_submit", serde_json::json!({}))
+        .await;
+    h.ingest(&failed, "session_end", serde_json::json!({}))
+        .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.items.is_empty());
+
+    let h = harness().await;
+    let cast = h.cast().await;
+    let agent = h.agent_session(&cast, "develop").await;
+    h.ingest(&agent, "user_prompt_submit", serde_json::json!({}))
+        .await;
+    h.ingest(
+        &agent,
+        "stop",
+        serde_json::json!({"stop_reason": "end_turn"}),
+    )
+    .await;
+    let list: AttentionListDto = h.get("/v1/attention").await;
+    assert!(list.items.is_empty());
 }

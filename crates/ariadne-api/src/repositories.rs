@@ -94,6 +94,11 @@ pub struct ForgeDto {
     pub enabled: bool,
     /// The account the forge CLI is signed in as, stored on enable.
     pub login: Option<String>,
+    /// Whether Ariadne registers a webhook for this repository. Off, the
+    /// repository polls on its timer.
+    pub webhook_enabled: bool,
+    /// Whole minutes between timer fetches, 1 to 60. Null means 5.
+    pub poll_interval_minutes: Option<u32>,
 }
 
 /// `POST /v1/forge/detect`: the checkout to probe.
@@ -126,6 +131,22 @@ pub struct ForgeDetectionDto {
 pub struct ForgeUpdate {
     #[serde(default)]
     pub enabled: Option<bool>,
+    /// Turn the webhook of this repository on or off.
+    #[serde(default)]
+    pub webhook: Option<bool>,
+    /// Whole minutes between timer fetches, 1 to 60; null resets to the
+    /// default. Absent = unchanged.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schema(value_type = Option<u32>, nullable = true)]
+    pub poll_interval_minutes: Option<Option<u32>>,
+}
+
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<u32>>, D::Error> {
+    Option::<u32>::deserialize(d).map(Some)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -371,62 +371,70 @@ function PullRequestHeader({
           <div className="flex items-center gap-2">
             {pull.state === "open" ? (
               <>
-                <ButtonGroup aria-label="Review">
-                  {reviewer ? (
-                    <>
+                {!settled ? (
+                  <Skeleton aria-label="Loading review actions" className="h-8 w-28" />
+                ) : (
+                  <ButtonGroup aria-label="Review">
+                    {reviewer ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          pending={ask.isPending}
+                          onClick={() => ask.mutate({ ...target(reviewer), asked: false })}
+                        >
+                          <BotOffIcon />
+                          Stop review
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          pending={round.isPending}
+                          onClick={() => round.mutate(target(reviewer))}
+                        >
+                          New turn
+                        </Button>
+                      </>
+                    ) : (
+                      <Button size="sm" disabled={!settled} onClick={() => setStarting(true)}>
+                        <BotIcon />
+                        Start review
+                      </Button>
+                    )}
+                  </ButtonGroup>
+                )}
+                {!settled ? (
+                  <Skeleton aria-label="Loading babysit actions" className="h-8 w-28" />
+                ) : (
+                  <ButtonGroup aria-label="Babysit">
+                    {!taskKeeper && babysitter ? (
                       <Button
                         variant="outline"
                         size="sm"
-                        pending={ask.isPending}
-                        onClick={() => ask.mutate({ ...target(reviewer), asked: false })}
+                        pending={babysit.isPending}
+                        onClick={() => babysit.mutate({ ...target(babysitter), asked: false })}
                       >
                         <BotOffIcon />
-                        Stop review
+                        Stop babysit
                       </Button>
+                    ) : null}
+                    {keeper ? (
                       <Button
                         variant="outline"
                         size="sm"
-                        pending={round.isPending}
-                        onClick={() => round.mutate(target(reviewer))}
+                        pending={keeperTurn.isPending}
+                        onClick={() => keeperTurn.mutate(target(keeper))}
                       >
                         New turn
                       </Button>
-                    </>
-                  ) : (
-                    <Button size="sm" disabled={!settled} onClick={() => setStarting(true)}>
-                      <BotIcon />
-                      Start review
-                    </Button>
-                  )}
-                </ButtonGroup>
-                <ButtonGroup aria-label="Babysit">
-                  {!taskKeeper && babysitter ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      pending={babysit.isPending}
-                      onClick={() => babysit.mutate({ ...target(babysitter), asked: false })}
-                    >
-                      <BotOffIcon />
-                      Stop babysit
-                    </Button>
-                  ) : null}
-                  {keeper ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      pending={keeperTurn.isPending}
-                      onClick={() => keeperTurn.mutate(target(keeper))}
-                    >
-                      New turn
-                    </Button>
-                  ) : (
-                    <Button size="sm" disabled={!settled} onClick={() => setBabysitting(true)}>
-                      <BotIcon />
-                      Start babysit
-                    </Button>
-                  )}
-                </ButtonGroup>
+                    ) : (
+                      <Button size="sm" disabled={!settled} onClick={() => setBabysitting(true)}>
+                        <BotIcon />
+                        Start babysit
+                      </Button>
+                    )}
+                  </ButtonGroup>
+                )}
               </>
             ) : null}
           </div>

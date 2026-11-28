@@ -29,6 +29,7 @@ import {
   type Control,
   Controller,
   type FieldError as FormFieldError,
+  type UseFormRegister,
   useForm,
 } from "react-hook-form"
 import { toast } from "sonner"
@@ -54,6 +55,12 @@ import { PERMISSION_MODES } from "./permission-modes"
 import { useCreateRepository, useDetectForge, useUpdateRepository } from "./queries"
 
 const PERMISSION_ITEMS = PERMISSION_MODES.map(({ value, label }) => ({ value, label }))
+
+/** The interval field as the API takes it: whole minutes, or null for the default. */
+function pollInterval(text: string): number | null {
+  const trimmed = text.trim()
+  return trimmed === "" ? null : Number(trimmed)
+}
 
 /** How long the path field sits still before a detection fires on its own. */
 const DETECT_SETTLES_MS = 400
@@ -82,6 +89,15 @@ const formSchema = z.object({
   permission_mode: z.enum(["auto", "ask", "learn", "ai"]),
   default_workflow: z.string().min(1, "Pick a workflow."),
   forge_enabled: z.boolean(),
+  webhook_enabled: z.boolean(),
+  /** Whole minutes between timer fetches; empty means the default of 5. */
+  poll_interval: z.string().refine(
+    (value) => {
+      const text = value.trim()
+      return text === "" || (/^\d+$/.test(text) && Number(text) >= 1 && Number(text) <= 60)
+    },
+    { message: "Enter whole minutes from 1 to 60, or leave it empty." },
+  ),
 })
 
 type RepositoryFormValues = z.infer<typeof formSchema>
@@ -93,6 +109,8 @@ const EMPTY_VALUES: RepositoryFormValues = {
   permission_mode: "auto",
   default_workflow: "",
   forge_enabled: false,
+  webhook_enabled: true,
+  poll_interval: "",
 }
 
 export function RepositoryFormDialog({
@@ -115,7 +133,9 @@ export function RepositoryFormDialog({
     resolver: zodResolver(formSchema),
     defaultValues: EMPTY_VALUES,
   })
-  const { control, formState, handleSubmit, register, reset, setError, setValue } = form
+  const { control, formState, handleSubmit, register, reset, setError, setValue, watch } = form
+  const forgeEnabled = watch("forge_enabled")
+  const webhookEnabled = watch("webhook_enabled")
 
   // Registering probes the path itself — nothing is detected server-side
   // until the daemon has opened the checkout. Editing skips this: the
@@ -198,6 +218,8 @@ export function RepositoryFormDialog({
         permission_mode: repository.permission_mode,
         default_workflow: repository.default_workflow ?? "",
         forge_enabled: repository.forge?.enabled ?? false,
+        webhook_enabled: repository.forge?.webhook_enabled ?? true,
+        poll_interval: repository.forge?.poll_interval_minutes?.toString() ?? "",
       })
       return
     }
@@ -211,7 +233,19 @@ export function RepositoryFormDialog({
     const workflow = pickedWorkflow(values.default_workflow)
     try {
       if (repository) {
-        const forgeMoved = repository.forge && values.forge_enabled !== repository.forge.enabled
+        const stored = repository.forge
+        const interval = pollInterval(values.poll_interval)
+        const forgeUpdate = {
+          ...(stored && values.forge_enabled !== stored.enabled
+            ? { enabled: values.forge_enabled }
+            : {}),
+          ...(stored && values.webhook_enabled !== stored.webhook_enabled
+            ? { webhook: values.webhook_enabled }
+            : {}),
+          ...(stored && interval !== (stored.poll_interval_minutes ?? null)
+            ? { poll_interval_minutes: interval }
+            : {}),
+        }
         await updateRepository.mutateAsync({
           id: repository.id,
           body: {
@@ -223,7 +257,7 @@ export function RepositoryFormDialog({
             description,
             permission_mode: values.permission_mode,
             default_workflow: workflow,
-            ...(forgeMoved ? { forge: { enabled: values.forge_enabled } } : {}),
+            ...(Object.keys(forgeUpdate).length > 0 ? { forge: forgeUpdate } : {}),
           },
         })
         toast.success("Repository updated", { description: path })
@@ -235,7 +269,19 @@ export function RepositoryFormDialog({
           description: description || null,
           permission_mode: values.permission_mode,
           default_workflow: workflow,
-          ...(detected ? { forge: { enabled: values.forge_enabled } } : {}),
+          ...(detected
+            ? {
+                forge: {
+                  enabled: values.forge_enabled,
+                  ...(values.forge_enabled && !values.webhook_enabled ? { webhook: false } : {}),
+                  ...(values.forge_enabled && pollInterval(values.poll_interval) !== null
+                    ? {
+                        poll_interval_minutes: pollInterval(values.poll_interval),
+                      }
+                    : {}),
+                },
+              }
+            : {}),
         })
         toast.success("Repository registered", { description: created.path })
       }
@@ -423,6 +469,14 @@ export function RepositoryFormDialog({
           {forge ? (
             <ForgeSwitch forge={forge} control={control} error={formState.errors.forge_enabled} />
           ) : null}
+          {forge && forgeEnabled ? (
+            <WebhookFields
+              control={control}
+              intervalError={formState.errors.poll_interval}
+              intervalField={register("poll_interval")}
+              webhookEnabled={webhookEnabled}
+            />
+          ) : null}
         </FormDialogBody>
       </FormDialogContent>
     </FormDialog>
@@ -482,5 +536,63 @@ function ForgeSwitch({
         </FieldDescription>
       )}
     </Field>
+  )
+}
+
+/**
+ * The webhook of an enabled integration (spec 027): a switch, and the minutes
+ * between timer fetches while the repository polls. Empty means the default.
+ */
+function WebhookFields({
+  control,
+  intervalField,
+  intervalError,
+  webhookEnabled,
+}: {
+  control: Control<RepositoryFormValues>
+  intervalField: ReturnType<UseFormRegister<RepositoryFormValues>>
+  intervalError: FormFieldError | undefined
+  webhookEnabled: boolean
+}) {
+  return (
+    <>
+      <Field>
+        <div className="flex items-center gap-3">
+          <Controller
+            control={control}
+            name="webhook_enabled"
+            render={({ field }) => (
+              <Switch
+                id="forge-webhook"
+                aria-label="Webhook"
+                checked={field.value}
+                onCheckedChange={(checked) => field.onChange(checked)}
+              />
+            )}
+          />
+          <FieldLabel htmlFor="forge-webhook">Webhook</FieldLabel>
+        </div>
+        <FieldDescription>
+          {webhookEnabled
+            ? "Ariadne registers a hook on the forge, so changes arrive the moment they happen. It polls on the interval below while the hook is down."
+            : "Ariadne registers no hook for this repository, and deletes the one it registered. It polls on the interval below."}
+        </FieldDescription>
+      </Field>
+      <Field data-invalid={intervalError ? true : undefined}>
+        <FieldLabel htmlFor="forge-poll-interval">Poll interval (minutes)</FieldLabel>
+        <Input
+          id="forge-poll-interval"
+          inputMode="numeric"
+          placeholder="5"
+          aria-invalid={intervalError ? true : undefined}
+          {...intervalField}
+        />
+        {intervalError ? (
+          <FieldError errors={[intervalError]} />
+        ) : (
+          <FieldDescription>From 1 to 60. Empty means 5.</FieldDescription>
+        )}
+      </Field>
+    </>
   )
 }

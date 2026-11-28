@@ -262,7 +262,7 @@ fn a_turn_shows_its_prompt_one_activity_line_and_its_answer() {
     let screen = draw(&app, WIDTH, HEIGHT);
 
     assert_eq!(screen[0], "❯ Run the tests");
-    assert_eq!(screen[1], "  ▸ ✓ 2 steps · 1 tool call · 2s");
+    assert_eq!(screen[1], "  ▸ ✓ 2s · 2 steps");
     assert_eq!(screen[2], "  All tests pass.");
     assert_eq!(screen[3], "");
 }
@@ -282,7 +282,7 @@ fn a_running_turn_shows_its_last_steps_live() {
     let screen = draw(&app, WIDTH, HEIGHT);
     assert_eq!(count(&screen, "First"), 0, "{screen:#?}");
     assert!(
-        screen[2].starts_with("    ✓ $ Second · Second subject  2s"),
+        screen[2] == flush("    ✓ $ Second · Second subject", "2s"),
         "{screen:#?}"
     );
     assert!(
@@ -391,9 +391,9 @@ async fn an_open_turn_shows_a_row_per_step_with_its_status_kind_subject_and_dura
     )
     .await;
 
-    assert_eq!(screen[1], "  ▾ ✓ 2 steps · 1 tool call · 2s");
-    assert_eq!(screen[2], "    ✓ $ Bash · Bash subject  2s");
-    assert_eq!(screen[3], "    ✗ $ Edit · Edit subject  2s");
+    assert_eq!(screen[1], "  ▾ ✓ 2s · 2 steps");
+    assert_eq!(screen[2], flush("    ✓ $ Bash · Bash subject", "2s"));
+    assert_eq!(screen[3], flush("    ✗ $ Edit · Edit subject", "2s"));
     assert_eq!(screen[4], "    ✓ message    Done.");
     assert_eq!(screen[5], "  Fixed.");
 }
@@ -1290,7 +1290,7 @@ fn the_farewell_prints_at_most_twenty_folded_turns_and_a_hint_to_the_log() {
         "the oldest turn is left out: {said}"
     );
     assert!(
-        said.starts_with("10:00:00  USER  prompt 2\n  completed · 2 steps · 1 tool call\n"),
+        said.starts_with("10:00:00  USER  prompt 2\n  completed · 2 steps\n"),
         "{said}"
     );
     assert_eq!(said.matches("USER").count(), 20);
@@ -1461,6 +1461,16 @@ fn buffer(app: &App, width: u16, height: u16) -> Buffer {
     terminal.backend().buffer().clone()
 }
 
+/// `left`, then `tail` against the right edge of a screen `WIDTH` wide.
+fn flush(left: &str, tail: &str) -> String {
+    flush_at(left, tail, WIDTH)
+}
+
+fn flush_at(left: &str, tail: &str, width: u16) -> String {
+    let used = left.chars().count() + tail.chars().count();
+    format!("{left}{}{tail}", " ".repeat(usize::from(width) - used))
+}
+
 /// The style of the first cell of `text` on the screen.
 fn style_of(buffer: &Buffer, text: &str) -> ratatui::style::Style {
     let screen = rows(buffer);
@@ -1485,13 +1495,13 @@ async fn an_open_command_shows_the_command_and_its_output_folded_then_whole() {
         )],
         ..Stub::default()
     };
-    let calls = vec![call("c1", "t1", "Bash", "completed")];
+    let mut bash = call("c1", "t1", "Bash", "completed");
+    bash["subject"] = json!("cargo test");
+    let calls = vec![bash];
 
     let (_, screen) = opened(&mut stub, calls.clone(), vec![key(KeyCode::Enter)]).await;
-    assert!(
-        screen.iter().any(|row| row == "      $ cargo test"),
-        "{screen:#?}"
-    );
+    // The row shows the whole command, so the detail does not say it again.
+    assert_eq!(count(&screen, "$ cargo test"), 0, "{screen:#?}");
     assert!(
         screen.iter().any(|row| row == "      in /repo"),
         "{screen:#?}"
@@ -1865,13 +1875,13 @@ async fn a_subagent_in_main_is_one_summary_row_that_does_not_open_in_place() {
     assert!(
         screen
             .iter()
-            .any(|row| row == "    ✓ ↳ Explore  3 steps · 1m 04s"),
+            .any(|row| *row == flush("    ✓ ↳ Explore", "3 steps · 1m 04s")),
         "{screen:#?}"
     );
     assert!(
         screen
             .iter()
-            .any(|row| row == "    ✗ ↳ Review  3 steps · 59s"),
+            .any(|row| *row == flush("    ✗ ↳ Review", "3 steps · 59s")),
         "{screen:#?}"
     );
     let mut stub = tabbed_stub();
@@ -1890,7 +1900,7 @@ async fn enter_on_a_summary_row_opens_the_tab_of_its_subagent_with_the_rows_of_m
     assert!(
         screen
             .iter()
-            .any(|row| row == "    ✓ $ Grep · Grep subject  2s"),
+            .any(|row| *row == flush("    ✓ $ Grep · Grep subject", "2s")),
         "the step row of main, with no name of its lane: {screen:#?}"
     );
     assert_eq!(count(&screen, "Fix it"), 0, "{screen:#?}");
@@ -2142,8 +2152,30 @@ async fn an_info_note_shows_in_the_open_turn_and_not_in_the_folded_one() {
     );
 }
 
-#[tokio::test]
-async fn an_answered_permission_is_a_mark_on_the_row_of_its_call() {
+/// The style of the permission mark, the first cell of the four-column tail
+/// on the row of the Bash call.
+fn tail_mark_style(app: &App, width: u16) -> ratatui::style::Style {
+    let drawn = buffer(app, width, HEIGHT);
+    let y = rows(&drawn)
+        .iter()
+        .position(|row| row.contains("Bash · Bash subject"))
+        .unwrap();
+    drawn[(width - 4, u16::try_from(y).unwrap())].style()
+}
+
+/// A turn whose one call carries a permission answered as given.
+async fn answered_call(decided_by: &str, option: &str, open_detail: bool) -> (App, Vec<String>) {
+    let label = if option == "no" { "Reject" } else { "Allow" };
+    answered_call_as(decided_by, option, label, open_detail).await
+}
+
+/// The same, with the label the answer carries.
+async fn answered_call_as(
+    decided_by: &str,
+    option: &str,
+    label: &str,
+    open_detail: bool,
+) -> (App, Vec<String>) {
     let mut bash = call("c1", "t1", "Bash", "completed");
     bash["permission"] = json!("p1");
     let answered = step(
@@ -2151,17 +2183,154 @@ async fn an_answered_permission_is_a_mark_on_the_row_of_its_call() {
         "p1",
         "t1",
         json!({"tool_call_id": "c1", "state": "answered",
-               "answer": {"option_id": "yes", "label": "Allow", "decided_by": "ai"}}),
+               "options": [{"id": "yes", "name": "Allow", "kind": "allow_once"},
+                           {"id": "no", "name": "Reject", "kind": "reject_once"}],
+               "answer": {"option_id": option, "label": label, "decided_by": decided_by},
+               "ai": "the command only reads", "learned": "command"}),
     );
-    let (app, screen) = opened(&mut Stub::default(), vec![bash, answered], vec![]).await;
-    assert_eq!(count(&screen, "permission"), 0, "{screen:#?}");
+    let mut stub = Stub {
+        details: vec![detail_of(
+            "c1",
+            "execute",
+            json!({"type": "command", "command": "cargo test", "cwd": null,
+                   "output": null, "exit_code": 0, "truncated": false}),
+        )],
+        ..Stub::default()
+    };
+    let events = if open_detail {
+        vec![key(KeyCode::Enter)]
+    } else {
+        vec![]
+    };
+    opened(&mut stub, vec![bash, answered], events).await
+}
+
+#[tokio::test]
+async fn an_answered_permission_is_a_mark_on_the_row_of_its_call() {
+    // An allow by the AI or by the user is a dim mark before the duration.
+    for by in ["ai", "console"] {
+        let (mut app, screen) = answered_call(by, "yes", false).await;
+        assert_eq!(count(&screen, "permission"), 0, "{screen:#?}");
+        // The cursor leaves the row, which a reversed row would flatten.
+        app.event(key(KeyCode::Esc));
+        let screen = draw(&app, 80, HEIGHT);
+        assert!(
+            screen
+                .iter()
+                .any(|row| *row == flush_at("    ✓ $ Bash · Bash subject", "✓ 2s", 80)),
+            "{by}: {screen:#?}"
+        );
+        let mark = tail_mark_style(&app, 80);
+        assert!(mark.add_modifier.contains(ratatui::style::Modifier::DIM));
+        assert!(matches!(mark.fg, None | Some(ratatui::style::Color::Reset)));
+    }
+
+    // An allow that `auto` or a learned permission gave has no mark.
+    for by in ["auto", "learned"] {
+        let (app, _) = answered_call(by, "yes", false).await;
+        let screen = draw(&app, 80, HEIGHT);
+        assert!(
+            screen
+                .iter()
+                .any(|row| *row == flush_at("    ✓ $ Bash · Bash subject", "2s", 80)),
+            "{by}: {screen:#?}"
+        );
+    }
+
+    // A rejection is a red mark.
+    let (mut app, _) = answered_call("ai", "no", false).await;
+    app.event(key(KeyCode::Esc));
     let screen = draw(&app, 80, HEIGHT);
     assert!(
         screen
             .iter()
-            .any(|row| row == "    ✓ $ Bash · Bash subject  ✓ Allow · by ai  2s"),
+            .any(|row| *row == flush_at("    ✓ $ Bash · Bash subject", "✗ 2s", 80)),
         "{screen:#?}"
     );
+    let mark = tail_mark_style(&app, 80);
+    assert_eq!(mark.fg, Some(ratatui::style::Color::Red));
+}
+
+#[tokio::test]
+async fn a_learn_mode_rejection_with_an_id_of_the_agent_is_still_a_red_mark() {
+    // An id of the agent that equals the id of the Allow option shown.
+    let (mut app, _) = answered_call_as("console", "yes", "Reject", false).await;
+    app.event(key(KeyCode::Esc));
+    let screen = draw(&app, 80, HEIGHT);
+    assert!(
+        screen
+            .iter()
+            .any(|row| *row == flush_at("    ✓ $ Bash · Bash subject", "✗ 2s", 80)),
+        "{screen:#?}"
+    );
+    let (mut app, _) = answered_call_as("console", "agent-reject-once", "Reject", false).await;
+    app.event(key(KeyCode::Esc));
+    let screen = draw(&app, 80, HEIGHT);
+    assert!(
+        screen
+            .iter()
+            .any(|row| *row == flush_at("    ✓ $ Bash · Bash subject", "✗ 2s", 80)),
+        "{screen:#?}"
+    );
+}
+
+#[tokio::test]
+async fn an_ask_mode_rejection_whose_option_shares_a_name_is_still_a_red_mark() {
+    let mut bash = call("c1", "t1", "Bash", "completed");
+    bash["permission"] = json!("p1");
+    let answered = step(
+        "permission",
+        "p1",
+        "t1",
+        json!({"tool_call_id": "c1", "state": "answered",
+               "options": [{"id": "yes", "name": "Continue", "kind": "allow_once"},
+                           {"id": "no", "name": "Continue", "kind": "reject_once"}],
+               "answer": {"option_id": "no", "label": "Continue", "decided_by": "console"}}),
+    );
+    let (mut app, _) = opened(&mut Stub::default(), vec![bash, answered], vec![]).await;
+    app.event(key(KeyCode::Esc));
+    let screen = draw(&app, 80, HEIGHT);
+    assert!(
+        screen
+            .iter()
+            .any(|row| *row == flush_at("    ✓ $ Bash · Bash subject", "✗ 2s", 80)),
+        "{screen:#?}"
+    );
+}
+
+#[test]
+fn a_row_whose_subject_has_no_room_keeps_its_whole_tail() {
+    let stat = json!({"diff_stat": {"files": 1, "added": 12, "removed": 3}});
+    let app = open_turn(vec![kinded("a", "edit", "completed", stat)]);
+
+    let screen = draw(&app, 18, HEIGHT);
+
+    assert!(
+        screen
+            .iter()
+            .any(|row| row.trim_end().ends_with("+12 -3 2s")),
+        "{screen:#?}"
+    );
+    assert!(screen.iter().all(|row| !row.contains('…')), "{screen:#?}");
+}
+
+#[test]
+fn a_daemon_prompt_keeps_an_issue_number_and_strips_a_real_heading() {
+    let app = app_with(vec![briefed("#430 needs review")]);
+    assert_eq!(draw(&app, WIDTH, HEIGHT)[0], "» daemon #430 needs review");
+}
+
+#[tokio::test]
+async fn the_open_detail_of_a_call_shows_its_permission_answer_and_each_decider() {
+    let (_, screen) = answered_call("ai", "yes", true).await;
+
+    for line in [
+        "      permission: Allow · by ai",
+        "      ai: the command only reads",
+        "      learned: command",
+    ] {
+        assert!(screen.iter().any(|row| row == line), "{line}: {screen:#?}");
+    }
 }
 
 fn with_state() -> App {
@@ -2649,7 +2818,7 @@ async fn an_open_turn_shows_its_notices_and_their_count_once_whether_its_steps_r
         vec![ctrl('o')],
     )
     .await;
-    assert_eq!(screen[1], "  ▾ ✓ 2 steps · 1 tool call · 2s");
+    assert_eq!(screen[1], "  ▾ ✓ 2s · 2 steps");
     assert_eq!(
         screen[2], "    ! note       disk almost full",
         "{screen:#?}"
@@ -2689,7 +2858,11 @@ async fn an_open_turn_shows_its_notices_and_their_count_once_whether_its_steps_r
     .await;
     assert_eq!(count(&screen, "disk almost full"), 1, "{screen:#?}");
     assert_eq!(count(&screen, "2 more notices"), 1, "{screen:#?}");
-    assert_eq!(screen[5], "    ✓ $ Bash · Bash subject  2s", "{screen:#?}");
+    assert_eq!(
+        screen[5],
+        flush("    ✓ $ Bash · Bash subject", "2s"),
+        "{screen:#?}"
+    );
 }
 
 #[test]
@@ -2804,7 +2977,7 @@ fn an_update_of_a_call_changes_its_row_in_place() {
     assert!(
         screen
             .iter()
-            .any(|row| row == "    ✓ $ Work · Work subject  2s"),
+            .any(|row| *row == flush("    ✓ $ Work · Work subject", "2s")),
         "{screen:#?}"
     );
 }
@@ -3029,8 +3202,8 @@ fn a_tool_row_starts_with_its_state_mark_and_the_icon_of_its_kind_and_prints_no_
 
     let screen = draw(&app, WIDTH, HEIGHT);
 
-    assert_eq!(screen[2], "    ✓ $ execute a · a.rs  2s");
-    assert_eq!(screen[3], "    ✓ ∴ think b · b.rs  2s");
+    assert_eq!(screen[2], flush("    ✓ $ execute a · a.rs", "2s"));
+    assert_eq!(screen[3], flush("    ✓ ∴ think b · b.rs", "2s"));
     assert_eq!(count(&screen, "execute    "), 0, "{screen:#?}");
 }
 
@@ -3040,7 +3213,7 @@ fn a_kind_with_no_icon_shows_the_fallback_icon() {
 
     let screen = draw(&app, WIDTH, HEIGHT);
 
-    assert_eq!(screen[2], "    ✓ ◆ teleport a · a.rs  2s");
+    assert_eq!(screen[2], flush("    ✓ ◆ teleport a · a.rs", "2s"));
 }
 
 #[test]
@@ -3057,8 +3230,8 @@ fn consecutive_read_and_search_steps_show_as_one_group_row_of_their_subjects() {
 
     assert_eq!(screen[2], "    ✓ ☰ a.rs, b.rs, c.rs");
     // A step of another kind ends the group, and a group of one is a row.
-    assert_eq!(screen[3], "    ✓ $ execute d · d.rs  2s");
-    assert_eq!(screen[4], "    ✓ ≡ read e · e.rs  2s");
+    assert_eq!(screen[3], flush("    ✓ $ execute d · d.rs", "2s"));
+    assert_eq!(screen[4], flush("    ✓ ≡ read e · e.rs", "2s"));
 }
 
 #[test]
@@ -3109,8 +3282,8 @@ fn enter_on_a_group_row_opens_its_steps_as_rows_that_open_their_detail() {
     app.event(key(KeyCode::Enter));
     let screen = draw(&app, WIDTH, HEIGHT);
     assert_eq!(screen[2], "    ✓ ≡ a.rs, b.rs");
-    assert_eq!(screen[3], "      ✓ ≡ read a · a.rs  2s");
-    assert_eq!(screen[4], "      ✓ ≡ read b · b.rs  2s");
+    assert_eq!(screen[3], flush("      ✓ ≡ read a · a.rs", "2s"));
+    assert_eq!(screen[4], flush("      ✓ ≡ read b · b.rs", "2s"));
 
     app.event(key(KeyCode::Down));
     app.event(key(KeyCode::Enter));
@@ -3129,9 +3302,9 @@ fn an_edit_row_shows_its_subject_and_the_lines_it_added_and_removed() {
 
     let screen = draw(&app, WIDTH, HEIGHT);
 
-    assert_eq!(screen[2], "    ✓ ✎ edit a · a.rs  +12 -3  2s");
-    assert_eq!(screen[3], "    ✓ $ execute b · b.rs  2s");
-    assert_eq!(screen[4], "    ✓ ✎ edit c · c.rs  2s");
+    assert_eq!(screen[2], flush("    ✓ ✎ edit a · a.rs", "+12 -3 2s"));
+    assert_eq!(screen[3], flush("    ✓ $ execute b · b.rs", "2s"));
+    assert_eq!(screen[4], flush("    ✓ ✎ edit c · c.rs", "2s"));
 }
 
 #[test]
@@ -3283,6 +3456,57 @@ async fn text_details_keep_plain_lines_and_syntax_while_highlighting_untrusted_t
     }
 }
 
+/// A turn the daemon opened with `prompt`, which ran two steps.
+fn briefed(prompt: &str) -> Value {
+    let mut turn = done("t1", "", "Done.");
+    turn["prompt"] = json!({"id": "t1", "source": "daemon", "prompt_kind": "agent_resume",
+                            "text": prompt, "content": [{"type": "text", "text": prompt}]});
+    turn
+}
+
+#[test]
+fn a_daemon_prompt_shows_its_first_line_with_text_and_opens_whole_as_markdown() {
+    let mut app = app_with(vec![briefed("\n## Fix the lint\n\n- one\n- two")]);
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(screen[0], "» daemon Fix the lint", "{screen:#?}");
+
+    app.event(key(KeyCode::Tab));
+    app.event(key(KeyCode::Up));
+    assert_eq!(app.cursor, Some(Item::Prompt("t1".into())));
+    app.event(key(KeyCode::Enter));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(screen[0], "» daemon Fix the lint", "{screen:#?}");
+    assert_eq!(count(&screen, "Fix the lint"), 2, "{screen:#?}");
+    assert_eq!(count(&screen, "• two"), 1, "{screen:#?}");
+
+    app.event(key(KeyCode::Left));
+    let screen = draw(&app, WIDTH, HEIGHT);
+    assert_eq!(count(&screen, "• two"), 0, "{screen:#?}");
+}
+
+#[test]
+fn the_line_at_the_cursor_is_reversed_across_the_width_in_one_style() {
+    let mut app = app_with(vec![done("t1", "Run it", "Ok.")]);
+    app.event(key(KeyCode::Tab));
+
+    let drawn = buffer(&app, WIDTH, HEIGHT);
+
+    for x in 0..WIDTH {
+        let style = drawn[(x, 1)].style();
+        assert!(
+            style
+                .add_modifier
+                .contains(ratatui::style::Modifier::REVERSED),
+            "column {x}"
+        );
+        assert!(
+            matches!(style.fg, None | Some(ratatui::style::Color::Reset)),
+            "column {x}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn copying_untrusted_prose_keeps_its_original_delimiters() {
     let mut app = App::new("s1");
@@ -3305,4 +3529,210 @@ async fn copying_untrusted_prose_keeps_its_original_delimiters() {
     assert_eq!(copies.len(), 1);
     assert!(copies[0].contains("<<<untrusted>>>prompt<<<end untrusted>>>"));
     assert!(copies[0].contains("<<<untrusted>>>answer<<<end untrusted>>>"));
+}
+
+#[test]
+fn an_open_turn_does_not_show_the_message_step_that_is_its_answer_as_a_row() {
+    let mut finished = done("t1", "Go", "Ok.");
+    finished["answer_step_id"] = json!("m1");
+    let mut app = app_with(vec![finished]);
+    app.steps_read(
+        "t1".into(),
+        vec![
+            kinded("a", "execute", "completed", json!({})),
+            serde_json::from_value(step(
+                "message",
+                "m1",
+                "t1",
+                json!({"content": [{"type": "text", "text": "Ok."}]}),
+            ))
+            .unwrap(),
+        ],
+    );
+    app.event(ctrl('o'));
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+
+    assert_eq!(count(&screen, "message"), 0, "{screen:#?}");
+    assert_eq!(count(&screen, "Ok."), 1, "{screen:#?}");
+    assert_eq!(count(&screen, "execute a"), 1, "{screen:#?}");
+}
+
+#[test]
+fn a_step_row_shows_the_first_line_of_its_title_and_the_subject_only_beside_a_title_without_it() {
+    let multi = kinded(
+        "a",
+        "execute",
+        "completed",
+        json!({"title": "cargo test\n--all"}),
+    );
+    let contained = kinded(
+        "b",
+        "read",
+        "completed",
+        json!({"title": "Read src/a.rs", "subject": "src/a.rs"}),
+    );
+    let app = open_turn(vec![multi, contained]);
+
+    let screen = draw(&app, WIDTH, HEIGHT);
+
+    assert_eq!(
+        screen[2],
+        flush("    ✓ $ cargo test · a.rs", "2s"),
+        "{screen:#?}"
+    );
+    assert_eq!(
+        screen[3],
+        flush("    ✓ ≡ Read src/a.rs", "2s"),
+        "{screen:#?}"
+    );
+}
+
+#[tokio::test]
+async fn an_open_command_shows_the_command_only_when_its_row_cut_it() {
+    let mut cut = call("c1", "t1", "Bash", "completed");
+    cut["subject"] = json!("cargo test\n--all");
+    let mut stub = Stub {
+        details: vec![detail_of(
+            "c1",
+            "execute",
+            json!({"type": "command", "command": "cargo test --all", "cwd": null,
+                   "output": null, "exit_code": 0, "truncated": false}),
+        )],
+        ..Stub::default()
+    };
+
+    let (_, screen) = opened(&mut stub, vec![cut], vec![key(KeyCode::Enter)]).await;
+
+    assert!(
+        screen.iter().any(|row| row == "      $ cargo test --all"),
+        "{screen:#?}"
+    );
+}
+
+#[test]
+fn a_turn_line_of_any_state_shows_the_duration_first_and_only_it_when_it_has_no_steps() {
+    let empty = |state: &str| {
+        turn(
+            "t1",
+            state,
+            json!({"prompt": {"id": "t1", "source": "console", "prompt_kind": null,
+                              "content": [{"type": "text", "text": "Go"}]},
+                   "ended_at": "2026-11-27T10:00:05Z"}),
+        )
+    };
+    let stepped = |state: &str| {
+        let mut value = empty(state);
+        value["activity"] = json!({"steps": 3, "tool_calls": 3, "files_changed": 0, "failed": 1,
+                                   "cancelled": 0, "thoughts": 0, "subagents": 0});
+        value
+    };
+    for (state, mark) in [("failed", "✗"), ("cancelled", "⊘"), ("interrupted", "⊘")] {
+        let screen = draw(&app_with(vec![stepped(state)]), WIDTH, HEIGHT);
+        assert_eq!(
+            screen[1],
+            format!("  ▸ {mark} 5s · 3 steps · 1 failed"),
+            "{state}"
+        );
+        let screen = draw(&app_with(vec![empty(state)]), WIDTH, HEIGHT);
+        assert_eq!(screen[1], format!("  ▸ {mark} 5s"), "{state}");
+    }
+}
+
+#[tokio::test]
+async fn an_open_command_shows_the_command_when_its_multiline_title_lost_lines_to_its_row() {
+    let mut cut = call("c1", "t1", "cargo test\n--all", "completed");
+    cut["subject"] = json!(null);
+    let mut stub = Stub {
+        details: vec![detail_of(
+            "c1",
+            "execute",
+            json!({"type": "command", "command": "cargo test\n--all", "cwd": null,
+                   "output": null, "exit_code": 0, "truncated": false}),
+        )],
+        ..Stub::default()
+    };
+
+    let (_, screen) = opened(&mut stub, vec![cut], vec![key(KeyCode::Enter)]).await;
+
+    assert!(
+        screen.iter().any(|row| row == "      $ cargo test"),
+        "{screen:#?}"
+    );
+    assert!(screen.iter().any(|row| row == "      --all"), "{screen:#?}");
+}
+
+#[tokio::test]
+async fn the_raw_view_of_a_call_still_shows_its_permission_answer_and_deciders() {
+    let (_, screen) = answered_call("ai", "yes", true).await;
+    let (mut app, _) = answered_call("ai", "yes", true).await;
+    app.event(key(KeyCode::Char('r')));
+    let raw = draw(&app, WIDTH, 60);
+
+    assert!(
+        screen
+            .iter()
+            .any(|row| row.contains("permission: Allow · by ai"))
+    );
+    assert!(
+        raw.iter()
+            .any(|row| row.contains("permission: Allow · by ai")),
+        "{raw:#?}"
+    );
+    assert!(
+        raw.iter().any(|row| row.contains("learned: command")),
+        "{raw:#?}"
+    );
+}
+
+#[tokio::test]
+async fn an_unrelated_second_title_line_does_not_make_the_detail_repeat_a_whole_command() {
+    let mut run = call("c1", "t1", "Run\nadditional context", "completed");
+    run["subject"] = json!("cargo test");
+    let mut stub = Stub {
+        details: vec![detail_of(
+            "c1",
+            "execute",
+            json!({"type": "command", "command": "cargo test", "cwd": null,
+                   "output": null, "exit_code": 0, "truncated": false}),
+        )],
+        ..Stub::default()
+    };
+
+    let (_, screen) = opened(&mut stub, vec![run], vec![key(KeyCode::Enter)]).await;
+
+    assert_eq!(count(&screen, "$ cargo test"), 0, "{screen:#?}");
+    assert_eq!(count(&screen, "cargo test"), 1, "{screen:#?}");
+}
+
+#[tokio::test]
+async fn a_call_whose_detail_failed_still_shows_its_permission_answer_and_deciders() {
+    let mut bash = call("c1", "t1", "Bash", "completed");
+    bash["permission"] = json!("p1");
+    let answered = step(
+        "permission",
+        "p1",
+        "t1",
+        json!({"tool_call_id": "c1", "state": "answered",
+               "options": [{"id": "yes", "name": "Allow", "kind": "allow_once"}],
+               "answer": {"option_id": "yes", "label": "Allow", "decided_by": "ai"},
+               "ai": "the command only reads", "learned": "command"}),
+    );
+
+    // The stub holds no detail for the call, so the read fails.
+    let (_, screen) = opened(
+        &mut Stub::default(),
+        vec![bash, answered],
+        vec![key(KeyCode::Enter)],
+    )
+    .await;
+
+    assert_eq!(count(&screen, "no detail for c1"), 1, "{screen:#?}");
+    for line in [
+        "      permission: Allow · by ai",
+        "      ai: the command only reads",
+        "      learned: command",
+    ] {
+        assert!(screen.iter().any(|row| row == line), "{line}: {screen:#?}");
+    }
 }

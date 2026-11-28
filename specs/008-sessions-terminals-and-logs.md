@@ -118,13 +118,17 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
     A drop, a `resync`, or an update that skips a revision shows `reconnecting` and dials the stream again.
     The next snapshot replaces the view. Thus a reconnect shows no item two times.
 41. The transcript shows each turn as its prompt, one activity line and its answer.
-    The activity line has the fold mark, the state mark, the counts of the turn and its duration.
-    It prints no state word for a completed turn: the mark says it.
-    The answer is markdown and appears while the turn runs. A daemon prompt shows its first line only.
+    The activity line has the fold mark, the state mark, the duration, then the count of steps, then each of the files changed, failed, cancelled and subagents counts only when it is above zero. A turn with no steps shows the duration only.
+    `ariadne session logs` prints the same counts.
+    It prints no state word, for any state of the turn: the mark says it. A running, failed, cancelled or interrupted turn follows the same order.
+    The answer is markdown and appears while the turn runs.
+    The line of a daemon prompt shows the first line of the prompt that has text, without its Markdown block mark.
+    The cursor reaches that line. Enter on it opens the whole prompt in place as Markdown, and Left closes it. A typed prompt shows whole.
     A folded running turn shows its last three steps, live.
     The latest message supplies the running answer as text arrives. Its step row keeps the status without repeating the answer.
 42. An open turn shows a row for each step under its activity line.
-    A row has the status mark, the kind, the subject and the duration.
+    A row has the status mark, the kind, the first line of the title and the tail (rule 59).
+    The turn's `answer_step_id` names the message step that is the answer of the turn. An open turn shows no row for it.
     The kind of a tool call is the icon of its kind, and its row prints no kind word (rule 59).
     The console reads the complete steps from the steps route (040), including when an open turn finishes.
 43. The screen has two zones: the transcript and the input. The input zone has the keys at the start.
@@ -136,7 +140,7 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
     Escape cancels the running turn.
     Tab completes the pick while the suggestion list is open, and moves between the questions of a form.
 45. In the transcript zone, Up, Down, `j` and `k` move the cursor between turns and the steps of open turns.
-    The line of the item at the cursor is reversed.
+    The line of the item at the cursor is reversed across the full width in one style, with no coloured block.
     Enter and Right open the item in place. An open step shows its detail under its row (rule 51).
     Left closes an open item, or moves the cursor from a step to its turn.
     Home and End move the cursor to the first and the newest turn.
@@ -161,7 +165,8 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
     It prints the newest 20 at most, then a hint to `ariadne session logs <id> --steps`.
     A session that ended before the attach leaves after its snapshot.
 51. An open tool call step reads its detail from the detail route (040) and shows it by its kind.
-    A command shows its command, its working directory, its output and its exit code.
+    A command shows its command only when the text of its row does not hold the whole command, then its working directory, its output and its exit code.
+    The detail of a call that had a permission ends with the answer of the permission and who decided, also in the raw view and where the detail failed to read: the answer and its decider, the reason of the AI and the learned rule, each where it exists.
     An edit shows each file as a coloured diff.
     A read shows the path and the line, then the file text coloured by the grammar of its language.
     A search and a fetch show what they looked for and what they found. Any other call shows its content.
@@ -170,7 +175,7 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
     A change of `detail_rev` reads the detail again.
     A host that cannot read the detail shows the text of the step and the reason.
     Any other open step shows its whole text under its row.
-52. In the transcript zone, `r` shows the raw input and the raw output of the tool call at the cursor, as JSON.
+52. In the transcript zone, `r` shows the raw input and the raw output of the tool call at the cursor, as JSON. The permission answer and its deciders show under it as in the detail.
     The console reads them with `raw=true`. A second `r` shows the detail again.
 53. While the session has a subagent, the top row is a tab bar: `main`, then one tab for each subagent of the trajectory's `subagents` list, in start order.
     A session with no subagent shows no bar, and the transcript uses the row.
@@ -196,7 +201,8 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
     An open turn shows them also where its steps cannot be read.
     A step row of an open turn that is one of these notices does not show again.
     An info note shows only in an open turn, as a step row.
-56. An answered permission is a mark on the row of its call: the mark of the option kind, its name, and who chose it if not the console.
+56. An answered permission is a mark in the tail of the row of its call (rule 59).
+    An allow that `auto` or a learned permission gave shows no mark. An allow by the AI or by the user shows a dim mark. A rejection shows a red mark.
     The permission has no row of its own where the row of its call shows.
 57. One row under the input box replaces the status row and the footer.
     Its left side shows the mark of the session state, the name of the session, the model, the mode, the context percentage and the cost.
@@ -221,6 +227,8 @@ The inline pane of rules 19 to 22, 28 to 35 and 37 is gone with its code: `attac
     The state mark of a group is running while a step in it runs, else failed if a step failed, else completed.
     Enter on a group row opens it and shows its steps as rows, and each opens its detail (rule 51).
     An edit row shows `+N -N` from its `diff_stat`, when it has one.
+    A row shows the first line of the title, and the subject after it only when the title does not contain the subject.
+    The tail of each row is in one column at the right edge: the permission mark (rule 56), the diff counts, then the duration.
 60. The right side of the bottom row shows `? keys`, which drops after every item of the left side.
     `reconnecting` and `ctrl-c again to leave` replace the left side while they apply.
 61. `?` opens an overlay that lists every key of the console, in a group for each zone: the input, its box editing, a permission, a question, the transcript, the tabs, and the keys of every zone.
@@ -265,27 +273,27 @@ Number selection and question navigation use
 
 25. Rule 39: `ariadne-cli::commands::console::app::tests::the_console_takes_the_alternate_screen_and_the_mouse_and_gives_both_back`, `::the_terminal_is_given_back_when_ctrl_c_leaves_the_console_and_on_an_error`, `::the_terminal_is_given_back_when_setup_or_drive_panics`, `::terminal_restore_continues_after_a_failed_write`, `ariadne-cli::cli::tests::attach_opens_the_full_screen_console_with_no_flag`, `ariadne-cli::commands::console::terminal::tests::only_a_terminal_on_both_ends_gets_the_full_screen_console`.
 26. Rule 40: `ariadne-cli::commands::console::app::tests::an_update_that_skips_a_revision_dials_the_stream_again`, `ariadne-console::app::tests::a_reconnect_shows_no_item_two_times`.
-27. Rule 41: `ariadne-console::app::tests::a_turn_shows_its_prompt_one_activity_line_and_its_answer`, `::a_running_turn_shows_its_last_steps_live`, `::a_running_turn_draws_the_whole_answer_and_live_steps`, `::a_streamed_append_updates_the_live_answer`.
-28. Rule 42: `ariadne-console::app::tests::an_open_turn_shows_a_row_per_step_with_its_status_kind_subject_and_duration`, `::an_open_running_turn_reads_all_steps_after_it_finishes`.
+27. Rule 41: `ariadne-console::app::tests::a_turn_shows_its_prompt_one_activity_line_and_its_answer`, `::a_running_turn_shows_its_last_steps_live`, `::a_running_turn_draws_the_whole_answer_and_live_steps`, `::a_streamed_append_updates_the_live_answer`, `::a_daemon_prompt_shows_its_first_line_with_text_and_opens_whole_as_markdown`, `::a_daemon_prompt_keeps_an_issue_number_and_strips_a_real_heading`, `::a_turn_line_of_any_state_shows_the_duration_first_and_only_it_when_it_has_no_steps`, `::a_turn_shows_its_prompt_one_activity_line_and_its_answer`, `ariadne-console::trajectory::print::tests::a_closed_turn_prints_its_counts_without_tool_calls_or_thoughts`.
+28. Rule 42: `ariadne-console::app::tests::an_open_turn_shows_a_row_per_step_with_its_status_kind_subject_and_duration`, `::an_open_running_turn_reads_all_steps_after_it_finishes`, `::an_open_turn_does_not_show_the_message_step_that_is_its_answer_as_a_row`, `::a_step_row_shows_the_first_line_of_its_title_and_the_subject_only_beside_a_title_without_it`.
 29. Rule 43: `ariadne-console::app::tests::tab_gives_the_keys_to_the_transcript_and_tab_escape_or_a_typed_character_gives_them_back`.
 30. Rule 44: `ariadne-console::app::tests::enter_sends_the_prompt_and_it_shows_queued_until_a_turn_holds_it`, `::up_and_down_move_through_the_rows_then_through_the_prompt_history`, `::page_up_and_page_down_scroll_the_transcript_and_the_end_follows`, `::ctrl_o_opens_and_closes_the_newest_turn`, `::escape_cancels_the_running_turn`, `::a_slash_opens_the_session_commands_and_tab_completes_the_pick`.
-31. Rule 45: `ariadne-console::app::tests::the_cursor_walks_turns_and_steps_with_the_arrows_and_j_and_k`, `::enter_and_right_open_the_item_and_left_closes_it_or_goes_to_its_turn`, `::home_and_end_go_to_the_first_and_the_newest_turn`, `::y_copies_the_item_at_the_cursor_to_the_clipboard`, `ariadne-cli::commands::console::app::tests::y_puts_the_text_on_the_clipboard_through_osc_52`.
+31. Rule 45: `ariadne-console::app::tests::the_cursor_walks_turns_and_steps_with_the_arrows_and_j_and_k`, `::enter_and_right_open_the_item_and_left_closes_it_or_goes_to_its_turn`, `::home_and_end_go_to_the_first_and_the_newest_turn`, `::y_copies_the_item_at_the_cursor_to_the_clipboard`, `ariadne-cli::commands::console::app::tests::y_puts_the_text_on_the_clipboard_through_osc_52`, `::the_line_at_the_cursor_is_reversed_across_the_width_in_one_style`.
 32. Rule 46: `ariadne-console::app::tests::the_wheel_scrolls_in_both_zones_and_a_click_opens_or_closes_an_item`, `::page_up_and_page_down_scroll_the_transcript_and_the_end_follows`.
 33. Rule 47: `ariadne-console::app::tests::a_resize_draws_the_whole_screen_again_and_loses_no_line`, `::the_screen_on_an_ansi_terminal_reads_back_as_the_test_backend_draws_it`.
 34. Rule 48: `ariadne-console::app::tests::a_pending_permission_shows_above_the_input_and_enter_sends_the_picked_option`, `::an_open_question_shows_its_form_above_the_input_and_the_keys_answer_it`, `::escape_declines_the_open_question`, `::question_reads_retry_after_failure_and_reconnect`, `::the_selected_permission_option_stays_visible_after_resize_and_answers`, `::the_active_question_and_choice_stay_visible_after_resize_and_answer`.
 35. Rule 49: `ariadne-cli::commands::console::app::tests::prompt_history_reaches_past_the_trajectory_page`, `ariadne-console::app::history::tests::the_history_reaches_back_through_the_older_pages_oldest_first`, `::a_page_that_cannot_be_read_ends_the_reach_with_what_it_has`, `ariadne-console::app::tests::a_slash_opens_the_session_commands_and_tab_completes_the_pick`, `::enter_sends_the_prompt_and_it_shows_queued_until_a_turn_holds_it`, `::a_refused_prompt_is_said_under_the_transcript_and_is_no_longer_queued`, `::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`, `::up_and_down_move_through_the_rows_then_through_the_prompt_history`.
 36. Rule 50: `ariadne-console::app::tests::the_farewell_prints_at_most_twenty_folded_turns_and_a_hint_to_the_log`, `::a_session_that_has_ended_leaves_after_its_snapshot`, `ariadne-cli::commands::console::app::tests::the_console_closing_says_whether_the_session_still_runs`.
-37. Rule 51: `ariadne-console::app::tests::an_open_command_shows_the_command_and_its_output_folded_then_whole`, `::an_open_edit_shows_its_change_as_a_coloured_diff`, `::an_open_read_shows_the_file_in_its_language`, `::enter_and_right_open_the_item_and_left_closes_it_or_goes_to_its_turn`, `ariadne-cli::commands::console::app::tests::the_host_reads_a_detail_and_the_steps_of_a_subagent_from_their_routes`, `ariadne-client::tests::a_step_detail_sends_its_route_and_reads_the_typed_detail`.
-38. Rule 52: `ariadne-console::app::tests::r_shows_the_raw_input_and_output_of_the_call_at_the_cursor`.
+37. Rule 51: `ariadne-console::app::tests::an_open_command_shows_the_command_and_its_output_folded_then_whole`, `::an_open_edit_shows_its_change_as_a_coloured_diff`, `::an_open_read_shows_the_file_in_its_language`, `::enter_and_right_open_the_item_and_left_closes_it_or_goes_to_its_turn`, `ariadne-cli::commands::console::app::tests::the_host_reads_a_detail_and_the_steps_of_a_subagent_from_their_routes`, `ariadne-client::tests::a_step_detail_sends_its_route_and_reads_the_typed_detail`, `::an_open_command_shows_the_command_only_when_its_row_cut_it`, `::an_open_command_shows_the_command_when_its_multiline_title_lost_lines_to_its_row`, `::an_unrelated_second_title_line_does_not_make_the_detail_repeat_a_whole_command`, `::a_call_whose_detail_failed_still_shows_its_permission_answer_and_deciders`, `::the_open_detail_of_a_call_shows_its_permission_answer_and_each_decider`, `::the_raw_view_of_a_call_still_shows_its_permission_answer_and_deciders`.
+38. Rule 52: `ariadne-console::app::tests::r_shows_the_raw_input_and_output_of_the_call_at_the_cursor`, `::the_raw_view_of_a_call_still_shows_its_permission_answer_and_deciders`.
 39. Rule 53, the tab bar: `ariadne-console::app::tests::the_top_row_is_a_tab_bar_of_main_and_each_subagent_in_start_order`, `::a_session_with_no_subagent_shows_no_tab_bar_and_the_transcript_uses_the_row`, `::a_narrow_bar_cuts_the_names_keeps_the_marks_and_marks_tabs_off_the_screen`, `::from_five_columns_the_active_tab_its_mark_and_the_edge_marks_fit_whole`.
     The summary row and the tab: `::a_subagent_in_main_is_one_summary_row_that_does_not_open_in_place`, `::enter_on_a_summary_row_opens_the_tab_of_its_subagent_with_the_rows_of_main`, `::a_click_on_a_summary_row_opens_the_tab_of_its_subagent`, `::a_shown_subagent_tab_is_read_again_when_its_turn_completes`, `ariadne-cli::commands::console::app::tests::the_host_reads_a_detail_and_the_steps_of_a_subagent_from_their_routes`.
     The keys, the places and the input: `ariadne-console::app::tests::ctrl_n_and_ctrl_p_move_between_tabs_and_escape_returns_to_main`, `::each_tab_keeps_its_own_scroll_position_and_cursor_row`, `::the_input_sends_to_the_session_from_a_subagent_tab`.
 40. Rule 54: `ariadne-console::app::tests::a_plan_with_an_open_entry_shows_one_line_above_the_input_that_opens_to_the_checklist`, `::every_entry_of_a_checklist_taller_than_its_room_is_reached_with_the_wheel`, `::the_wheel_reaches_every_entry_of_a_plan_on_a_short_terminal`.
 41. Rule 55: `ariadne-console::app::tests::warnings_and_compactions_show_in_their_turn_from_its_notices_without_a_step_read`, `::an_open_turn_shows_its_notices_and_their_count_once_whether_its_steps_read_or_not`, `::a_notice_is_an_item_the_cursor_reaches_and_it_opens_in_place_to_its_whole_text`, `::an_info_note_shows_in_the_open_turn_and_not_in_the_folded_one`.
-42. Rule 56: `ariadne-console::app::tests::an_answered_permission_is_a_mark_on_the_row_of_its_call`.
+42. Rule 56: `ariadne-console::app::tests::an_answered_permission_is_a_mark_on_the_row_of_its_call`, `::the_open_detail_of_a_call_shows_its_permission_answer_and_each_decider`, `::a_learn_mode_rejection_with_an_id_of_the_agent_is_still_a_red_mark`, `::an_ask_mode_rejection_whose_option_shares_a_name_is_still_a_red_mark`.
 43. Rule 57: `ariadne-console::app::tests::the_bottom_row_shows_the_state_mark_model_mode_context_and_cost_and_the_keys_hint`, `::a_narrow_bottom_row_drops_whole_items_in_rank_order_and_the_keys_hint_last`, `::the_bottom_row_names_the_stored_model_where_the_agent_sends_no_model_option`, `::the_bottom_row_names_the_session_after_the_state_mark`, `::a_narrow_bottom_row_drops_the_name_before_any_other_item`, `::a_name_longer_than_its_room_is_cut_with_an_ellipsis_and_the_other_items_stay_whole`, `::a_session_is_named_by_its_title_and_its_seat_with_the_step`, `ariadne-cli::commands::console::app::tests::the_session_is_named_by_its_task_title_seat_and_step`, `::a_pull_request_session_is_named_with_its_url_and_a_lost_task_falls_back_to_its_goal`, `::the_window_is_titled_with_the_session_name_and_the_title_is_put_back`, `crates/ariadne-daemon/tests/it/acp_terminal.rs::the_terminal_names_the_session_in_the_bottom_row_and_the_window_title`, `::tab_gives_the_keys_to_the_transcript_and_tab_escape_or_a_typed_character_gives_them_back`, `ariadne-cli::commands::console::app::tests::the_stored_model_is_read_from_the_session_row`, `crates/ariadne-daemon/tests/it/acp_terminal.rs::a_wheel_message_scrolls_the_transcript`.
 44. Rule 58: `ariadne-console::app::tests::an_image_audio_resource_and_link_show_as_one_line_with_type_and_name`, `::a_changed_image_name_or_link_title_draws_again_while_the_text_stays`.
-45. Rule 59: `ariadne-console::app::tests::a_tool_row_starts_with_its_state_mark_and_the_icon_of_its_kind_and_prints_no_kind_word`, `::a_kind_with_no_icon_shows_the_fallback_icon`, `::consecutive_read_and_search_steps_show_as_one_group_row_of_their_subjects`, `::a_group_row_cuts_its_subjects_to_the_width`, `::a_group_is_running_while_a_step_runs_failed_if_one_failed_and_completed_otherwise`, `::enter_on_a_group_row_opens_its_steps_as_rows_that_open_their_detail`, `::an_edit_row_shows_its_subject_and_the_lines_it_added_and_removed`, `::a_group_of_one_kind_has_the_icon_of_that_kind`, `::a_folded_running_turn_shows_its_last_three_steps_even_when_they_group`. Rule 41, no state word on a completed turn: `::a_turn_shows_its_prompt_one_activity_line_and_its_answer`.
+45. Rule 59: `ariadne-console::app::tests::a_row_whose_subject_has_no_room_keeps_its_whole_tail`, `::a_tool_row_starts_with_its_state_mark_and_the_icon_of_its_kind_and_prints_no_kind_word`, `::a_kind_with_no_icon_shows_the_fallback_icon`, `::consecutive_read_and_search_steps_show_as_one_group_row_of_their_subjects`, `::a_group_row_cuts_its_subjects_to_the_width`, `::a_group_is_running_while_a_step_runs_failed_if_one_failed_and_completed_otherwise`, `::enter_on_a_group_row_opens_its_steps_as_rows_that_open_their_detail`, `::an_edit_row_shows_its_subject_and_the_lines_it_added_and_removed`, `::a_group_of_one_kind_has_the_icon_of_that_kind`, `::a_folded_running_turn_shows_its_last_three_steps_even_when_they_group`. Rule 41, no state word on a completed turn: `::a_turn_shows_its_prompt_one_activity_line_and_its_answer`, `::a_step_row_shows_the_first_line_of_its_title_and_the_subject_only_beside_a_title_without_it`.
 46. Rule 60: `ariadne-console::app::tests::a_narrow_bottom_row_drops_whole_items_in_rank_order_and_the_keys_hint_last`, `::reconnecting_and_the_leave_hint_replace_the_left_side_of_the_row_while_they_apply`, `::one_ctrl_c_keeps_the_console_and_the_second_leaves_it`.
 47. Rule 61: `ariadne-console::app::tests::a_question_mark_opens_an_overlay_of_every_key_in_groups_by_zone`, `::a_question_mark_in_a_non_empty_input_types_the_character`, `::a_question_mark_or_escape_closes_the_overlay_and_the_screen_stays_as_it_was`, `::the_question_mark_opens_the_overlay_from_the_transcript_zone_too`, `::every_key_of_the_overlay_is_reached_by_scrolling_in_a_60_by_24_terminal`, `::a_wide_overlay_shows_its_groups_whole_in_columns_with_no_scroll`, `::an_overlay_fills_every_column_the_width_holds`, `::a_narrow_overlay_shows_one_column`, `::the_overlay_hides_the_text_cursor_and_closing_it_brings_the_cursor_back`.
 

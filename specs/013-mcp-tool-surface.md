@@ -56,8 +56,10 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
    orchestrator's user answers in the console; a column's agent works alone, and asks only where
    the task cannot go on without the answer, and a keeper where the request cannot. The rule names no channel — the seat's own
    playbook already says how to ask. Every seat is told to ask the user
-   with the question tool of its own client, and, where it has none, in its
-   turn text. The rules name no client and no Ariadne tool. They tell the
+   with the question tool of its own client. The orchestrator is told to ask
+   every question with it and never to ask a question in its turn text, and
+   its rule has no turn-text fallback. Every other seat, where it has no such
+   tool, asks in its turn text. The rules name no client and no Ariadne tool. They tell the
    seat to put the recommended option first, to end its label with
    "(Recommended)" and to give the reason in its description. They say
    nothing of a hint, a withdrawal or a call that keeps a question open.
@@ -300,8 +302,9 @@ Out: what an agent is told to do with each tool — that is the seat's playbook
   (`mcp.rs::every_session_is_told_how_ariadne_is_reached`), only the
   orchestrator is told to ask, and a column's agent is told to work alone
   and ask only where the task cannot go on without the answer, and every
-  seat is told to ask with the question tool of its own client, in its turn
-  text where it has none, with the recommended option first
+  seat is told to ask with the question tool of its own client, the
+  orchestrator for every question and never in its turn text, every other
+  seat in its turn text where it has none, with the recommended option first
   (`::only_the_orchestrator_is_told_to_ask`), and no session is told of a
   conversation (`::no_session_is_told_of_a_conversation`).
 - Every session is told to load a deferred tool before it calls it

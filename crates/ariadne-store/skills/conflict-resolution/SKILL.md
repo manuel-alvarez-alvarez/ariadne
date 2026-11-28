@@ -46,10 +46,10 @@ Use `merge` when no conflict stops the landing.
    Done when git reports no operation in progress.
 7. Where another skill invoked this one, give it each dropped intent and
    return to that skill's next step. Call nothing. Where no skill did, this
-   step ends the column. Call `complete_step` with the column report. Put
-   each dropped intent in it.
+   step ends the stage: pass the work, with the report. Put each dropped
+   intent in it.
 
-   Done when the caller has its next step or the column is reported.
+   Done when the caller has its next step or the stage is reported.
 
 ## Never
 

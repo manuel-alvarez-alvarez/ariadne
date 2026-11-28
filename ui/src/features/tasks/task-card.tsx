@@ -1,3 +1,4 @@
+import { Skeleton } from "@/components/ui/skeleton"
 /**
  * One task, as it appears on the board and in any other list of tasks: three
  * contained rows, whatever the task's status and whatever the width. Row 1 is
@@ -154,7 +155,9 @@ export function TaskCard({
    */
   lastActivityAt?: string | null
 }) {
-  const executionHost = useSourceHost(task.execution_context?.execution_owner)
+  const { host: executionHost, isPending: executionPending } = useSourceHost(
+    task.execution_context?.execution_owner,
+  )
   const displayedHost = task.execution_context
     ? (executionHost ?? "Unconfigured worker")
     : task.host
@@ -223,7 +226,9 @@ export function TaskCard({
               compact
             />
           )}
-          {task.execution_context && !executionHost ? (
+          {task.execution_context && executionPending ? (
+            <Skeleton aria-label="Loading worker" className="h-3 w-24" />
+          ) : task.execution_context && !executionHost ? (
             <span>Unconfigured worker</span>
           ) : displayedHost && (displayedHost !== "local" || task.execution_context) ? (
             <HostLabel

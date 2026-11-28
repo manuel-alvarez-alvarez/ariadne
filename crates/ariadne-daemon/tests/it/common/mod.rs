@@ -1302,6 +1302,8 @@ pub(crate) async fn with_forge_enabled(h: &Harness, repo: &Repository, enabled: 
             remote: "origin".into(),
             enabled,
             login: enabled.then(|| "me".into()),
+            webhook_enabled: true,
+            poll_interval_minutes: None,
         })
         .await
         .unwrap();

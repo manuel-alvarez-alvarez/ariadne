@@ -377,6 +377,10 @@ pub struct ForgeIntegration {
     pub webhook_last_delivery_at: Option<String>,
     /// Why the last fetch of its requests failed; None once one succeeds.
     pub fetch_error: Option<String>,
+    /// Whether Ariadne registers a hook for this repository. Off, it polls.
+    pub webhook_enabled: bool,
+    /// Whole minutes between timer fetches, 1 to 60; None means the default.
+    pub poll_interval_minutes: Option<i64>,
     pub detected_at: String,
     pub updated_at: String,
 }

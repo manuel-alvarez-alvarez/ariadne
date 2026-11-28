@@ -112,7 +112,7 @@ it("narrows to one repository by its forge name on every host, and skips a host 
   view.queryClient.clear()
 })
 
-it("offers the hosts where the repository is registered for Start review, the row's host first", async () => {
+it("offers the hosts where the repository is registered in the model picker of Start review, the row's host first", async () => {
   const seen = stubHosts({
     local: {
       "/v1/repositories": [LOCAL_REPO],
@@ -141,17 +141,17 @@ it("offers the hosts where the repository is registered for Start review, the ro
   )
 
   await userEvent.click(await screen.findByRole("button", { name: "Start review" }))
-  const select = await screen.findByRole("combobox", { name: "Host" })
-  expect(select.textContent).toContain("box")
-  await userEvent.click(select)
-  expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual([
-    "box",
-    "local",
-  ])
+  const dialog = await screen.findByRole("dialog", { name: "Start an Ariadne review" })
+  expect(within(dialog).queryByRole("combobox", { name: "Host" })).toBeNull()
+  await userEvent.click(within(dialog).getByRole("button", { name: "Model" }))
+  const hostsColumn = await screen.findByRole("listbox", { name: "Hosts" })
+  const rows = within(hostsColumn).getAllByRole("option")
+  expect(rows.map((option) => option.textContent)).toEqual(["box", "local"])
+  expect(rows.map((option) => option.getAttribute("aria-selected"))).toEqual(["true", "false"])
   const modelReads = () =>
     seen.filter((request) => request.url.pathname === "/v1/models").map((request) => request.origin)
   expect(modelReads()).toEqual(["http://box.test:7676"])
-  await userEvent.click(screen.getByRole("option", { name: "local" }))
+  await userEvent.click(within(hostsColumn).getByText("local"))
   await waitFor(() => expect(modelReads()).toContain("http://127.0.0.1:7676"))
 })
 
@@ -330,6 +330,64 @@ it("lists the issues of every host most recently updated first", async () => {
   ).toEqual(["#8 newer-box", "#7 older-local"])
 })
 
+it("offers the hosts of the repository in the model picker of Start babysit, and sends the start to the picked host", async () => {
+  const seen = stubHosts({
+    local: {
+      "/v1/repositories": [LOCAL_REPO],
+      "/v1/repositories/repo-local/pull-requests/42": { ...localPull, id: null },
+      "/v1/models": [aModel({ id: "stub:local-model" })],
+      "/v1/skills": [],
+      "/v1/acp-agents": [],
+      "/v1/sessions": aSessionPage([]),
+      "/v1/repositories/repo-local/pull-requests/42/ariadne-babysit": (
+        _url: URL,
+        request: Request,
+      ) =>
+        request.method === "PUT" ? jsonResponse({ ...localPull, babysit_asked: true }) : undefined,
+    },
+    box: {
+      "/v1/repositories": [BOX_REPO],
+      "/v1/pull-requests/pull-box": boxPull,
+      "/v1/models": [],
+      "/v1/skills": [],
+      "/v1/acp-agents": [],
+      "/v1/sessions": aSessionPage([]),
+    },
+  })
+  renderScreen(
+    <>
+      <HostPicker />
+      <DetailPanels />
+    </>,
+    { route: "/forge/pull-requests?pr=pull-box&host=box" },
+  )
+
+  await userEvent.click(await screen.findByRole("button", { name: "Start babysit" }))
+  const dialog = await screen.findByRole("dialog", { name: "Start Ariadne babysitting" })
+  expect(within(dialog).queryByRole("combobox", { name: "Host" })).toBeNull()
+  await userEvent.click(within(dialog).getByRole("button", { name: "Model" }))
+  const hostsColumn = await screen.findByRole("listbox", { name: "Hosts" })
+  expect(
+    within(hostsColumn)
+      .getAllByRole("option")
+      .map((option) => option.textContent),
+  ).toEqual(["box", "local"])
+  await userEvent.click(within(hostsColumn).getByText("local"))
+  await userEvent.click(await screen.findByText("stub:local-model"))
+  await userEvent.keyboard("{Escape}")
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start babysit" }))
+
+  await waitFor(() =>
+    expect(
+      seen.some(
+        (request) =>
+          request.origin === LOCAL_ORIGIN &&
+          request.url.pathname === "/v1/repositories/repo-local/pull-requests/42/ariadne-babysit",
+      ),
+    ).toBe(true),
+  )
+})
+
 it("opens the new session on the host Start review picked, not on the panel's host", async () => {
   let started = false
   const review = aSession({
@@ -372,9 +430,10 @@ it("opens the new session on the host Start review picked, not on the panel's ho
 
   await userEvent.click(await screen.findByRole("button", { name: "Start review" }))
   const dialog = await screen.findByRole("dialog", { name: "Start an Ariadne review" })
-  await userEvent.click(within(dialog).getByRole("combobox", { name: "Host" }))
-  await userEvent.click(await screen.findByRole("option", { name: "local" }))
   await userEvent.click(within(dialog).getByRole("button", { name: "Model" }))
+  await userEvent.click(
+    within(await screen.findByRole("listbox", { name: "Hosts" })).getByText("local"),
+  )
   const models = await screen.findByRole("listbox", { name: "Models" })
   await userEvent.click(within(models).getByText("stub:review-model"))
   await userEvent.keyboard("{Escape}")
@@ -485,8 +544,7 @@ it("opens the panel on local when no host holds Ariadne work", async () => {
     box: { "/v1/repositories": [BOX_REPO], "/v1/pull-requests": page([onBox]) },
   })
   const again = renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
-  await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(2))
-  await userEvent.click(screen.getByRole("row", { name: "Open #42 New title" }))
+  await userEvent.click(await screen.findByRole("row", { name: "Open #42 New title" }))
   expect(again.location.url).toContain("pr=repo-local%3A42")
   expect(again.location.url).not.toContain("host=")
 })
@@ -626,7 +684,9 @@ it.each([
     )
     await userEvent.click(screen.getByRole("button", { name: "Create goal" }))
     const dialog = await screen.findByRole("dialog")
-    expect(within(dialog).getByRole("combobox", { name: "Host" }).textContent).toContain(host)
+    expect(
+      within(dialog).getByRole("button", { name: "Orchestrator runs on" }).textContent,
+    ).toContain(host)
     expect(await within(dialog).findByRole("button", { name: `Remove ${path}` })).toBeTruthy()
   },
 )

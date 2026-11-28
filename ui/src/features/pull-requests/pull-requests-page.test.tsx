@@ -295,3 +295,16 @@ it("offers a refresh only while a repository in view polls or its webhook is dow
   await userEvent.click(await screen.findByRole("option", { name: "acme/gadgets" }))
   expect(await screen.findByRole("button", { name: "Refresh" })).toBeTruthy()
 })
+
+it("shows skeletons for refresh and repository labels until remote data answers", async () => {
+  daemonFetch.mockImplementation(async (input) => {
+    const path = new URL((input as Request).url).pathname
+    if (path === "/v1/hosts") return jsonResponse([])
+    if (path === "/v1/pull-requests") return page([pull])
+    return new Promise(() => {})
+  })
+  renderScreen(<PullRequestsPage />, { route: "/forge/pull-requests" })
+  expect(await screen.findByLabelText("Loading repository")).toBeTruthy()
+  expect(screen.getByLabelText("Loading refresh").getAttribute("data-slot")).toBe("skeleton")
+  expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull()
+})

@@ -2,8 +2,10 @@ import { useQueries } from "@tanstack/react-query"
 import { api, type Host, type HostRow, qk, type TaskDto, unwrap, useHosts } from "@/api"
 
 /** Discover identities for configured connections and retain them through outages. */
-export function useDaemonIdentities(enabled: boolean): Map<Host, string | undefined> {
-  const { hosts } = useHosts()
+export function useDaemonIdentities(
+  enabled: boolean,
+): Map<Host, string | undefined> & { isPending: boolean } {
+  const { hosts, isPending } = useHosts()
   const identities = useQueries({
     queries: hosts.map((host) => ({
       queryKey: qk.remoteTaskProtocol(host.name, host.endpoint ?? ""),
@@ -14,20 +16,34 @@ export function useDaemonIdentities(enabled: boolean): Map<Host, string | undefi
       gcTime: Number.POSITIVE_INFINITY,
     })),
   })
-  return new Map(
-    hosts.map((host, index) => [
-      host.name,
-      identities[index]?.data?.protocol === "remote-tasks-v1"
-        ? identities[index]?.data?.daemon_id
-        : undefined,
-    ]),
+  return Object.assign(
+    new Map(
+      hosts.map((host, index) => [
+        host.name,
+        identities[index]?.data?.protocol === "remote-tasks-v1"
+          ? identities[index]?.data?.daemon_id
+          : undefined,
+      ]),
+    ),
+    {
+      isPending:
+        enabled &&
+        (isPending ||
+          identities.some((query, index) => hosts[index]?.url !== null && query.isPending)),
+    },
   )
 }
 
 /** Find a configured connection by its persistent daemon identity. */
-export function useSourceHost(daemonId: string | undefined): Host | undefined {
+export function useSourceHost(daemonId: string | undefined): {
+  host: Host | undefined
+  isPending: boolean
+} {
   const identities = useDaemonIdentities(!!daemonId)
-  return [...identities].find(([, id]) => id === daemonId && id !== undefined)?.[0]
+  return {
+    host: [...identities].find(([, id]) => id === daemonId && id !== undefined)?.[0],
+    isPending: identities.isPending,
+  }
 }
 
 /**

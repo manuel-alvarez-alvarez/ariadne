@@ -32,7 +32,7 @@ import { skillsQueryOptions } from "@/features/skills/queries"
 import { cn } from "@/lib/format"
 
 import { useAskBabysit } from "./queries"
-import { ReviewHostSelect, type ReviewTarget, useReviewTargets } from "./review-hosts"
+import { useReviewTargets } from "./review-hosts"
 
 /** The keeper session's own playbook: always loaded, never picked. */
 const PLAYBOOK = "pr-babysit"
@@ -60,8 +60,11 @@ export function StartBabysitDialog({
 }) {
   const targets = useReviewTargets(pull, host, open)
   const [chosen, setChosen] = useState<Host | null>(null)
-  const target = targets.find((each) => each.host === chosen) ?? (targets[0] as ReviewTarget)
-  const models = useQuery({ ...modelsQueryOptions(target.host), enabled: open })
+  const target = targets.find((each) => each.host === chosen) ?? targets[0]
+  const models = useQuery({
+    ...modelsQueryOptions(target?.host ?? host),
+    enabled: open && !!target,
+  })
   const skills = useQuery({ ...skillsQueryOptions(), enabled: open })
   const ask = useAskBabysit()
   const [pin, setPin] = useState({ model: "", effort: "" })
@@ -87,7 +90,7 @@ export function StartBabysitDialog({
   }
 
   function start() {
-    if (!canStart) return
+    if (!canStart || !target) return
     ask.mutate(
       {
         host: target.host,
@@ -118,25 +121,21 @@ export function StartBabysitDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-5 py-2">
-          <ReviewHostSelect
-            id="babysit-host"
-            targets={targets}
-            value={target.host}
-            onChange={(next) => {
-              setChosen(next)
-              // A model of one host is not offered on another.
-              setPin({ model: "", effort: "" })
-            }}
-          />
           <Field>
             <FieldLabel htmlFor="babysit-pin">Model</FieldLabel>
             <PinPicker
-              host={target.host}
+              host={target?.host ?? host}
+              // One host is no choice: the picker offers hosts once there are two.
+              hosts={targets.length > 1 ? targets.map((each) => ({ host: each.host })) : undefined}
               id="babysit-pin"
               label="Model"
               model={pin.model}
               effort={pin.effort}
-              onChange={(next) => setPin({ model: next.model, effort: next.effort })}
+              onChange={(next) => {
+                // A model of one host is not offered on another.
+                setChosen(next.host)
+                setPin({ model: next.model, effort: next.effort })
+              }}
               models={models.data}
             />
             <FieldDescription>What the keeper runs on, and at which effort.</FieldDescription>
@@ -164,7 +163,11 @@ export function StartBabysitDialog({
         </div>
         <DialogFooter>
           <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-          <Button disabled={!pin.model || !canStart} pending={ask.isPending} onClick={start}>
+          <Button
+            disabled={!target || !pin.model || !canStart}
+            pending={ask.isPending}
+            onClick={start}
+          >
             <BotIcon />
             Start babysit
           </Button>

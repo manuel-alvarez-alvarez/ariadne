@@ -173,6 +173,38 @@ describe("RepositoriesPage", () => {
     expect(await screen.findByText("Webhook: HTTP 403: needs admin rights")).toBeDefined()
   })
 
+  it("ends the webhook skeleton when the tunnel cannot be read", async () => {
+    stubDaemon([{ ...ARIADNE, forge: aForge({ enabled: true }) }])
+    const answer = daemonFetch.getMockImplementation()
+    daemonFetch.mockImplementation(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      if (new URL(request.url).pathname === "/v1/forge/tunnel") {
+        return errorResponse(500, "internal", "no tunnel")
+      }
+      return (answer as NonNullable<typeof answer>)(input, init)
+    })
+    renderScreen(<RepositoriesPage />)
+
+    expect(await screen.findByTitle("The tunnel could not be read")).toBeDefined()
+    expect(screen.queryByLabelText("Loading webhook mode")).toBeNull()
+  })
+
+  it("shows polling at once for a repository whose webhook is off, whatever the tunnel does", async () => {
+    stubDaemon([{ ...ARIADNE, forge: aForge({ enabled: true, webhook_enabled: false }) }])
+    const answer = daemonFetch.getMockImplementation()
+    daemonFetch.mockImplementation(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      if (new URL(request.url).pathname === "/v1/forge/tunnel") {
+        return errorResponse(500, "internal", "no tunnel")
+      }
+      return (answer as NonNullable<typeof answer>)(input, init)
+    })
+    renderScreen(<RepositoriesPage />)
+
+    expect(await screen.findByRole("img", { name: "polling: working" })).toBeDefined()
+    expect(screen.queryByTitle("The tunnel could not be read")).toBeNull()
+  })
+
   it("shows polling with the tunnel off: green with how to turn it on, red with the fetch error", async () => {
     const user = userEvent.setup()
     stubDaemon([
@@ -203,6 +235,24 @@ describe("RepositoriesPage", () => {
     await user.hover(screen.getByRole("img", { name: "polling: not working" }))
     expect(await screen.findByText("gh: HTTP 502")).toBeDefined()
     expect(screen.queryByRole("img", { name: /smee/ })).toBeNull()
+  })
+
+  it("shows green polling with the webhook off, and says so with the interval", async () => {
+    const user = userEvent.setup()
+    stubDaemon([
+      {
+        ...ARIADNE,
+        forge: aForge({ enabled: true, webhook_enabled: false, poll_interval_minutes: 15 }),
+      },
+    ])
+    // The tunnel is up, yet this repository registers no hook.
+    renderScreen(<RepositoriesPage />)
+
+    const pill = await screen.findByRole("img", { name: "polling: working" })
+    expect(pill.className).toContain("bg-status-done-soft")
+    await user.hover(pill)
+    expect(await screen.findByText("The webhook is off for this repository.")).toBeDefined()
+    expect(await screen.findByText(/every 15 minutes/)).toBeDefined()
   })
 
   it("shows the forge each remote is on over two lines, and whether it is enabled", async () => {
