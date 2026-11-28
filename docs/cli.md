@@ -111,12 +111,12 @@ scrollback stay as they were. The screen has these parts, from the top:
 
 ```
 ❯ Run the tests
-  ▸ ✓ completed · 4 steps · 3 tool calls · 12s
+  ▸ ✓ 12s · 4 steps · 1 file changed
   All 345 tests pass.
 
 ❯ Fix the lint
-  ▸ ⠹ running · 2 steps · 1 tool call · 4s
-    ◐ execute    Bash · cargo clippy  2s
+  ▸ ⠹ running · 2 steps · 4s
+    ◐ $ cargo clippy                                       2s
 ▸ plan 1/3 · Fix the lint
 ──────────────────────────────────────────────────────────────
 ❯ Tell the agent what to do
@@ -128,8 +128,11 @@ scrollback stay as they were. The screen has these parts, from the top:
 
 A turn shows your prompt after `❯`, one activity line, and the answer of the
 agent. The activity line has a fold mark (`▸` closed, `▾` open), the state of
-the turn, its counts and how long it took. A prompt the daemon sent shows its
-first line after `» daemon`. The answer is markdown, and it streams while the
+the turn, how long it took, then its counts: steps first, then changed files,
+failed, cancelled and subagents, each only above zero. A prompt the daemon sent
+shows its first line with text after `» daemon`, without its Markdown mark.
+Move the cursor to that line and press Enter to read the whole prompt as
+Markdown, and Left to close it. The answer is markdown, and it streams while the
 turn runs. A turn that runs and is closed shows its last three steps, live.
 
 A warning note and a compaction always show under the activity line of
@@ -146,17 +149,21 @@ with their type and their name, such as `[image] shot.png` or
 ### Steps
 
 Open a turn to see a row for each of its steps. A row has the status mark
-(`○` pending, `◐` running, `✓` done, `✗` failed, `⊘` cancelled), the kind,
-the subject, and how long the step took. The kind of a tool call is the kind
-of its tool, such as `execute`, `read` or `edit`. A permission that was
-answered is a mark on the row of its call, such as `✓ Allow · by ai`, and it
-has no row of its own.
+(`○` pending, `◐` running, `✓` done, `✗` failed, `⊘` cancelled), the icon of
+its kind, and the first line of its title. The subject follows the title only
+where the title does not contain it. The tail of each row is in one column at
+the right edge: the permission mark, the `+N -N` of an edit, then how long the
+step took. A permission that was answered is a mark on the row of its call, and
+it has no row of its own. No mark shows for an allow that `auto` or a learned
+permission gave. A dim `✓` is an allow by the AI or by you, and a red `✗` is a
+rejection. The message step that is the answer of the turn is no row: the
+answer shows under the turn.
 
 Open a step to see its detail in place, under its row. The console reads it
 from the daemon. What it shows depends on the kind of the call:
 
-- A command shows `$ <command>`, its working directory, its output and its
-  exit code. The output keeps its last 12 lines.
+- A command shows `$ <command>` only where its row cut it, then its working
+  directory, its output and its exit code. The output keeps its last 12 lines.
 - An edit shows each file as a diff: the file name, then the hunks with the
   added lines green and the removed lines red. Where a hunk replaces as many
   lines as it removes, the words that changed are bold. The diff keeps its
@@ -168,11 +175,12 @@ from the daemon. What it shows depends on the kind of the call:
 A fold shows the count of the lines it left out, such as `… 18 more lines`.
 Press Enter again on the open step to see all of it. Press `r` on a tool call
 to see its raw input and its raw output, as JSON. Press `r` again to see the
-detail again.
+detail again. The detail of a call that had a permission ends with the answer
+and who decided: `permission: Allow · by ai`, then the reason of the AI and
+the learned rule where there are any.
 
 ```
-    ✓ execute    Bash · cargo nextest run  8s
-      $ cargo nextest run
+    ✓ $ cargo nextest run                                  ✓ 8s
       … 41 more lines
           Summary [   7.910s] 345 tests run: 345 passed, 0 skipped
       exit 0
@@ -350,8 +358,8 @@ wants.
 Use `ariadne session logs <session-id>` to read without sending input. It
 prints each turn of the session in three parts: its prompt, one activity line
 and its answer. The activity line gives the state of the turn and its counts:
-steps, tool calls, changed files, failed and cancelled calls, thoughts and
-subagents. Under the prompt, the turn shows each permission and question that
+steps, changed files, failed and cancelled calls and subagents. A count of
+zero is left out. Under the prompt, the turn shows each permission and question that
 waits, and its errors. When the turn has more of these than it shows, a line
 gives their count. `--steps` prints each step of the turn under it in place
 of those lines: messages, thoughts, tool calls with their output preview,
