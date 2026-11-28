@@ -833,7 +833,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post one round in the user's name with its body and new inline findings. Write the reviewed sha, the defects and whether the code must change in `body`. Call once every round. For a quiet round with nothing new to say, give an empty `body` and no `comments`: the daemon records the reviewed revision and posts nothing. Use `resolve_thread` to resolve a thread."
+        description = "Post one round in the user's name with its body and new inline findings. Write the reviewed sha, the defects and whether the code must change in `body`. Call once every round. With nothing new, send an empty `body` and no `comments`: nothing is posted. Use `resolve_thread` to resolve a thread."
     )]
     async fn submit_review(
         &self,
@@ -1487,7 +1487,7 @@ mod tests {
             .and_then(|tool| tool.description)
             .expect("the submit_review description");
         assert!(description.contains("an empty `body` and no `comments`"));
-        assert!(description.contains("posts nothing"));
+        assert!(description.contains("nothing is posted"));
     }
 
     /// `complete_step` defines the column report: five fields, in order, and
