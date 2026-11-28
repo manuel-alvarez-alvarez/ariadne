@@ -2132,11 +2132,30 @@ view.
      It never presents a local default as the remote answer.
      This includes host controls, sync blocks, table cells, forms, labels and colours.
 
+114. Display untrusted prose between `<<<untrusted>>>` and `<<<end untrusted>>>`
+     with a highlight and a tooltip on hover and keyboard focus. Hide the markers.
+     Preserve Markdown formatting and literal markers in code. An open marker
+     highlights through the current end of streamed text. Folded prompt previews
+     retain the highlight. Stored text, input, copy, export and raw data stay unchanged.
+
 ## Acceptance criteria
 
 - Remote loading follows rule 113
   (`ui/src/hooks/hosts-loading.test.tsx::keeps All unresolved until the hosts answer`,
   `::shows skeletons for the host picker and catalog sync until hosts answer`).
+
+- Untrusted prose hides its markers and retains Markdown formatting and literal inline code
+  (`ui/src/components/markdown.test.tsx::marks untrusted prose while preserving Markdown and code examples`).
+- A highlight offers a tooltip on keyboard focus
+  (`ui/src/components/markdown.test.tsx::offers the trust tooltip on keyboard focus`).
+- Streaming keeps an open span highlighted and fenced code markers literal
+  (`ui/src/components/markdown.test.tsx::updates an open untrusted span as text streams and keeps code markers literal`).
+- Folded prompts retain the highlight
+  (`ui/src/features/sessions/console/blocks.test.tsx::keeps untrusted text highlighted in a folded prompt`,
+  `ui/src/features/sessions/console/blocks.test.tsx::preserves Markdown code boundaries in a folded prompt`).
+- Daemon prompts and agent questions highlight untrusted prose
+  (`ui/src/features/sessions/trajectory/trajectory-console.test.tsx::highlights untrusted text in a daemon prompt without its seat brief`,
+  `ui/src/features/goals/attention-forms.test.tsx::highlights untrusted prose in an agent question`).
 
 - Goal task cards show a remote host in its host colour and explain when it
   cannot be reached, in the label and in the card description (`ui/src/features/tasks/task-card.test.tsx::shows the colored remote host and its unreachable state`).
