@@ -175,3 +175,222 @@ async fn replaying_one_relay_effect_keeps_one_event_and_one_usage_record() {
         (12, 4, 3)
     );
 }
+
+#[tokio::test]
+async fn a_replayed_relay_effect_does_not_move_the_session_status_again() {
+    use ariadne_api::events::IngestEventRequest;
+    use ariadne_core::SessionStatus;
+    use ariadne_daemon::http::ingest_relay_event;
+    let home = tempfile::tempdir().unwrap();
+    let store = Store::open(home.path().join("store.db")).await.unwrap();
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    let event = |kind: &str| IngestEventRequest {
+        session_id: session.id.clone(),
+        launch: Some("launch".into()),
+        kind: kind.into(),
+        payload: json!({"session_id": "conversation"}),
+    };
+    ingest_relay_event(&store, &event("session_start"), "setup", 1)
+        .await
+        .unwrap();
+    ingest_relay_event(&store, &event("stop"), "output:9", 0)
+        .await
+        .unwrap();
+    let idle = store.get_session(&session.id).await.unwrap();
+    assert_eq!(idle.status(), SessionStatus::Idle);
+
+    // A reconnect replays the launch's setup.
+    ingest_relay_event(&store, &event("session_start"), "setup", 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_session(&session.id).await.unwrap().status(),
+        SessionStatus::Idle
+    );
+}
+
+#[tokio::test]
+async fn a_replayed_stop_left_half_applied_still_moves_the_session_to_idle() {
+    use ariadne_api::events::IngestEventRequest;
+    use ariadne_core::SessionStatus;
+    use ariadne_daemon::http::ingest_relay_event;
+    use ariadne_store::NewAgentEvent;
+    let home = tempfile::tempdir().unwrap();
+    let store = Store::open(home.path().join("store.db")).await.unwrap();
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    let event = |kind: &str| IngestEventRequest {
+        session_id: session.id.clone(),
+        launch: Some("launch".into()),
+        kind: kind.into(),
+        payload: json!({"session_id": "conversation"}),
+    };
+    ingest_relay_event(&store, &event("session_start"), "setup", 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_session(&session.id).await.unwrap().status(),
+        SessionStatus::Running
+    );
+
+    // The daemon stored the stop and went down before it moved the row. An
+    // advisory event follows it.
+    let (stored, _) = store
+        .create_event_once(
+            NewAgentEvent {
+                session_id: Some(session.id.clone()),
+                task_id: None,
+                kind: "stop".into(),
+                payload: json!({"session_id": "conversation"}),
+            },
+            &format!("{}:launch:output:9:0", session.id),
+        )
+        .await
+        .unwrap();
+    ingest_relay_event(&store, &event("session.diagnosis"), "diagnosis", 0)
+        .await
+        .unwrap();
+    let replayed = ingest_relay_event(&store, &event("stop"), "output:9", 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(replayed.id, stored.id);
+    assert_eq!(
+        store.get_session(&session.id).await.unwrap().status(),
+        SessionStatus::Idle
+    );
+}
+
+#[tokio::test]
+async fn a_replayed_completed_event_keeps_the_activity_clock() {
+    use ariadne_api::events::IngestEventRequest;
+    use ariadne_daemon::http::ingest_relay_event;
+    let home = tempfile::tempdir().unwrap();
+    let store = Store::open(home.path().join("store.db")).await.unwrap();
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    let start = IngestEventRequest {
+        session_id: session.id.clone(),
+        launch: Some("launch".into()),
+        kind: "session_start".into(),
+        payload: json!({"session_id": "conversation"}),
+    };
+    ingest_relay_event(&store, &start, "setup", 1)
+        .await
+        .unwrap();
+    let before = store
+        .get_session(&session.id)
+        .await
+        .unwrap()
+        .last_activity_at;
+    ingest_relay_event(&store, &start, "setup", 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .last_activity_at,
+        before
+    );
+}
+
+#[tokio::test]
+async fn a_replayed_stop_restores_its_usage_without_replacing_a_newer_report() {
+    use ariadne_api::events::IngestEventRequest;
+    use ariadne_daemon::http::ingest_relay_event;
+    use ariadne_store::NewAgentEvent;
+    let home = tempfile::tempdir().unwrap();
+    let store = Store::open(home.path().join("store.db")).await.unwrap();
+    let session = store
+        .create_session(NewSession {
+            goal_id: None,
+            task_id: None,
+            seat: None,
+            task_agent_id: None,
+            model: "stub:model".into(),
+            effort: None,
+            worktree_path: None,
+            pull_request_id: None,
+        })
+        .await
+        .unwrap();
+    let payload = |input: u64| {
+        json!({"session_id": "conversation", "ariadne_usage": {
+            "source": "conversation", "input_tokens": input,
+            "cached_input_tokens": 4, "output_tokens": 3}})
+    };
+    let stop = |input: u64| IngestEventRequest {
+        session_id: session.id.clone(),
+        launch: Some("launch".into()),
+        kind: "stop".into(),
+        payload: payload(input),
+    };
+    // Stored, and the daemon went down before it wrote the counters.
+    store
+        .create_event_once(
+            NewAgentEvent {
+                session_id: Some(session.id.clone()),
+                task_id: None,
+                kind: "stop".into(),
+                payload: payload(12),
+            },
+            &format!("{}:launch:output:9:0", session.id),
+        )
+        .await
+        .unwrap();
+    ingest_relay_event(&store, &stop(12), "output:9", 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.session_usage(&session.id).await.unwrap().input_tokens,
+        12
+    );
+
+    // A later report corrected the total downward; the replay must keep it.
+    ingest_relay_event(&store, &stop(8), "output:10", 0)
+        .await
+        .unwrap();
+    ingest_relay_event(&store, &stop(12), "output:9", 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.session_usage(&session.id).await.unwrap().input_tokens,
+        8
+    );
+}

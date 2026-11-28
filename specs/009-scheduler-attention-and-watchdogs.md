@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-11-26
+updated: 2026-11-28
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61, a69b953f, 29e6d84e]
 tests:
@@ -14,6 +14,7 @@ tests:
   - crates/ariadne-daemon/tests/it/workflow_pull_request.rs
   - crates/ariadne-daemon/tests/it/auto_switch.rs
   - crates/ariadne-daemon/src/scheduler/mod.rs
+  - crates/ariadne-daemon/tests/it/acp_recovery.rs
 ---
 
 # Scheduler, attention and watchdogs
@@ -57,6 +58,10 @@ the ACP runtime that takes a prompt (021).
    decision: a task that failed, went quiet, or a goal with nothing left running. It is
    told once per situation. Running work is what it delegated, and it is not
    woken for that.
+   The daemon holds the message back while no live orchestrator is idle, and
+   while the orchestrator was already told the same situation. Each time it
+   holds back a situation, the daemon logs the reason. It logs one line for
+   each reason and situation, not one line on each pass.
 5. A task wants the agent of its current column from `ready` to `finished`,
    briefed on entry to the column and resumed where it went away, and the
    cleanup its ending owes (001, 030). The agents of the other columns are
@@ -117,6 +122,9 @@ the ACP runtime that takes a prompt (021).
     Reconnect uses the stored place under 021 rule 17, without running selection again.
     The liveness sweep then asks the ACP runtime whether each live session's agent runs.
     A reconnected session stays live with its existing launch and conversation.
+    It also keeps its status: a replayed effect moves no session status (021, rule 19).
+    So an orchestrator that was idle before the restart is idle after it, and
+    it hears the goal's next situation (rule 4).
     A session whose agent is gone is retired.
     One failed reconnect does not stop this sequence (021, rule 19).
 21. A session still `starting` is left alone for 30 s (`START_GRACE_SECS`),
@@ -270,6 +278,26 @@ the ACP runtime that takes a prompt (021).
   (`::a_situation_survives_a_failed_hand_off_and_is_told_on_the_next_pass`).
   The test restores the same agent's prompt channel after the refusal,
   so a concurrent relaunch cannot replace the agent under observation.
+- An idle orchestrator that outlives a daemon restart in its relay stays
+  idle, and hears that every task is done when the last task ends after the
+  restart
+  (`scheduler_attention.rs::an_orchestrator_that_outlives_a_daemon_restart_hears_every_task_is_done`).
+  A replayed relay effect does not move the session status again
+  (`acp_recovery.rs::a_replayed_relay_effect_does_not_move_the_session_status_again`).
+  A replayed event that is the newest status event of its session finishes
+  the status a stop left half done, even when an advisory event follows it
+  (`acp_recovery.rs::a_replayed_stop_left_half_applied_still_moves_the_session_to_idle`).
+  A replay restores usage the daemon never wrote, and never replaces the
+  newer report of the same source
+  (`acp_recovery.rs::a_replayed_stop_restores_its_usage_without_replacing_a_newer_report`).
+  A replay never moves the activity clock
+  (`acp_recovery.rs::a_replayed_completed_event_keeps_the_activity_clock`).
+- A situation held back from a busy orchestrator is logged once with its
+  reason, however many passes find it
+  (`scheduler_attention.rs::a_held_back_goal_message_is_logged_once_with_its_reason`).
+  The daemon keeps every reason it logged for the current situation, so a
+  reason that returns is not logged again
+  (`scheduler_attention.rs::a_reason_logged_for_a_situation_is_not_logged_again_when_it_returns`).
 - A nudge to an idle agent arrives as a `session/prompt`
   (`acp_runtime.rs::a_scheduler_nudge_arrives_at_the_stub_agent_as_a_prompt`),
   with the wording 006 rule 10 owns

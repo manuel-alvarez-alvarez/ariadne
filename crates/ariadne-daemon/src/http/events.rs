@@ -77,6 +77,18 @@ pub async fn ingest_event(
     ingest_event_inner(store, req, None).await
 }
 
+/// The event kinds that move a session's status: what a replay reads to
+/// find the one that says what the row is.
+const STATUS_KINDS: &[&str] = &[
+    "session_start",
+    "user_prompt_submit",
+    "post_tool_use",
+    "pre_tool_use",
+    "permission.replied",
+    "stop",
+    "session_end",
+];
+
 async fn ingest_event_inner(
     store: &Store,
     req: &IngestEventRequest,
@@ -122,8 +134,59 @@ async fn ingest_event_inner(
         kind: req.kind.clone(),
         payload: req.payload.clone(),
     };
+    // A relay replay of an effect already stored is old news: the first
+    // ingest moved the row for it. A reconnect replays the setup of its
+    // launch, `session_start` among it, and read again that would put an
+    // idle agent back to `running` with no turn to end it — a goal's
+    // orchestrator would then never hear what its tasks need (009).
     let event = match relay_key {
-        Some(key) => store.create_event_once(new, key).await?,
+        Some(key) => match store.create_event_once(new, key).await? {
+            (event, true) => event,
+            (event, false) => {
+                // Only the status it moves can be left undone by a write the
+                // daemon never finished, and only the newest status event of
+                // the session says what the row is: a stop whose update was
+                // lost moves the row to idle, while an older replayed setup
+                // moves nothing. The clock and the flags are never
+                // replayed (021).
+                // Its usage is cumulative per source, and the newest report
+                // of a source is its total, whether it rose or fell. It is
+                // restored only where no later status event reports the
+                // same source (021).
+                let later = store
+                    .session_event_heads(&session.id, Some(&event.id), None, STATUS_KINDS)
+                    .await?;
+                if let Some((source, usage)) = usage_for_event(&req.payload) {
+                    let ids: Vec<String> = later
+                        .iter()
+                        .filter(|head| head.id != event.id)
+                        .map(|head| head.id.clone())
+                        .collect();
+                    let superseded_report = store.events_by_ids(&ids).await?.iter().any(|e| {
+                        serde_json::from_str(&e.payload)
+                            .ok()
+                            .and_then(|payload| usage_for_event(&payload))
+                            .is_some_and(|(s, _)| s == source)
+                    });
+                    if !superseded_report
+                        && let Some(moved) = store
+                            .upsert_session_usage(&session.id, &source, usage)
+                            .await?
+                    {
+                        crate::metrics::record_tokens(store, &session.id, moved).await;
+                    }
+                }
+                if !superseded
+                    && let Some(status) = status_for_event(&req.kind)
+                    && later.iter().all(|head| head.id == event.id)
+                {
+                    store
+                        .set_session_status_if_live(&session.id, status, req.launch.as_deref())
+                        .await?;
+                }
+                return Ok(Some(event));
+            }
+        },
         None => store.create_event(new).await?,
     };
 

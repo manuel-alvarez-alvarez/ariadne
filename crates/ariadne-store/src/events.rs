@@ -156,15 +156,16 @@ const CREATE_EVENT: &str =
 
 impl Store {
     pub async fn create_event(&self, new: NewAgentEvent) -> Result<AgentEvent> {
-        self.insert_event(new, None).await
+        Ok(self.insert_event(new, None).await?.0)
     }
 
     /// Replaying one relay effect returns its original event without publishing it twice.
+    /// The flag is `true` only where this call stored the event.
     pub async fn create_event_once(
         &self,
         new: NewAgentEvent,
         relay_key: &str,
-    ) -> Result<AgentEvent> {
+    ) -> Result<(AgentEvent, bool)> {
         self.insert_event(new, Some(relay_key)).await
     }
 
@@ -172,7 +173,7 @@ impl Store {
         &self,
         new: NewAgentEvent,
         relay_key: Option<&str>,
-    ) -> Result<AgentEvent> {
+    ) -> Result<(AgentEvent, bool)> {
         // Packed before the lock: `event_order` also holds up every live
         // console chunk of every session, so it covers the one statement and
         // nothing else.
@@ -202,14 +203,15 @@ impl Store {
             .await?;
         if let Some(event) = event {
             self.publish(Change::AgentEventCreated(event.clone()));
-            return Ok(event);
+            return Ok((event, true));
         }
-        Ok(
+        Ok((
             sqlx::query_as("SELECT * FROM agent_events WHERE relay_key = ?")
                 .bind(relay_key)
                 .fetch_one(self.r())
                 .await?,
-        )
+            false,
+        ))
     }
 
     /// Every event a session has produced, in order: the whole transcript an

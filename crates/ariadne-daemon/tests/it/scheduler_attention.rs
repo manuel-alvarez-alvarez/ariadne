@@ -1872,6 +1872,163 @@ async fn a_goal_whose_tasks_all_landed_wakes_its_orchestrator() {
     );
 }
 
+/// An orchestrator between turns outlives a daemon restart in its relay
+/// pane. The new daemon attaches to it again and replays the setup of its
+/// launch. The replay stores no new event, and it must not move the row
+/// back to `running` either: the orchestrator is idle, and the goal's last
+/// task that ends after the restart still wakes it.
+#[tokio::test]
+async fn an_orchestrator_that_outlives_a_daemon_restart_hears_every_task_is_done() {
+    let w = World::build(harness().session_place("tmux").await).await;
+    let _cleanup = common::RelayCleanup(w.launcher.cfg.root.clone());
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    let (status, _) = w
+        .send(common::post_json(
+            &format!("/v1/sessions/{}/console/input", orchestrator.id),
+            serde_json::json!({"text": "plan the goal"}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    eventually(TIMEOUT, "the orchestrator's turn to end", async || {
+        w.session_status(&orchestrator).await == SessionStatus::Idle
+    })
+    .await;
+
+    // The daemon stops. The relay pane and the agent in it live on, and
+    // the next daemon attaches to them again.
+    w.launcher.acp.detach_relays().await;
+    assert_eq!(w.launcher.acp.reconnect_relays().await.unwrap(), 1);
+    // The driver takes a pin switch only once the replayed setup is
+    // through, and a switch on the same agent moves no status.
+    let (status, _) = w
+        .send(common::post_json(
+            &format!("/v1/sessions/{}/switch", orchestrator.id),
+            serde_json::json!({"model": orchestrator.model}),
+        ))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(
+        w.session_status(&orchestrator).await,
+        SessionStatus::Idle,
+        "the replayed setup leaves the idle orchestrator idle"
+    );
+
+    w.advance_to(&w.task, "merge").await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Finished,
+            Actor::Agent,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
+    let sched = w.scheduler();
+    sched.goal(&w.goal);
+    eventually(TIMEOUT, "the orchestrator to be woken", async || {
+        w.prompted(&orchestrator).contains("Every task is done.")
+    })
+    .await;
+    w.store
+        .set_goal_status(&w.goal.id, GoalStatus::Cancelled)
+        .await
+        .unwrap();
+    w.launcher.acp.kill_and_wait(&orchestrator.id).await;
+}
+
+/// A goal with every task done and an orchestrator mid-turn: the daemon
+/// holds the message back until the turn ends. The log says why, and says
+/// it once, however many passes find the same situation.
+#[tokio::test]
+async fn a_held_back_goal_message_is_logged_once_with_its_reason() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.advance_to(&w.task, "merge").await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Finished,
+            Actor::Agent,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        w.session_status(&orchestrator).await,
+        SessionStatus::Running
+    );
+
+    let _capture = capture(&w);
+    let sched = w.scheduler();
+    for _ in 0..3 {
+        sched.goal(&w.goal);
+        sched.flush().await;
+    }
+    let held: Vec<String> = captured_messages(&w)
+        .await
+        .into_iter()
+        .filter(|message| {
+            message.starts_with("the daemon holds back the goal's message to the orchestrator")
+                && message.contains(&w.goal.id)
+        })
+        .collect();
+    assert_eq!(held.len(), 1, "{held:?}");
+    assert!(
+        held[0].contains("the orchestrator is running, not idle"),
+        "{held:?}"
+    );
+    assert!(!w.prompted(&orchestrator).contains("Every task is done."));
+}
+
+/// A reason the daemon already logged for a situation stays logged: an
+/// orchestrator that goes from running to starting and back to running does not
+/// have the first reason said again.
+#[tokio::test]
+async fn a_reason_logged_for_a_situation_is_not_logged_again_when_it_returns() {
+    let w = World::active().await;
+    let orchestrator = w.orchestrator_session(&w.goal).await;
+    w.agent_runs(&orchestrator).await;
+    w.advance_to(&w.task, "merge").await;
+    w.store
+        .transition_task(
+            &w.task.id,
+            TaskStatus::Finished,
+            Actor::Agent,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
+
+    let _capture = capture(&w);
+    let sched = w.scheduler();
+    for status in [
+        SessionStatus::Running,
+        SessionStatus::Starting,
+        SessionStatus::Running,
+    ] {
+        w.store
+            .set_session_status(&orchestrator.id, status)
+            .await
+            .unwrap();
+        sched.goal(&w.goal);
+        sched.flush().await;
+    }
+    let held: Vec<String> = captured_messages(&w)
+        .await
+        .into_iter()
+        .filter(|message| {
+            message.starts_with("the daemon holds back the goal's message to the orchestrator")
+                && message.contains(&w.goal.id)
+        })
+        .collect();
+    assert_eq!(held.len(), 2, "{held:?}");
+}
+
 // -- deliveries and relaunches ----------------------------------------------
 
 /// Three agents to nudge in one pass, and the pass hands all three their
