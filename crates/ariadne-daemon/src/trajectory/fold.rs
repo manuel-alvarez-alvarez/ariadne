@@ -15,6 +15,7 @@ use serde_json::Value;
 
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::sessions::SessionDto;
+use ariadne_api::tasks::LOCAL_HOST;
 use ariadne_api::trajectory::{
     ActivityDto, CompactionStatus, CompactionStepDto, ContentBlockDto, ContextWindowDto,
     ErrorStepDto, MAIN_LANE, NoteSeverity, NoteStepDto, PermissionAnswerDto, PermissionState,
@@ -23,10 +24,11 @@ use ariadne_api::trajectory::{
     ToolCallStatus, TrajectoryOpDto, TrajectorySnapshotDto, TurnDto, TurnState,
 };
 use ariadne_core::event_facts::{EventFacts, facts_of, lane_of as event_lane};
+use ariadne_core::models::agent_of;
 use ariadne_store::{EventHead, SessionDisplayState};
 
 use super::steps::{
-    append_text, apply_display, blocks_of, commands_of, content_of, is_terminal, lane_of,
+    append_text, apply_display, blocks_of, brief_of, commands_of, content_of, is_terminal, lane_of,
     locations_of, merge_call, merge_call_facts, new_call, permission_options, status_of, step_id,
     string_at, subagent_ref, subject_of, text_step,
 };
@@ -251,8 +253,10 @@ pub(crate) struct TurnIndex {
 pub(crate) fn session_state(
     session: &SessionDto,
     display: Option<&SessionDisplayState>,
+    host: &str,
 ) -> SessionStateDto {
     let mut state = row_state(session);
+    state.host = host.to_string();
     if let Some(display) = display {
         apply_display(
             &mut state,
@@ -262,7 +266,10 @@ pub(crate) fn session_state(
     state
 }
 
-/// The fields of a session's state that its row holds.
+/// The fields of a session's state that its row holds. `model` and `effort`
+/// are the stored ones here: the options the agent reports take their place
+/// when the state is shown (`Fold::displayed_session`). The host is the
+/// task's, which the row does not hold.
 fn row_state(session: &SessionDto) -> SessionStateDto {
     SessionStateDto {
         status: session.status,
@@ -278,7 +285,18 @@ fn row_state(session: &SessionDto) -> SessionStateDto {
         usage: session.usage,
         cost: None,
         commands: Vec::new(),
+        seat: session.seat,
+        step: session.step.clone(),
+        host: LOCAL_HOST.into(),
+        agent: agent_of(&session.model).into(),
+        model: Some(stored_model(&session.model).into()),
+        effort: session.effort.clone(),
     }
+}
+
+/// The model a pin names, without its registry agent.
+fn stored_model(pin: &str) -> &str {
+    pin.split_once(':').map_or(pin, |(_, model)| model)
 }
 
 /// The state of a session with no row to read, before any event.
@@ -294,6 +312,12 @@ pub(crate) fn blank_session(status: ariadne_core::SessionStatus) -> SessionState
         usage: Default::default(),
         cost: None,
         commands: Vec::new(),
+        seat: None,
+        step: None,
+        host: LOCAL_HOST.into(),
+        agent: String::new(),
+        model: None,
+        effort: None,
     }
 }
 
@@ -340,8 +364,26 @@ impl Fold {
         self.cwd = cwd;
     }
 
+    /// The session as a client reads it. The state keeps the stored model
+    /// and effort. An option of the category `model` or `thought_level` that
+    /// the agent offers gives its current value in their place, a missing
+    /// value included; the stored one stands only where no such option is.
     fn displayed_session(&self) -> SessionStateDto {
         let mut state = self.session.clone();
+        let current = |category: &str, stored: Option<String>| match state
+            .config_options
+            .iter()
+            .find(|option| option.category.as_deref() == Some(category))
+        {
+            Some(option) => option.current_value.clone(),
+            None => stored,
+        };
+        let (model, effort) = (
+            current("model", state.model.take()),
+            current("thought_level", state.effort.take()),
+        );
+        state.model = model;
+        state.effort = effort;
         if state.status == ariadne_core::SessionStatus::Running && state.running_turn_id.is_none() {
             state.status = ariadne_core::SessionStatus::Idle;
         }
@@ -811,7 +853,8 @@ impl Fold {
         }
     }
 
-    /// The session's row changed: its status, attention, usage or context.
+    /// The session's row changed: its status, attention, usage, context,
+    /// seat, step, agent, model or effort. The host of its task stays.
     pub(crate) fn patch_session(&mut self, session: &SessionDto) -> Option<TrajectoryOpDto> {
         let mut next = self.session.clone();
         let row = row_state(session);
@@ -819,6 +862,11 @@ impl Fold {
         next.attention_reason = row.attention_reason;
         next.usage = row.usage;
         next.context = row.context;
+        next.seat = row.seat;
+        next.step = row.step;
+        next.agent = row.agent;
+        next.model = row.model;
+        next.effort = row.effort;
         (next != self.session).then(|| {
             self.session = next;
             self.session_op()
@@ -1012,6 +1060,7 @@ impl Fold {
             text: input
                 .full
                 .and_then(|event| string_at(&event.payload, "/text")),
+            brief: input.full.and_then(|event| brief_of(&event.payload)),
             content: input
                 .full
                 .map(|event| content_of(&event.payload, &self.session_id, &event.id))
@@ -2435,13 +2484,12 @@ mod tests {
     use ariadne_api::events::AgentEventDto;
     use ariadne_api::trajectory::{
         ActivityDto, CompactionStatus, ContentBlockDto, MAIN_LANE, NoteSeverity, PermissionState,
-        PlanVariant, QuestionState, SessionStateDto, StepDto, TrajectoryOpDto, TurnState,
+        PlanVariant, QuestionState, StepDto, TrajectoryOpDto, TurnState,
     };
-    use ariadne_api::usage::TokenUsageDto;
     use ariadne_core::SessionStatus;
     use serde_json::{Value, json};
 
-    use super::{Fold, STEP_WINDOW};
+    use super::{Fold, STEP_WINDOW, blank_session, session_state};
     use crate::trajectory::step_id;
 
     /// A fold that hands out its events' ids in order, as the store does.
@@ -2452,18 +2500,7 @@ mod tests {
 
     impl Session {
         fn new() -> Self {
-            let state = SessionStateDto {
-                status: SessionStatus::Running,
-                attention_reason: None,
-                running_turn_id: None,
-                title: None,
-                mode: None,
-                config_options: Vec::new(),
-                context: None,
-                usage: TokenUsageDto::default(),
-                cost: None,
-                commands: Vec::new(),
-            };
+            let state = blank_session(SessionStatus::Running);
             Self {
                 fold: Fold::new("session", state),
                 next: 0,
@@ -3553,6 +3590,177 @@ mod tests {
             s.fold.patch_session(&row).is_none(),
             "nothing changed again"
         );
+    }
+
+    /// A session row as its endpoint answers it, on a seat and a column,
+    /// pinned to `stub:m` at `high`.
+    fn a_row() -> ariadne_api::sessions::SessionDto {
+        serde_json::from_value(json!({
+            "id": "session", "goal_id": "g", "task_id": "t", "seat": "agent",
+            "task_agent_id": "a", "step": "develop", "model": "stub:m", "effort": "high",
+            "internal_session_id": null, "worktree_path": null, "status": "idle",
+            "attention_reason": null, "attention_since": null, "last_activity_at": null,
+            "usage": {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0},
+            "context_used": null, "context_size": null, "created_at": "2026-11-27T00:00:00Z",
+            "ended_at": null, "switched_from": null, "pull_request_id": null}))
+        .unwrap()
+    }
+
+    /// The state names its seat, step, host, agent, model and effort, and a
+    /// patch carries each change of them: a switch to another model of the
+    /// same agent, and a change of the step (rule 33).
+    #[test]
+    fn the_session_state_names_its_seat_step_host_agent_model_and_effort_and_patches_each_change() {
+        let mut row = a_row();
+        let state = session_state(&row, None, "worker-a");
+        assert_eq!(
+            (
+                state.seat,
+                state.step.as_deref(),
+                state.host.as_str(),
+                state.agent.as_str(),
+                state.model.as_deref(),
+                state.effort.as_deref(),
+            ),
+            (
+                Some(ariadne_core::Seat::Agent),
+                Some("develop"),
+                "worker-a",
+                "stub",
+                Some("m"),
+                Some("high"),
+            ),
+        );
+        let mut s = Session::new();
+        s.fold = Fold::new("session", state);
+
+        let patch_of = |op: Option<TrajectoryOpDto>| match op.expect("the row changed") {
+            TrajectoryOpDto::SessionPatch { session } => session,
+            other => panic!("{other:?}"),
+        };
+        row.model = "stub:n".into();
+        row.effort = Some("low".into());
+        let switched = patch_of(s.fold.patch_session(&row));
+        assert_eq!(switched.model.as_deref(), Some("n"));
+        assert_eq!(switched.effort.as_deref(), Some("low"));
+        assert_eq!(switched.agent, "stub");
+        assert_eq!(switched.host, "worker-a", "the task's host stays");
+
+        row.step = None;
+        row.seat = Some(ariadne_core::Seat::Keeper);
+        let moved = patch_of(s.fold.patch_session(&row));
+        assert_eq!(moved.step, None);
+        assert_eq!(moved.seat, Some(ariadne_core::Seat::Keeper));
+
+        row.model = "other:o".into();
+        let changed_agent = patch_of(s.fold.patch_session(&row));
+        assert_eq!(changed_agent.agent, "other");
+        assert!(
+            s.fold.patch_session(&row).is_none(),
+            "nothing changed again"
+        );
+    }
+
+    /// The model and the effort are the values of their config options while
+    /// the agent offers them, else the stored ones (rule 33).
+    #[test]
+    fn the_model_and_the_effort_are_the_config_options_values_else_the_stored_ones() {
+        let row = a_row();
+        let mut s = Session::new();
+        s.fold = Fold::new("session", session_state(&row, None, "local"));
+        let (_, ops) = s.event(
+            "display_state_update",
+            json!({"config_options": [
+                {"id": "model", "name": "Model", "category": "model", "currentValue": "live-m",
+                 "options": [{"value": "live-m", "name": "Live"}]},
+                {"id": "effort", "name": "Effort", "category": "thought_level",
+                 "currentValue": "max", "options": [{"value": "max", "name": "Max"}]}]}),
+        );
+        let [TrajectoryOpDto::SessionPatch { session }] = ops.as_slice() else {
+            panic!("one patch: {ops:?}");
+        };
+        assert_eq!(session.model.as_deref(), Some("live-m"));
+        assert_eq!(session.effort.as_deref(), Some("max"));
+
+        let (_, ops) = s.event("display_state_update", json!({"config_options": []}));
+        let [TrajectoryOpDto::SessionPatch { session }] = ops.as_slice() else {
+            panic!("one patch: {ops:?}");
+        };
+        assert_eq!(session.model.as_deref(), Some("m"), "the stored model");
+        assert_eq!(session.effort.as_deref(), Some("high"), "the stored effort");
+
+        let (_, ops) = s.event(
+            "display_state_update",
+            json!({"config_options": [
+                {"id": "model", "name": "Model", "category": "model", "options": []},
+                {"id": "effort", "name": "Effort", "category": "thought_level",
+                 "currentValue": null, "options": []}]}),
+        );
+        let [TrajectoryOpDto::SessionPatch { session }] = ops.as_slice() else {
+            panic!("one patch: {ops:?}");
+        };
+        assert_eq!(session.model, None, "an option with no current value");
+        assert_eq!(session.effort, None, "an option with no current value");
+    }
+
+    /// A prompt holds the seat brief that its content carries ahead of its
+    /// text, with the note of a cancelled turn before it left out, and none
+    /// for a prompt that carried no brief. `content` and `text` keep their
+    /// values, and a prompt stored before `brief` reads the same (rule 9).
+    #[test]
+    fn a_prompt_holds_the_seat_brief_ahead_of_its_text() {
+        let note = ariadne_store::defaults::cancelled_turn_note();
+        let prompt = |read: String, text: &str| {
+            let mut s = Session::new();
+            let turn = s.event(
+                "user_prompt_submit",
+                json!({"prompt": read, "text": text, "source": "daemon",
+                       "content": [{"type": "text", "text": read}]}),
+            );
+            let snapshot = s.fold.snapshot(0, 20, None);
+            let prompt = snapshot
+                .turns
+                .iter()
+                .find(|t| t.id == turn.0)
+                .unwrap()
+                .prompt
+                .clone();
+            prompt.expect("the turn has a prompt")
+        };
+
+        let briefed = prompt("You are the author.\n\nBuild it".into(), "Build it");
+        assert_eq!(briefed.brief.as_deref(), Some("You are the author."));
+        assert_eq!(briefed.text.as_deref(), Some("Build it"));
+        assert_eq!(
+            briefed.content,
+            vec![ContentBlockDto::Text {
+                text: "You are the author.\n\nBuild it".into()
+            }]
+        );
+
+        let plain = prompt("Build it".into(), "Build it");
+        assert_eq!(plain.brief, None);
+
+        let after_cancel = prompt(format!("{note}\n\nBuild it"), "Build it");
+        assert_eq!(after_cancel.brief, None, "the note is not a brief");
+
+        let both = prompt(
+            format!("{note}\n\nYou are the author.\n\nBuild it"),
+            "Build it",
+        );
+        assert_eq!(both.brief.as_deref(), Some("You are the author."));
+
+        let multiline = prompt("# Seat\n\nRules\n\nBuild it".into(), "Build it");
+        assert_eq!(multiline.brief.as_deref(), Some("# Seat\n\nRules"));
+
+        let mut s = Session::new();
+        let (turn, _) = s.event(
+            "user_prompt_submit",
+            json!({"text": "Go", "source": "console"}),
+        );
+        let old = s.fold.snapshot(0, 20, None);
+        let old = old.turns.iter().find(|t| t.id == turn).unwrap();
+        assert_eq!(old.prompt.as_ref().unwrap().brief, None, "no prompt field");
     }
 
     /// A run with no `item_id` streams under the id of the chunk that opened

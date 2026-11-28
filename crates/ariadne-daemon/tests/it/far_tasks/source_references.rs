@@ -787,6 +787,12 @@ async fn source_trajectory_routes_reach_the_worker_session() {
         .unwrap_or_else(|| panic!("the worker's turn: {snapshot}"));
     assert_eq!(turn["state"], "completed");
     assert_eq!(turn["answer"][0]["text"], "worker answer");
+    let own: Value = p
+        .far
+        .get(&format!("/v1/sessions/{}/trajectory", session.id))
+        .await;
+    assert_eq!(own["session"]["host"], "local", "the worker's own word");
+    assert_eq!(snapshot["session"]["host"], "far", "the host that runs it");
     let page: Value = p
         .local
         .get(&format!(
@@ -855,6 +861,39 @@ async fn source_trajectory_routes_reach_the_worker_session() {
         .unwrap();
     assert_eq!(opening.event, "snapshot");
     assert!(opening.data.contains("worker answer"));
+    let opened: Value = serde_json::from_str(&opening.data).unwrap();
+    assert_eq!(opened["session"]["host"], "far");
+    p.far
+        .store
+        .set_session_pin(
+            &session.id,
+            &ariadne_store::AgentPin {
+                model: format!(
+                    "{}:switched",
+                    ariadne_core::models::agent_of(&session.model)
+                ),
+                effort: Some("low".into()),
+            },
+        )
+        .await
+        .unwrap();
+    let patched = loop {
+        let frame = tokio::time::timeout(TIMEOUT, stream.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let update: Value = serde_json::from_str(&frame.data).unwrap();
+        if let Some(op) = update["ops"]
+            .as_array()
+            .and_then(|ops| ops.iter().find(|op| op["op"] == "session_patch"))
+        {
+            break op.clone();
+        }
+    };
+    assert_eq!(patched["session"]["host"], "far", "a patch names it too");
+    assert_eq!(patched["session"]["model"], "switched");
+    assert_eq!(patched["session"]["effort"], "low");
 }
 
 #[tokio::test]

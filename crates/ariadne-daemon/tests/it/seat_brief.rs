@@ -120,3 +120,57 @@ async fn an_agent_gets_the_seat_brief_on_the_first_turn_and_after_a_switch() {
     );
     assert_eq!(turn(&h, &session, "Later.").await, "Later.");
 }
+
+/// A prompt of the trajectory holds the seat brief that it carried, as its
+/// own field. The prompt of the first turn of a launch and the first one
+/// after a model switch hold it, each other prompt holds none, and `text`
+/// is the text as it was submitted.
+#[tokio::test]
+async fn a_prompt_of_the_trajectory_holds_the_seat_brief_it_carried() {
+    let h = harness().await;
+    let (session, briefing) = briefed_develop(&h, "stub:a").await;
+    let brief = h.launch_file(&session.id).unwrap().system_prompt;
+    first_turn(&h, &session).await;
+    turn(&h, &session, "Go on.").await;
+    let (status, _) = h
+        .send(post_json(
+            &format!("/v1/sessions/{}/switch", session.id),
+            json!({ "model": "stub:b" }),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    turn(&h, &session, "After the switch.").await;
+
+    let snapshot: serde_json::Value = h
+        .get(&format!("/v1/sessions/{}/trajectory", session.id))
+        .await;
+    let prompts: Vec<(String, serde_json::Value, String)> = snapshot["turns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|turn| turn["prompt"].as_object())
+        .map(|prompt| {
+            (
+                prompt["text"].as_str().unwrap().to_string(),
+                prompt["brief"].clone(),
+                prompt["content"][0]["text"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        prompts,
+        vec![
+            (
+                briefing.clone(),
+                json!(brief),
+                format!("{brief}\n\n{briefing}")
+            ),
+            ("Go on.".into(), json!(null), "Go on.".into()),
+            (
+                "After the switch.".into(),
+                json!(brief),
+                format!("{brief}\n\nAfter the switch.")
+            ),
+        ]
+    );
+}

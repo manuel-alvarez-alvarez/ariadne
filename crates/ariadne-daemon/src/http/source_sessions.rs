@@ -82,9 +82,10 @@ pub(super) async fn route(
             .map_err(|e| super::tasks::far_error(&reference.host, e))?;
         let task_id = reference.id;
         let session_id = session_id.to_owned();
+        let host = reference.host;
         let stream = futures_util::stream::unfold(
-            (stream, task_id, session_id),
-            |(mut stream, task, session)| async move {
+            (stream, task_id, session_id, host),
+            |(mut stream, task, session, host)| async move {
                 let frame = stream.next().await?;
                 let frame = match frame {
                     Ok(frame) => frame,
@@ -93,6 +94,7 @@ pub(super) async fn route(
                 let data = match serde_json::from_str::<serde_json::Value>(&frame.data) {
                     Ok(mut value) => {
                         rewrite(&mut value, &task, &session);
+                        name_host(&mut value, &host);
                         value.to_string()
                     }
                     Err(_) => frame.data,
@@ -105,7 +107,7 @@ pub(super) async fn route(
                 }
                 Some((
                     Ok::<_, std::convert::Infallible>(event),
-                    (stream, task, session),
+                    (stream, task, session, host),
                 ))
             },
         );
@@ -190,6 +192,9 @@ pub(super) async fn route(
             .then(|| value.as_object_mut()?.remove("raw"))
             .flatten();
         rewrite(&mut value, &reference.id, session_id);
+        if suffix == "trajectory" {
+            name_host(&mut value, &reference.host);
+        }
         if let (Some(raw), Some(object)) = (raw, value.as_object_mut()) {
             object.insert("raw".into(), raw);
         }
@@ -205,6 +210,28 @@ pub(super) async fn route(
         super::trajectory::protect_blob(&mut answer);
     }
     Ok(answer)
+}
+
+/// Name `host` as the host of the session state that a trajectory snapshot
+/// or a `session_patch` op carries: the worker names its own task `local`.
+/// No other `host` key of a body is touched.
+fn name_host(value: &mut serde_json::Value, host: &str) {
+    let state = |state: Option<&mut serde_json::Value>| {
+        if let Some(object) = state.and_then(serde_json::Value::as_object_mut) {
+            object.insert("host".into(), host.into());
+        }
+    };
+    state(value.get_mut("session"));
+    for op in value
+        .get_mut("ops")
+        .and_then(serde_json::Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if op.get("op").and_then(serde_json::Value::as_str) == Some("session_patch") {
+            state(op.get_mut("session"));
+        }
+    }
 }
 
 fn rewrite(value: &mut serde_json::Value, task: &str, session: &str) {

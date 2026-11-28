@@ -111,6 +111,23 @@ pub(super) fn content_of(
         .unwrap_or_default()
 }
 
+/// The seat brief a prompt carried (040, rule 9): what the text the agent
+/// read holds ahead of the text as it was submitted, without the note of a
+/// cancelled turn that may come before it. A prompt stored before `brief`
+/// has the same fields, so it reads the same, and a prompt with no brief,
+/// or whose parts do not fit this form, has none.
+pub(super) fn brief_of(payload: &Value) -> Option<String> {
+    let text = string_at(payload, "/text")?;
+    let read = string_at(payload, "/prompt")?;
+    let head = read.strip_suffix(text.as_str())?;
+    let note = ariadne_store::defaults::cancelled_turn_note();
+    let head = head
+        .strip_prefix(note)
+        .map_or(head, |rest| rest.strip_prefix("\n\n").unwrap_or(rest));
+    let brief = head.strip_suffix("\n\n")?;
+    (!brief.is_empty()).then(|| brief.to_string())
+}
+
 /// ACP content blocks, with every byte left behind a `blob` URL. A stored
 /// run keeps one block per chunk (021, rule 6), and a live run appends its
 /// chunks to one: adjacent text blocks read as one, so both are the same.

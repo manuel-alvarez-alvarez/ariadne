@@ -1,7 +1,7 @@
 //! The embedded API documentation and the schema it loads (012).
 use crate::common::{get, harness};
 use axum::http::{StatusCode, header};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 #[tokio::test]
 async fn swagger_serves_its_page_assets_and_the_daemons_schema() {
@@ -97,6 +97,23 @@ async fn the_committed_api_pair_holds_every_trajectory_type() {
             generated.contains(&format!("        {name}: ")),
             "schema.d.ts holds {name}"
         );
+    }
+    for (name, fields) in [
+        (
+            "SessionStateDto",
+            &["seat", "step", "host", "agent", "model", "effort"][..],
+        ),
+        ("PromptDto", &["brief"][..]),
+    ] {
+        for field in fields {
+            assert!(
+                doc["components"]["schemas"][name]["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(field)),
+                "{name} requires {field}"
+            );
+        }
     }
     let kinds = |name: &str, tag: &str| -> Vec<String> {
         doc["components"]["schemas"][name]["oneOf"]

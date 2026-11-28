@@ -398,6 +398,7 @@ it("finds the shown prompt of a daemon turn, not its seat brief", async () => {
   const user = userEvent.setup()
   const turn = aTurn({
     prompt: {
+      brief: null,
       id: anId(),
       content: text("Seat brief zebra\n\nFix the bug"),
       text: "Fix the bug",

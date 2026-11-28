@@ -7,10 +7,11 @@
 //! `/trajectory/items/{item_id}` answers the [`ToolCallDetailDto`] of one
 //! call, on demand.
 
-use ariadne_core::{AttentionReason, SessionStatus};
+use ariadne_core::{AttentionReason, Seat, SessionStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::tasks::LOCAL_HOST;
 use crate::usage::TokenUsageDto;
 
 /// The lane of the session's own agent. A subagent's lane is its id.
@@ -87,6 +88,37 @@ pub struct SessionStateDto {
     pub cost: Option<CostDto>,
     /// The slash commands the agent offers now.
     pub commands: Vec<CommandDto>,
+    /// The seat the session holds; null for a session with no seat.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub seat: Option<Seat>,
+    /// The workflow column the session works, where it still has one.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub step: Option<String>,
+    /// The host that runs the task of the session: `local` for a session
+    /// with no task, else the host name of the task (`GET /v1/hosts`).
+    #[serde(default = "local_host")]
+    #[schema(required = true)]
+    pub host: String,
+    /// The ACP agent id of the session, such as `claude-acp`.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub agent: String,
+    /// The current value of the model config option, else the stored model.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub model: Option<String>,
+    /// The current value of the effort config option, else the stored
+    /// effort.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub effort: Option<String>,
+}
+
+/// The host of a state that names none: the daemon's own.
+fn local_host() -> String {
+    LOCAL_HOST.into()
 }
 
 /// The session's mode and the modes the agent offers.
@@ -199,6 +231,11 @@ pub struct PromptDto {
     /// carries ahead of it on the first turn of a launch.
     pub text: Option<String>,
     pub content: Vec<ContentBlockDto>,
+    /// The seat brief that `content` carries ahead of `text`, for a prompt
+    /// that carried one; null for each other prompt.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub brief: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

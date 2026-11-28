@@ -17,6 +17,7 @@ tests:
   - crates/ariadne-daemon/tests/it/trajectory.rs
   - crates/ariadne-daemon/tests/it/trajectory_acp.rs
   - crates/ariadne-daemon/tests/it/far_tasks/source_references.rs
+  - crates/ariadne-daemon/tests/it/seat_brief.rs
   - crates/ariadne-daemon/tests/it/docs.rs
 ---
 
@@ -103,6 +104,14 @@ Out:
    session before its first prompt are a turn with no prompt, opened by the
    first event that is not a lifecycle note.
    Lifecycle notes alone before the first prompt open no turn.
+   `brief` holds that seat brief, as its own field, for each prompt that
+   carried one, and is null for each other prompt. The prompt of the first
+   turn after a launch or a model switch carries one. The note of a
+   cancelled turn, which may stand before the brief in the content, is not
+   part of it. `content` and `text` keep their values. The daemon reads
+   `brief` from the stored fields `prompt` and `text`: it is what `prompt`
+   holds ahead of `text`. So a prompt stored before this field has its
+   `brief`, and no store migration runs.
 10. An event joins the running turn. Where no turn runs, it joins the newest
    turn. A lifecycle note received while a turn runs stays in that turn.
     A lifecycle note received without a running turn starts the next turn.
@@ -305,6 +314,21 @@ Out:
       reaches it live.
     - A live `display_state_update` sets each field it carries, and a
       change is a `session_patch`.
+    - `seat`, `step`, `agent`, `model` and `effort` start from the row, and a
+      `session_updated` event of the session carries each change of them as
+      a `session_patch`, a switch to another model of the same agent
+      included. `seat` is the seat of the session, and `step` is the workflow
+      column of its task agent, null where it has none. `agent` is the ACP
+      agent id of the session: the registry agent its model pin names.
+    - `model` is the current value of the config option of the category
+      `model`, and `effort` is the current value of the option of the
+      category `thought_level`. An option that is offered gives its current
+      value, null where it has none. Only where the agent offers no such
+      option, `model` is the model of the row's pin, without its agent, and
+      `effort` is the effort of the row.
+    - `host` is the name of the host that runs the task of the session, and
+      `local` for a session with no task and for a task that names no host.
+      It does not change while a hub follows the session.
     - A config option lists the values of every group of a grouped select.
       A value that is not text, such as a boolean, reads as its JSON.
     - The agent's own `available_commands_update` sets `commands`. A stored
@@ -391,7 +415,10 @@ Out:
 47. A hub keeps the newest 100 turns, and the older ones with attention
     outside them.
 48. A session on a remote host serves the same routes through the
-    forwarder, with the session named by its alias (037).
+    forwarder, with the session named by its alias (037). The forwarder
+    names the host of the task as `host` in the `session` of a snapshot and
+    in each `session_patch`, and in no other place: the worker names its own
+    host `local`.
 
 ### The detail of a call
 
@@ -786,6 +813,26 @@ Out:
     does, and a call that opens after its turn ended stays `pending`
     (rules 21, 49):
     `detail.rs::a_pending_call_executes_unless_it_waits_for_a_permission`.
+
+89. The session state gives its seat, step, host, agent, model and effort,
+    and a switch to another model of the same agent is a `session_patch`
+    (rule 33):
+    `fold.rs::the_session_state_names_its_seat_step_host_agent_model_and_effort_and_patches_each_change`
+    and `trajectory.rs::the_session_state_names_where_it_runs_and_a_switch_patches_it`.
+    The model and the effort are the config options' values, null for an
+    option with no current value, and the stored ones where no option is:
+    `fold.rs::the_model_and_the_effort_are_the_config_options_values_else_the_stored_ones`.
+90. A remote session gives the name of its host through the forwarder, in the
+    snapshot and in a patch (rule 48):
+    `far_tasks/source_references.rs::source_trajectory_routes_reach_the_worker_session`.
+91. A prompt holds its seat brief as `brief`, the note of a cancelled turn
+    left out, and no brief for a prompt without one; a prompt stored before
+    the field reads the same (rule 9):
+    `fold.rs::a_prompt_holds_the_seat_brief_ahead_of_its_text` and
+    `seat_brief.rs::a_prompt_of_the_trajectory_holds_the_seat_brief_it_carried`.
+92. `ui/openapi.json` and `ui/src/api/schema.d.ts` hold the new fields, and
+    the schema requires each of them (rules 9, 33):
+    `docs.rs::the_committed_api_pair_holds_every_trajectory_type`.
 
 Rules 10 and 12 hold in the tests above: every fold test puts its events in
 the running turn, and

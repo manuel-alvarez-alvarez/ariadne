@@ -2127,8 +2127,8 @@ export interface paths {
         /**
          * Post one round of a review of a request, in the user's name (029): only
          *     its new findings, as one review of inline comments, each led by its
-         *     priority. There is no summary of any kind. A round with no new finding
-         *     posts no review. `request_changes` stands on a P0 or P1 finding, new or
+         *     priority. There is no summary of any kind. A round with an empty body and
+         *     no finding is quiet: it records the reviewed revision and posts nothing. `request_changes` stands on a P0 or P1 finding, new or
          *     still open. Any other event is refused, an approval above all: the user
          *     gives every approval. What it posted is marked as the review's.
          */
@@ -4900,6 +4900,11 @@ export interface components {
          */
         PrOperation: "review" | "babysit";
         PromptDto: {
+            /**
+             * @description The seat brief that `content` carries ahead of `text`, for a prompt
+             *     that carried one; null for each other prompt.
+             */
+            brief: string | null;
             content: components["schemas"]["ContentBlockDto"][];
             id: string;
             /** @description The lifecycle kind of a daemon prompt, such as `agent_resume`. */
@@ -5353,16 +5358,33 @@ export interface components {
         };
         /** @description The state of the session a trajectory belongs to. */
         SessionStateDto: {
+            /** @description The ACP agent id of the session, such as `claude-acp`. */
+            agent: string;
             attention_reason?: components["schemas"]["AttentionReason"] | null;
             /** @description The slash commands the agent offers now. */
             commands: components["schemas"]["CommandDto"][];
             config_options: components["schemas"]["ConfigOptionDto"][];
             context?: components["schemas"]["ContextWindowDto"] | null;
             cost?: components["schemas"]["CostDto"] | null;
+            /**
+             * @description The current value of the effort config option, else the stored
+             *     effort.
+             */
+            effort: string | null;
+            /**
+             * @description The host that runs the task of the session: `local` for a session
+             *     with no task, else the host name of the task (`GET /v1/hosts`).
+             */
+            host: string;
             mode?: components["schemas"]["ModeStateDto"] | null;
+            /** @description The current value of the model config option, else the stored model. */
+            model: string | null;
             /** @description The turn that runs now, if one does. */
             running_turn_id?: string | null;
+            seat: components["schemas"]["Seat"] | null;
             status: components["schemas"]["SessionStatus"];
+            /** @description The workflow column the session works, where it still has one. */
+            step: string | null;
             /** @description The title the agent gave the session, where it gave one. */
             title?: string | null;
             usage: components["schemas"]["TokenUsageDto"];

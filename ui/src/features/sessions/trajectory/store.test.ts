@@ -119,7 +119,9 @@ it("puts older turns in front, once each", () => {
 })
 
 it("keeps a queued prompt until a newer turn holds its text", () => {
-  const before = aTurn({ prompt: { id: "p", content: text("again"), source: "console" } })
+  const before = aTurn({
+    prompt: { brief: null, id: "p", content: text("again"), source: "console" },
+  })
   let state = applySnapshot(emptyTrajectory(), aSnapshot([before]))
   state = queuePrompt(state, "again", "queued:1")
 
@@ -127,7 +129,9 @@ it("keeps a queued prompt until a newer turn holds its text", () => {
   state = applySnapshot(state, aSnapshot([before]))
   expect(state.queued).toHaveLength(1)
 
-  const echo = aTurn({ prompt: { id: "q", content: text("again"), source: "console" } })
+  const echo = aTurn({
+    prompt: { brief: null, id: "q", content: text("again"), source: "console" },
+  })
   state = applyUpdate(state, anUpdate(2, [{ op: "turn_upsert", turn: echo }]))
   expect(state.queued).toEqual([])
 })
@@ -232,7 +236,7 @@ it("takes one queued prompt per echo, whatever revision follows", () => {
   state = queuePrompt(state, "same", "queued:1")
   state = queuePrompt(state, "same", "queued:2")
 
-  const echo = aTurn({ prompt: { id: "e", content: text("same"), source: "console" } })
+  const echo = aTurn({ prompt: { brief: null, id: "e", content: text("same"), source: "console" } })
   state = applyUpdate(state, anUpdate(2, [{ op: "turn_upsert", turn: echo }]))
   expect(state.queued.map((one) => one.id)).toEqual(["queued:2"])
 
@@ -246,6 +250,7 @@ it("takes a queued prompt away when its echo carries the seat brief ahead of it"
 
   const echo = aTurn({
     prompt: {
+      brief: null,
       id: "e",
       content: text("You are the author.\n\nStart the task"),
       text: "Start the task",
@@ -264,6 +269,7 @@ it("keeps a queued prompt when another prompt only ends with its text", () => {
   // Another client sent a longer prompt whose last paragraph is the same text.
   const other = aTurn({
     prompt: {
+      brief: null,
       id: "o",
       content: text("Plan first.\n\nStart the task"),
       text: "Plan first.\n\nStart the task",
@@ -280,7 +286,7 @@ it("clears the entry an identical send's echo left behind when a send is refused
   state = queuePrompt(state, "same", "queued:1")
   state = queuePrompt(state, "same", "queued:2")
   // The echo of the second send comes first, and takes the oldest entry.
-  const echo = aTurn({ prompt: { id: "e", content: text("same"), source: "console" } })
+  const echo = aTurn({ prompt: { brief: null, id: "e", content: text("same"), source: "console" } })
   state = applyUpdate(state, anUpdate(2, [{ op: "turn_upsert", turn: echo }]))
 
   state = dequeuePrompt(state, "queued:1", "same")
