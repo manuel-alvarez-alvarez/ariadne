@@ -182,14 +182,25 @@ pub enum Zone {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Item {
     Turn(String),
-    Step { turn: String, step: String },
-    Group { turn: String, first: String },
+    /// The prompt line of a turn that the daemon sent.
+    Prompt(String),
+    Step {
+        turn: String,
+        step: String,
+    },
+    Group {
+        turn: String,
+        first: String,
+    },
 }
 
 impl Item {
     fn turn(&self) -> &str {
         match self {
-            Item::Turn(turn) | Item::Step { turn, .. } | Item::Group { turn, .. } => turn,
+            Item::Turn(turn)
+            | Item::Prompt(turn)
+            | Item::Step { turn, .. }
+            | Item::Group { turn, .. } => turn,
         }
     }
 }
@@ -545,7 +556,7 @@ impl App {
             .iter()
             .filter_map(|item| match item {
                 Item::Turn(id) => Some(id.clone()),
-                Item::Step { .. } | Item::Group { .. } => None,
+                Item::Prompt(_) | Item::Step { .. } | Item::Group { .. } => None,
             })
             .filter(|id| self.wants_steps(id))
             .collect();
@@ -559,7 +570,7 @@ impl App {
             .iter()
             .filter_map(|item| match item {
                 Item::Step { turn, step } => Some((turn.clone(), step.clone())),
-                Item::Turn(_) | Item::Group { .. } => None,
+                Item::Turn(_) | Item::Prompt(_) | Item::Group { .. } => None,
             })
             .collect();
         for (turn, step) in open_steps {
@@ -752,6 +763,8 @@ impl App {
                 lane == MAIN_LANE || !(announced.contains(lane) || self.has_tab(lane))
             })
             .filter(|step| !noticed.contains(step_id(step)))
+            // The answer of the turn shows under it, not as a row (rule 42).
+            .filter(|step| turn.answer_step_id.as_deref() != Some(step_id(step)))
             .collect();
         Some(unmarked(top).into_iter().map(|step| (0, step)).collect())
     }
@@ -801,6 +814,9 @@ impl App {
         for turn in self.turns() {
             let item = Item::Turn(turn.id.clone());
             let open = self.open.contains(&item);
+            if turn.prompt.is_some() && !from_console(turn) {
+                items.push(Item::Prompt(turn.id.clone()));
+            }
             items.push(item);
             // A turn's notices are rows of their own, open or folded, oldest
             // first, as the transcript draws them.
@@ -1253,6 +1269,15 @@ impl App {
                     .then(|| self.steps_of(turn))
                     .flatten();
                 Some(printer.turn(turn, steps))
+            }
+            Item::Prompt(id) => {
+                let prompt = self.view.as_ref()?.turn(id)?.prompt.as_ref()?;
+                Some(
+                    prompt
+                        .text
+                        .clone()
+                        .unwrap_or_else(|| crate::trajectory::text(&prompt.content)),
+                )
             }
             Item::Step { turn, step } => Some(printer.step(self.step(turn, step)?)),
             Item::Group { turn, first } => {
