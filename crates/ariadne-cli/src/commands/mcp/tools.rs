@@ -833,7 +833,7 @@ impl AriadneMcp {
     // ---- pull request reviewer ----
 
     #[tool(
-        description = "Post one round in the user's name with its body and new inline findings. Write the reviewed sha, the defects and whether the code must change in `body`. Call once every round, including rounds with no new findings. Use `resolve_thread` to resolve a thread."
+        description = "Post one round in the user's name with its body and new inline findings. Write the reviewed sha, the defects and whether the code must change in `body`. Call once every round. With nothing new, send an empty `body` and no `comments`: nothing is posted. Use `resolve_thread` to resolve a thread."
     )]
     async fn submit_review(
         &self,
@@ -1474,6 +1474,20 @@ mod tests {
                 described.len()
             );
         }
+    }
+
+    /// `submit_review` names the quiet submit, so a round with nothing new
+    /// to say gives an empty body and no findings (029 rule 13).
+    #[test]
+    fn submit_review_names_the_quiet_submit() {
+        let description = AriadneMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "submit_review")
+            .and_then(|tool| tool.description)
+            .expect("the submit_review description");
+        assert!(description.contains("an empty `body` and no `comments`"));
+        assert!(description.contains("nothing is posted"));
     }
 
     /// `complete_step` defines the column report: five fields, in order, and

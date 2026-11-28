@@ -987,7 +987,7 @@ pub(crate) mod tests {
         assert!(schema("post_to_session").contains(
             "The whole post. Write it so that the recipient needs no follow-up question."
         ));
-        assert!(description("submit_review").contains("including rounds with no new findings."));
+        assert!(description("submit_review").contains("an empty `body` and no `comments`"));
         for text in [
             "`comment` for every round of the `pr-reviewer` skill.",
             "Start with `Reviewed <sha>.` on its own line.",

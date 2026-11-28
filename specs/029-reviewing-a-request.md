@@ -253,7 +253,12 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     goes wrong and how to fix it, with a trailer an agent's skill appends
     stripped first (026 rule 16). The daemon posts `body` above the round's inline findings with the review marker.
     The marker preserves its identity when the forge returns it.
-    Each round writes its own body, including rounds with no new findings.
+    Each round with a new finding writes its own body. A round with no new
+    finding writes a body on the first round of the request, and when it
+    resolved the last open must-fix thread and the request is not approved.
+    Any other round with no new finding is quiet: it submits an empty `body`
+    and no `comments`, and the daemon makes no forge call, writes
+    `reviewed_sha` (rule 15) and answers 201 with no comment.
     The body has three parts, in order. Its first line is `Reviewed <sha>.`
     Then one short prose paragraph describes the defects, with no bullet,
     no table, no line per finding and no line per check. One closing
@@ -302,6 +307,9 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 15. `submit_review` writes `pull_requests.reviewed_sha` from the head of the checkout the round reviewed,
     and posts the review on that head, not on a live forge head fetched since
     (`pull_request_reviews.rs::a_submitted_review_stores_the_checkout_head_when_the_forge_head_moved`).
+    A quiet submit, an empty `body` with no `comments`, writes `reviewed_sha`
+    from that checkout head and makes no forge call
+    (`pull_request_reviews.rs::a_quiet_submit_stores_the_checkout_head_and_calls_no_forge`).
     No session reports readiness. The daemon decides from forge evidence (031 rule 15).
     A finding the `pr-reviewer` skill writes follows these rules:
     - The skill gives the title apart from the body; the reviewer seat's
@@ -370,7 +378,19 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
     The body opens `Reviewed <short sha>.`.
     Add at most two sentences on the change and main risk, then one sentence per new finding.
     Close with `Changes required: <what>.` while a must-fix finding remains open, else `No change required.`
-    Write no check line or finding list; post the body even with no new findings.
+    Write no check line or finding list.
+    A round with no new finding is quiet, and posts no body, when the request's
+    `review_decision` is `approved`, when the last body of the skill closed
+    with `No change required.`, or while each earlier must-fix thread of the
+    skill stays open and unfixed. The first round of a request is never quiet.
+    A round that resolved the last open must-fix thread of an unapproved
+    request posts `No change required.`. A round with a new finding posts the
+    finding and its body, also after an approval. The skill names no Ariadne
+    word for this; the reviewer supplement names `submit_review`, the empty
+    body and `review_decision`
+    (`skill_tests/review.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`).
+    The one-time thread replies stay: `Still there:`, the answer to a question,
+    `Withdrawn:`, escalation and resolve.
 
     Read owned threads each round. Verify `Fixed in <short sha>:` at the head and resolve silently when fixed.
     Otherwise reply once `Still there: <what the head shows>.`.
@@ -409,6 +429,18 @@ Out: the rows Ariadne keeps, the fetch, the live reads and the PR session kind
 
 ## Acceptance criteria
 
+- A `submit_review` with an empty body and no finding writes
+  `reviewed_sha` from the checkout head, makes no forge call and answers 201
+  (rule 15):
+  `pull_request_reviews.rs::a_quiet_submit_stores_the_checkout_head_and_calls_no_forge`.
+- The `pr-reviewer` skill posts no body for a round with no new finding on an
+  approved request, after a body that closed `No change required.`, or while
+  its must-fix threads stay open; it still posts on the first round and on
+  the round that resolves the last must-fix thread; the supplement names
+  `submit_review`, the empty body and `review_decision` (rules 13, 17):
+  `skill_tests/review.rs::the_pr_reviewer_skill_ranks_its_findings_and_never_approves`.
+- The MCP `submit_review` description names the quiet submit (rule 13):
+  `tools.rs::submit_review_names_the_quiet_submit`.
 - The review session escalates a thread its own review opened: a
   `from_review` comment of the integration login gets 200, posts nothing on
   the forge and marks the comment. Any other comment gets 403 and no mark

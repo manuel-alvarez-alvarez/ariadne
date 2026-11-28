@@ -987,27 +987,28 @@ pub(crate) mod tests {
     /// step call that passes the work with its `merge_commit`, and the
     /// `fail_step` call for a failed check. Its `conflict-resolution`
     /// supplement is 140: the one step call, for where no skill invoked it.
-    /// The reviewer seat's `pr-reviewer` supplement is 900: the calls that
+    /// The reviewer seat's `pr-reviewer` supplement is 1,000: the calls that
     /// read the request, the diff and the threads, the call that answers a
-    /// thread, and the one that submits the round, which the skill dropped
-    /// with every other Ariadne word. The orchestrator seat's `orchestration`
+    /// thread, the one that submits the round, which the skill dropped with
+    /// every other Ariadne word, and the quiet submit. The orchestrator
+    /// seat's `orchestration`
     /// supplement is 1,800: the tool of each playbook step, from
     /// `list_hosts` to `complete_goal`, and the model rules, which name the
     /// column ranks, `local` and the ACP agents. The skill dropped all of it
     /// to name no Ariadne word, and the orchestrator seat text is 200, so the
     /// seat still pays less than the 1,750 its text once carried with the
-    /// playbook in it. The total is 5,550, the eight caps with a sentence of
+    /// playbook in it. The total is 5,650, the eight caps with a sentence of
     /// room: it rose from 3,750 by those 1,800.
     /// A new pair needs a cap of its own here, argued the same way, and the
     /// total holds them all.
     #[test]
     fn supplement_size_caps_hold() {
-        const TOTAL: usize = 5_550;
+        const TOTAL: usize = 5_650;
         let cap = |skill: &str, seat: Seat| match (skill, seat) {
             (ORCHESTRATION_SKILL, Seat::Orchestrator) => 1_800,
             ("code-review", Seat::Agent) => 300,
             ("code-review", Seat::Reviewer) => 200,
-            (PR_REVIEWER_SKILL, Seat::Reviewer) => 900,
+            (PR_REVIEWER_SKILL, Seat::Reviewer) => 1_000,
             ("pr-babysit", Seat::Agent) => 1100,
             ("pr-babysit", Seat::Keeper) => 500,
             ("merge", Seat::Agent) => 260,
